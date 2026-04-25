@@ -1,0 +1,17 @@
+# Database (auto-created on first run)
+stockpulse.db
+stockpulse.db-wal
+stockpulse.db-shm
+
+# API keys (never commit!)
+stockpulse.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# macOS
+.DS_Store
