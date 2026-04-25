@@ -539,7 +539,7 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 18p
     <span class="chat-hdr-icon">🤖</span>
     <div>
       <div class="chat-hdr-title">StockPulse AI</div>
-      <div class="chat-hdr-sub">Powered by Claude · Indian market specialist</div>
+      <div class="chat-hdr-sub" id="chat-provider-label">Indian market specialist</div>
     </div>
     <button class="chat-close" onclick="Chat.toggle()">✕</button>
   </div>
@@ -1612,8 +1612,41 @@ const Chat = {
     fab.classList.toggle('open', isOpen);
     if (isOpen) {
       this.updateQuickActions();
+      this.checkProvider();
       setTimeout(() => document.getElementById('chat-inp').focus(), 320);
     }
+  },
+
+  async checkProvider() {
+    try {
+      const d = await fetch(API + '/ai-status').then(r => r.json());
+      const lbl = document.getElementById('chat-provider-label');
+      if (!lbl) return;
+      if (d.ok && d.provider) {
+        const icons = { groq: '⚡ Llama 3.3 · Free', anthropic: '🧠 Claude Haiku' };
+        lbl.textContent = (icons[d.provider] || d.model) + ' · Indian market specialist';
+        lbl.style.color = 'var(--green)';
+      } else {
+        lbl.textContent = '⚠️ No API key — click for setup';
+        lbl.style.color = 'var(--amber)';
+        lbl.style.cursor = 'pointer';
+        lbl.onclick = () => this._showSetup();
+      }
+    } catch {}
+  },
+
+  _showSetup() {
+    this._addMsg('ai',
+      '🔑 AI needs a free API key to work.\n\n' +
+      '── FREE option (Groq — recommended) ──\n' +
+      '1. Visit https://console.groq.com\n' +
+      '2. Sign up free (no credit card needed)\n' +
+      '3. Go to API Keys → Create Key\n' +
+      '4. In your terminal:\n' +
+      '   export GROQ_API_KEY=gsk_...\n' +
+      '5. Restart stock-server.py\n\n' +
+      'Uses Llama 3.3 70B — powerful open-source model, completely free.'
+    );
   },
 
   updateQuickActions() {
@@ -1677,7 +1710,11 @@ const Chat = {
 
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
-        this._addMsg('ai', '⚠️ ' + (err.error || 'Server error'), true);
+        if (resp.status === 503) {
+          this._showSetup();
+        } else {
+          this._addMsg('ai', '⚠️ ' + (err.error || 'Server error'), true);
+        }
         return;
       }
 

@@ -11,6 +11,7 @@ import requests as http_requests
 import feedparser
 import yfinance as yf
 import numpy as np
+import groq as groq_sdk
 import anthropic
 from flask import Flask, jsonify, request, g, Response, stream_with_context
 from flask_cors import CORS
@@ -835,7 +836,9 @@ def batch_quotes():
 def ping():
     return jsonify({'ok': True, 'ts': now_ts(), 'version': '2.0.0'})
 
-# ── AI Chat (RAG + Claude streaming) ─────────────────────────────────────────
+# ── AI provider helpers ───────────────────────────────────────────────────────
+# Priority: GROQ_API_KEY (free, open-source Llama) → ANTHROPIC_API_KEY (Claude)
+
 SYSTEM_PROMPT = (
     "You are a stock analysis assistant for StockPulse, an Indian market tracker. "
     "You have access to recent news, financial data, and price info for the user's watchlist. "
@@ -845,17 +848,53 @@ SYSTEM_PROMPT = (
     "Keep responses under 300 words unless a longer analysis is explicitly requested."
 )
 
+# Groq free models (open-source, no credit card needed)
+GROQ_MODEL     = 'llama-3.3-70b-versatile'   # best quality on free tier
+GROQ_MODEL_FAST= 'llama-3.1-8b-instant'       # faster for summaries
+
+_NO_KEY_MSG = (
+    'No AI API key found.\n\n'
+    '── FREE option (recommended) ──\n'
+    '1. Go to https://console.groq.com\n'
+    '2. Sign up free (no credit card) → API Keys → Create Key\n'
+    '3. export GROQ_API_KEY=gsk_...\n\n'
+    '── Paid option ──\n'
+    '1. Go to https://console.anthropic.com → API Keys\n'
+    '2. export ANTHROPIC_API_KEY=sk-ant-...\n\n'
+    'Then restart stock-server.py.'
+)
+
+def _get_ai_provider():
+    """Return ('groq', key) or ('anthropic', key) or (None, None)."""
+    gk = os.environ.get('GROQ_API_KEY')
+    if gk:
+        return 'groq', gk
+    ak = os.environ.get('ANTHROPIC_API_KEY')
+    if ak:
+        return 'anthropic', ak
+    return None, None
+
+def _build_context(symbols, question):
+    """RAG: retrieve top chunks and format context block."""
+    chunks = retrieve_top_chunks(symbols, question, top_k=5)
+    if not chunks:
+        return "No specific context found yet — add stocks to your watchlist so data gets indexed."
+    parts = []
+    for i, c in enumerate(chunks, 1):
+        age = ''
+        if c.get('ts'):
+            days = (now_ts() - c['ts']) // 86400
+            if days < 30:
+                age = f' ({days}d ago)'
+        parts.append(f"[{i}] {c['symbol']} — {c['source']}{age}\n{c['content']}")
+    return "--- RELEVANT CONTEXT ---\n" + "\n\n".join(parts) + "\n--- END CONTEXT ---"
+
+# ── AI Chat endpoint (streaming SSE) ─────────────────────────────────────────
 @app.route('/api/chat', methods=['POST'])
 def api_chat():
-    api_key = os.environ.get('ANTHROPIC_API_KEY')
-    if not api_key:
-        return jsonify({'ok': False, 'error':
-            'ANTHROPIC_API_KEY is not set.\n\n'
-            'To get a free key:\n'
-            '1. Go to https://console.anthropic.com\n'
-            '2. Sign up / Log in → API Keys → Create Key\n'
-            '3. Run: export ANTHROPIC_API_KEY=sk-ant-...\n'
-            '   Or add it to start-stockpulse.command before the python3 line.'}), 503
+    provider, api_key = _get_ai_provider()
+    if not provider:
+        return jsonify({'ok': False, 'error': _NO_KEY_MSG}), 503
 
     body         = request.get_json(silent=True) or {}
     question     = (body.get('question') or '').strip()
@@ -865,28 +904,12 @@ def api_chat():
     if not question:
         return jsonify({'ok': False, 'error': 'question required'}), 400
 
-    # Default to full watchlist if no symbols given
     if not symbols:
         db = get_db()
         symbols = [r['symbol'] for r in db.execute('SELECT symbol FROM watchlist').fetchall()]
 
-    # RAG retrieval
-    chunks = retrieve_top_chunks(symbols, question, top_k=5)
-    if chunks:
-        ctx_parts = []
-        for i, c in enumerate(chunks, 1):
-            age = ''
-            if c.get('ts'):
-                days = (now_ts() - c['ts']) // 86400
-                if days < 30:
-                    age = f' ({days}d ago)'
-            ctx_parts.append(f"[{i}] {c['symbol']} — {c['source']}{age}\n{c['content']}")
-        context_block = "--- RELEVANT CONTEXT ---\n" + "\n\n".join(ctx_parts) + "\n--- END CONTEXT ---"
-    else:
-        context_block = "No specific context found in the database for this query yet. " \
-                        "Try adding stocks to your watchlist first so data can be indexed."
+    context_block = _build_context(symbols, question)
 
-    # Build messages (last 5 conversation turns + new question)
     messages = [
         {'role': t['role'], 'content': t['content']}
         for t in chat_history[-10:]
@@ -894,36 +917,53 @@ def api_chat():
     ]
     messages.append({'role': 'user', 'content': f"{context_block}\n\nQuestion: {question}"})
 
-    def generate():
+    def generate_groq():
+        try:
+            client = groq_sdk.Groq(api_key=api_key)
+            stream = client.chat.completions.create(
+                model=GROQ_MODEL,
+                messages=[{'role': 'system', 'content': SYSTEM_PROMPT}] + messages,
+                max_tokens=1024,
+                stream=True,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content or ''
+                if delta:
+                    yield f"data: {json.dumps({'type': 'delta', 'text': delta})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as e:
+            log.warning(f'Groq stream error: {e}')
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    def generate_anthropic():
         try:
             client = anthropic.Anthropic(api_key=api_key)
             with client.messages.stream(
-                model='claude-haiku-4-5-20251001',
-                max_tokens=1024,
-                system=SYSTEM_PROMPT,
-                messages=messages,
+                model='claude-haiku-4-5-20251001', max_tokens=1024,
+                system=SYSTEM_PROMPT, messages=messages,
             ) as stream:
                 for text in stream.text_stream:
                     yield f"data: {json.dumps({'type': 'delta', 'text': text})}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
         except anthropic.AuthenticationError:
-            yield f"data: {json.dumps({'type': 'error', 'message': 'Invalid ANTHROPIC_API_KEY — check your key at console.anthropic.com'})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Invalid ANTHROPIC_API_KEY'})}\n\n"
         except Exception as e:
-            log.warning(f'api_chat stream error: {e}')
+            log.warning(f'Anthropic stream error: {e}')
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
+    gen = generate_groq() if provider == 'groq' else generate_anthropic()
     return Response(
-        stream_with_context(generate()),
+        stream_with_context(gen),
         mimetype='text/event-stream',
         headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
     )
 
+# ── AI Summary endpoint (non-streaming) ──────────────────────────────────────
 @app.route('/api/ai-summary/<path:symbol>')
 def api_ai_summary(symbol):
-    """Pre-generated one-paragraph AI summary for a stock."""
-    api_key = os.environ.get('ANTHROPIC_API_KEY')
-    if not api_key:
-        return jsonify({'ok': False, 'error': 'ANTHROPIC_API_KEY not set'}), 503
+    provider, api_key = _get_ai_provider()
+    if not provider:
+        return jsonify({'ok': False, 'error': _NO_KEY_MSG}), 503
 
     db = get_db()
     news_rows = db.execute(
@@ -941,19 +981,45 @@ def api_ai_summary(symbol):
                  ) if quote_row else ''
 
     prompt = (
-        f"Write a one-paragraph stock analysis summary for {symbol} based on the following data.\n\n"
+        f"Write a one-paragraph stock analysis summary for {symbol}.\n\n"
         f"Recent news:\n{news_text}\n\nFinancials: {fin_text}\nPrice: {price_text}\n\n"
         "Be factual, highlight key positives/risks, keep it under 120 words."
     )
     try:
-        client = anthropic.Anthropic(api_key=api_key)
-        msg    = client.messages.create(
-            model='claude-haiku-4-5-20251001', max_tokens=200,
-            system=SYSTEM_PROMPT,
-            messages=[{'role': 'user', 'content': prompt}])
-        return jsonify({'ok': True, 'summary': msg.content[0].text})
+        if provider == 'groq':
+            client = groq_sdk.Groq(api_key=api_key)
+            resp   = client.chat.completions.create(
+                model=GROQ_MODEL_FAST,
+                messages=[{'role':'system','content':SYSTEM_PROMPT},
+                          {'role':'user',  'content':prompt}],
+                max_tokens=200,
+            )
+            summary = resp.choices[0].message.content
+        else:
+            client  = anthropic.Anthropic(api_key=api_key)
+            msg     = client.messages.create(
+                model='claude-haiku-4-5-20251001', max_tokens=200,
+                system=SYSTEM_PROMPT,
+                messages=[{'role':'user','content':prompt}])
+            summary = msg.content[0].text
+        return jsonify({'ok': True, 'summary': summary, 'provider': provider})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
+
+# ── AI provider status ────────────────────────────────────────────────────────
+@app.route('/api/ai-status')
+def api_ai_status():
+    provider, _ = _get_ai_provider()
+    models = {
+        'groq':      f'Llama 3.3 70B (Groq) — free open-source',
+        'anthropic': 'Claude Haiku (Anthropic)',
+    }
+    return jsonify({
+        'ok':       provider is not None,
+        'provider': provider,
+        'model':    models.get(provider, 'none'),
+        'ready':    provider is not None,
+    })
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
