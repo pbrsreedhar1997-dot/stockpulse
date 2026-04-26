@@ -912,16 +912,36 @@ def db_status():
 # ── AI provider helpers ───────────────────────────────────────────────────────
 # Priority: GROQ_API_KEY (free, open-source Llama) → ANTHROPIC_API_KEY (Claude)
 
-SYSTEM_PROMPT = (
-    "You are StockPulse AI, a financial research assistant for Indian and global markets. "
-    "You receive live price data, financial metrics, recent news, and RAG-retrieved document chunks. "
-    "Answer ANY question the user has — stock analysis, earnings, contracts, sector trends, comparisons, outlooks, risks, macro, economy. "
-    "Use the provided context accurately. Cite sources and article dates when relevant. "
-    "If the context is insufficient for a specific number, say so clearly — never fabricate data. "
-    "For Indian stocks: format currency as ₹ using Indian notation (e.g. ₹1,23,456 Cr). "
-    "For predictions and outlooks: acknowledge uncertainty, highlight key catalysts and risks. "
-    "Be specific with numbers when context has them. Keep answers under 400 words unless detailed analysis is explicitly requested."
-)
+SYSTEM_PROMPT = """\
+You are StockPulse AI — a professional stock analyst using the Stock Analysis skill framework.
+
+## YOUR ANALYSIS FRAMEWORK (from stock-analysis skill v1.0)
+
+### Valuation benchmarks
+- P/E: <15 undervalued · 15-25 fair · >25 expensive
+- P/B: <1 potential value · 1-3 normal · >3 growth priced in
+- EV/EBITDA: <10 attractive · >15 expensive
+- PEG: <1 undervalued relative to growth
+
+### Profitability benchmarks
+- Gross Margin: >40% = strong pricing power
+- Net Margin: >10% = healthy · >20% = excellent
+- ROE: >15% = good capital efficiency · >25% = exceptional
+
+### Financial health
+- Debt/Equity: <1 safe for most industries
+- Beta: <1 defensive · >1.5 high volatility
+
+## RESPONSE RULES
+1. **Always lead with a 2-line Executive Summary** — overall stance (Bullish/Neutral/Bearish) + one key reason.
+2. **Key Metrics table** — only metrics available in the context, with a one-word assessment (Attractive/Fair/Expensive/Strong/Weak).
+3. **Three focused sections max**: Valuation · Catalysts/Positives · Risks. Bullet points, 2-3 per section.
+4. **Cite news sources** with age in days when relevant.
+5. **Never fabricate numbers** — if a metric is missing, skip it.
+6. **Length**: 150-250 words for single-stock queries; 250-350 for comparisons. No padding.
+7. **Indian stocks**: use ₹ and Indian notation (Cr, L). US stocks: use $.
+8. For general questions (macro, sector, news) answer conversationally — no forced template.
+"""
 
 # Groq free models (open-source, no credit card needed)
 GROQ_MODEL     = 'llama-3.3-70b-versatile'   # best quality on free tier
@@ -949,66 +969,128 @@ def _get_ai_provider():
         return 'anthropic', ak
     return None, None
 
+def _fmt_large(v, currency=''):
+    """Format large numbers: 1234567890 → ₹1,234 Cr  or  $1.23B"""
+    if v is None:
+        return None
+    if currency in ('INR', '₹'):
+        cr = v / 1e7
+        if cr >= 1e5:   return f'₹{cr/1e5:.2f}L Cr'
+        if cr >= 1:     return f'₹{cr:,.0f} Cr'
+        return f'₹{v:,.0f}'
+    b = v / 1e9
+    if abs(b) >= 1:  return f'${b:.2f}B'
+    m = v / 1e6
+    if abs(m) >= 1:  return f'${m:.0f}M'
+    return f'${v:,.0f}'
+
+def _assess(value, thresholds):
+    """Return a one-word assessment given (value, [(threshold, label), ...]) sorted asc."""
+    if value is None:
+        return None
+    for threshold, label in thresholds:
+        if value <= threshold:
+            return label
+    return thresholds[-1][1]
+
 def _build_context(symbols, question):
-    """Build rich context: live quotes + financials + recent news + RAG chunks."""
+    """Build structured context using stock-analysis skill framework."""
     parts = []
 
-    # ── Structured live data per symbol ──────────────────────────────────────
     with thread_connection() as conn:
         for sym in symbols[:6]:
-            q_row = conn.execute('SELECT * FROM quotes    WHERE symbol=?', (sym,)).fetchone()
-            f_row = conn.execute('SELECT * FROM financials WHERE symbol=?', (sym,)).fetchone()
-            p_row = conn.execute('SELECT name,sector,description FROM profiles WHERE symbol=?', (sym,)).fetchone()
+            q_row  = conn.execute('SELECT * FROM quotes     WHERE symbol=?', (sym,)).fetchone()
+            f_row  = conn.execute('SELECT * FROM financials WHERE symbol=?', (sym,)).fetchone()
+            p_row  = conn.execute('SELECT name,sector,industry,description FROM profiles WHERE symbol=?', (sym,)).fetchone()
             n_rows = conn.execute(
-                'SELECT title,source,published FROM news WHERE symbol=? ORDER BY published DESC LIMIT 6',
-                (sym,)).fetchall()
+                'SELECT title,source,published,category FROM news '
+                'WHERE symbol=? ORDER BY published DESC LIMIT 8', (sym,)).fetchall()
 
             if not (q_row or f_row or n_rows):
                 continue
 
-            parts.append(f'=== {sym} ===')
-            if p_row and p_row['name']:
-                line = f'Company: {p_row["name"]}'
-                if p_row['sector']: line += f' | Sector: {p_row["sector"]}'
-                parts.append(line)
+            cur = (q_row['currency'] if q_row else None) or 'USD'
+            sym_label = (p_row['name'] if p_row else None) or sym
+            sector    = (p_row['sector'] if p_row else None) or ''
+
+            parts.append(f'### {sym} — {sym_label}')
+            if sector:
+                ind = (p_row['industry'] if p_row else '') or ''
+                parts.append(f'Sector: {sector}' + (f' | {ind}' if ind else ''))
+
+            # ── Price snapshot ────────────────────────────────────────────────
             if q_row:
-                chg = q_row['change_pct'] or 0
-                parts.append(
-                    f'Price: {q_row["currency"]} {q_row["price"]} '
-                    f'({("+" if chg >= 0 else "")}{chg:.2f}%) | '
-                    f'Mkt Cap: {q_row["mkt_cap"] or "N/A"}'
-                )
+                chg  = q_row['change_pct'] or 0
+                sign = '+' if chg >= 0 else ''
+                mktcap = _fmt_large(q_row['mkt_cap'], cur)
+                price_line = f'Price: {cur} {q_row["price"]} ({sign}{chg:.2f}%)'
+                if mktcap: price_line += f' | Mkt Cap: {mktcap}'
+                if q_row['volume']: price_line += f' | Volume: {q_row["volume"]:,}'
+                parts.append(price_line)
+
+            # ── Key metrics table (skill framework) ───────────────────────────
             if f_row:
-                m = []
-                if f_row['pe_ratio']:     m.append(f'P/E {f_row["pe_ratio"]:.1f}')
-                if f_row['eps']:          m.append(f'EPS {f_row["eps"]:.2f}')
-                if f_row['gross_margin']: m.append(f'Gross Margin {f_row["gross_margin"]*100:.1f}%')
-                if f_row['revenue_ttm']:  m.append(f'Revenue TTM {f_row["revenue_ttm"]/1e9:.2f}B')
-                if f_row['beta']:         m.append(f'Beta {f_row["beta"]:.2f}')
-                if f_row['week52_high']:  m.append(f'52W {f_row["week52_low"]:.2f}–{f_row["week52_high"]:.2f}')
-                if m: parts.append('Metrics: ' + ' | '.join(m))
+                metrics = []
+                pe = f_row['pe_ratio']
+                if pe:
+                    label = _assess(pe, [(15,'Attractive'),(25,'Fair'),(999,'Expensive')])
+                    metrics.append(f'P/E {pe:.1f} [{label}]')
+                pb = f_row.get('pb_ratio')
+                if pb:
+                    label = _assess(pb, [(1,'Attractive'),(3,'Fair'),(999,'Expensive')])
+                    metrics.append(f'P/B {pb:.1f} [{label}]')
+                gm = f_row['gross_margin']
+                if gm:
+                    label = _assess(gm*100, [(20,'Weak'),(40,'Fair'),(999,'Strong')])
+                    metrics.append(f'Gross Margin {gm*100:.1f}% [{label}]')
+                nm = f_row.get('net_margin') or (
+                    (f_row['net_income_ttm'] / f_row['revenue_ttm'])
+                    if f_row['net_income_ttm'] and f_row['revenue_ttm'] else None)
+                if nm:
+                    label = _assess(nm*100, [(5,'Weak'),(10,'Fair'),(20,'Good'),(999,'Excellent')])
+                    metrics.append(f'Net Margin {nm*100:.1f}% [{label}]')
+                roe = f_row.get('roe')
+                if roe:
+                    label = _assess(roe*100, [(10,'Weak'),(15,'Fair'),(25,'Good'),(999,'Exceptional')])
+                    metrics.append(f'ROE {roe*100:.1f}% [{label}]')
+                eps = f_row['eps']
+                if eps: metrics.append(f'EPS {cur} {eps:.2f}')
+                rev = f_row['revenue_ttm']
+                if rev: metrics.append(f'Revenue TTM {_fmt_large(rev, cur)}')
+                beta = f_row['beta']
+                if beta:
+                    label = _assess(abs(beta), [(0.8,'Defensive'),(1.2,'Moderate'),(1.5,'Volatile'),(999,'High Volatility')])
+                    metrics.append(f'Beta {beta:.2f} [{label}]')
+                w52h = f_row['week52_high']
+                w52l = f_row['week52_low']
+                if w52h and w52l: metrics.append(f'52W Range {w52l:.2f}–{w52h:.2f}')
+                dy = f_row['dividend_yield']
+                if dy: metrics.append(f'Div Yield {dy*100:.2f}%')
+                if metrics:
+                    parts.append('Metrics: ' + ' | '.join(metrics))
+
+            # ── Recent news (categorised) ─────────────────────────────────────
             if n_rows:
-                parts.append('Recent news:')
+                parts.append('Recent News:')
                 for n in n_rows:
                     age_d = (now_ts() - (n['published'] or 0)) // 86400
-                    parts.append(f'  [{n["source"]}] {n["title"]} ({age_d}d ago)')
+                    cat   = n['category'] or 'gen'
+                    tag   = {'contract':'[Contract]','results':'[Results]',
+                             'acq':'[M&A]','earn':'[Earnings]','part':'[Deal]'}.get(cat, '')
+                    parts.append(f'  {tag} [{n["source"]}] {n["title"]} ({age_d}d ago)')
             parts.append('')
 
-    # ── RAG chunks ────────────────────────────────────────────────────────────
-    chunks = retrieve_top_chunks(symbols, question, top_k=6)
+    # ── RAG: top relevant chunks ───────────────────────────────────────────────
+    chunks = retrieve_top_chunks(symbols, question, top_k=4)
     if chunks:
-        parts.append('--- RELEVANT CONTEXT FROM NEWS & DOCUMENTS ---')
+        parts.append('--- RELEVANT CONTEXT ---')
         for i, c in enumerate(chunks, 1):
-            age = ''
-            if c.get('ts'):
-                days = (now_ts() - c['ts']) // 86400
-                if days < 60:
-                    age = f' ({days}d ago)'
-            parts.append(f'[{i}] {c["symbol"]} — {c["source"]}{age}\n{c["content"]}')
-        parts.append('--- END CONTEXT ---')
+            age = f' ({(now_ts()-c["ts"])//86400}d ago)' if c.get('ts') else ''
+            parts.append(f'[{i}] {c["symbol"]} ({c["source"]}){age}: {c["content"][:300]}')
+        parts.append('--- END ---')
 
     if not parts:
-        return 'No context available yet. Add stocks to your watchlist and refresh to load data.'
+        return 'No data loaded yet. Add stocks to your watchlist and wait for data to fetch.'
 
     return '\n'.join(parts)
 
@@ -1098,18 +1180,27 @@ def api_ai_summary(symbol):
     fin_row   = row_to_dict(db.execute('SELECT * FROM financials WHERE symbol=?', (symbol,)).fetchone())
     quote_row = row_to_dict(db.execute('SELECT * FROM quotes WHERE symbol=?',     (symbol,)).fetchone())
 
-    news_text  = '\n'.join(f"- [{r['source']}] {r['title']}" for r in news_rows) or 'No recent news.'
-    fin_text   = (f"P/E: {fin_row.get('pe_ratio')}, Revenue TTM: {fin_row.get('revenue_ttm')}, "
-                  f"Gross Margin: {fin_row.get('gross_margin')}, EPS: {fin_row.get('eps')}"
-                 ) if fin_row else 'No financials available.'
-    price_text = (f"Current: {quote_row.get('price')}, Change: {quote_row.get('change_pct')}%, "
-                  f"Mkt Cap: {quote_row.get('mkt_cap')}"
-                 ) if quote_row else ''
+    news_text = '\n'.join(f"- [{r['source']}] {r['title']}" for r in news_rows) or 'No recent news.'
+    cur = (quote_row or {}).get('currency', 'USD')
+    fin_parts = []
+    if fin_row:
+        if fin_row.get('pe_ratio'):     fin_parts.append(f"P/E {fin_row['pe_ratio']:.1f}")
+        if fin_row.get('gross_margin'): fin_parts.append(f"Gross Margin {fin_row['gross_margin']*100:.1f}%")
+        if fin_row.get('eps'):          fin_parts.append(f"EPS {cur} {fin_row['eps']:.2f}")
+        if fin_row.get('revenue_ttm'):  fin_parts.append(f"Rev TTM {_fmt_large(fin_row['revenue_ttm'], cur)}")
+        if fin_row.get('beta'):         fin_parts.append(f"Beta {fin_row['beta']:.2f}")
+    price_parts = []
+    if quote_row:
+        price_parts.append(f"Price {cur} {quote_row['price']} ({quote_row.get('change_pct',0):+.2f}%)")
+        if quote_row.get('mkt_cap'): price_parts.append(f"Mkt Cap {_fmt_large(quote_row['mkt_cap'], cur)}")
 
     prompt = (
-        f"Write a one-paragraph stock analysis summary for {symbol}.\n\n"
-        f"Recent news:\n{news_text}\n\nFinancials: {fin_text}\nPrice: {price_text}\n\n"
-        "Be factual, highlight key positives/risks, keep it under 120 words."
+        f"Using the stock-analysis skill framework, write a concise summary for {symbol}.\n\n"
+        f"Price: {' | '.join(price_parts) or 'N/A'}\n"
+        f"Metrics: {' | '.join(fin_parts) or 'N/A'}\n"
+        f"News:\n{news_text}\n\n"
+        "Format: 1-line stance (Bullish/Neutral/Bearish + reason), then 2-3 bullet points "
+        "covering valuation, key catalyst, and main risk. Max 100 words. No fluff."
     )
     try:
         if provider == 'groq':
