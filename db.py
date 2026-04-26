@@ -138,14 +138,17 @@ def _get_pg_pool():
         with _pg_pool_lock:
             if _pg_pool is None:
                 import psycopg2.pool
-                # Inject connect_timeout so pool init never hangs indefinitely
                 dsn = DATABASE_URL
+                # Supabase (and any remote host) requires SSL
+                is_remote = 'localhost' not in dsn and '127.0.0.1' not in dsn
+                if is_remote and 'sslmode' not in dsn:
+                    dsn += ('&' if '?' in dsn else '?') + 'sslmode=require'
                 if 'connect_timeout' not in dsn:
-                    dsn += ('&' if '?' in dsn else '?') + 'connect_timeout=10'
+                    dsn += '&connect_timeout=10'
                 _pg_pool = psycopg2.pool.ThreadedConnectionPool(
                     minconn=1, maxconn=10, dsn=dsn
                 )
-                log.info(f'PostgreSQL pool ready')
+                log.info('PostgreSQL pool ready')
     return _pg_pool
 
 
