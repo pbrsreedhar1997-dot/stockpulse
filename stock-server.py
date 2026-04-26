@@ -158,6 +158,111 @@ def _embed_financials_bg(symbol: str, data: dict):
     except Exception as e:
         log.warning(f'_embed_financials_bg({symbol}): {e}')
 
+# ── India large-cap screener universe (Nifty 100 + select large caps) ────────
+INDIA_LARGE_CAP = [
+    # Nifty 50
+    'ADANIENT.NS','ADANIPORTS.NS','APOLLOHOSP.NS','ASIANPAINT.NS','AXISBANK.NS',
+    'BAJAJ-AUTO.NS','BAJFINANCE.NS','BAJAJFINSV.NS','BHARTIARTL.NS','BPCL.NS',
+    'BRITANNIA.NS','CIPLA.NS','COALINDIA.NS','DIVISLAB.NS','DRREDDY.NS',
+    'EICHERMOT.NS','GRASIM.NS','HCLTECH.NS','HDFCBANK.NS','HDFCLIFE.NS',
+    'HEROMOTOCO.NS','HINDALCO.NS','HINDUNILVR.NS','ICICIBANK.NS','INDUSINDBK.NS',
+    'INFY.NS','ITC.NS','JSWSTEEL.NS','KOTAKBANK.NS','LT.NS',
+    'M&M.NS','MARUTI.NS','NESTLEIND.NS','NTPC.NS','ONGC.NS',
+    'POWERGRID.NS','RELIANCE.NS','SBILIFE.NS','SBIN.NS','SHRIRAMFIN.NS',
+    'SUNPHARMA.NS','TATACONSUM.NS','TATAMOTORS.NS','TATASTEEL.NS','TCS.NS',
+    'TECHM.NS','TITAN.NS','ULTRACEMCO.NS','WIPRO.NS','ZOMATO.NS',
+    # Nifty Next 50
+    'ABB.NS','ADANIGREEN.NS','AMBUJACEM.NS','AUROPHARMA.NS','BANKBARODA.NS',
+    'BEL.NS','BERGEPAINT.NS','BOSCHLTD.NS','CANBK.NS','CHOLAFIN.NS',
+    'COLPAL.NS','DMART.NS','GAIL.NS','GODREJCP.NS','HAL.NS',
+    'HAVELLS.NS','INDIGO.NS','IOC.NS','IRCTC.NS','JINDALSTEL.NS',
+    'LICI.NS','LTIM.NS','LUPIN.NS','MARICO.NS','MOTHERSON.NS',
+    'MPHASIS.NS','NHPC.NS','NMDC.NS','NYKAA.NS','OFSS.NS',
+    'PAGEIND.NS','PERSISTENT.NS','PETRONET.NS','PIDILITIND.NS','PNB.NS',
+    'POLYCAB.NS','RECLTD.NS','SAIL.NS','SIEMENS.NS','TATAPOWER.NS',
+    'TORNTPHARM.NS','TRENT.NS','UBL.NS','UNIONBANK.NS','VEDL.NS',
+    'VBL.NS','ZYDUSLIFE.NS',
+    # Additional Nifty 100
+    'DABUR.NS','DLF.NS','GODREJPROP.NS','HPCL.NS','INDHOTEL.NS',
+    'IRFC.NS','JUBLFOOD.NS','LICHSGFIN.NS','MAXHEALTH.NS','NAUKRI.NS',
+    'PFC.NS','PIIND.NS','PRESTIGE.NS','SUNTV.NS','TORNTPOWER.NS',
+    'VOLTAS.NS','MCDOWELL-N.NS','OBEROIRLTY.NS','ATGL.NS','CGPOWER.NS',
+]
+
+SCREENER_TTL = 6 * 3600  # 6-hour cache
+
+def _screener_fetch_one(sym: str) -> dict | None:
+    """Fetch one stock for the value-picks screener. Returns None if disqualified."""
+    try:
+        t  = yf.Ticker(sym)
+        fi = t.fast_info
+        price   = getattr(fi, 'last_price',          None)
+        mkt_cap = getattr(fi, 'market_cap',           None)
+        w52h    = getattr(fi, 'fifty_two_week_high',  None)
+        w52l    = getattr(fi, 'fifty_two_week_low',   None)
+
+        if not price or not mkt_cap or not w52h or w52h <= 0:
+            return None
+
+        mkt_cap_cr = mkt_cap / 1e7
+        if mkt_cap_cr < 50000:          # < ₹50,000 Cr → skip
+            return None
+
+        decline = ((w52h - price) / w52h) * 100
+        if decline < 40:                # not fallen ≥40% from peak
+            return None
+
+        # Qualifies on price/mktcap — now fetch fundamentals
+        info = t.info
+        eps         = info.get('trailingEps')      or 0
+        gross_m     = info.get('grossMargins')     or 0
+        net_m       = info.get('profitMargins')    or 0
+        pe          = info.get('trailingPE')
+        roe         = info.get('returnOnEquity')
+        revenue     = info.get('totalRevenue')
+        beta        = info.get('beta')
+        de_ratio    = info.get('debtToEquity')
+        curr_ratio  = info.get('currentRatio')
+
+        if eps <= 0:                    # must be profitable
+            return None
+        if gross_m < 0.15:             # gross margin < 15% → weak business
+            return None
+
+        return {
+            'symbol':       sym,
+            'name':         info.get('longName') or info.get('shortName', sym),
+            'sector':       info.get('sector', ''),
+            'industry':     info.get('industry', ''),
+            'price':        round(float(price), 2),
+            'week52_high':  round(float(w52h), 2),
+            'week52_low':   round(float(w52l), 2) if w52l else None,
+            'decline_pct':  round(decline, 1),
+            'mkt_cap_cr':   round(mkt_cap_cr, 0),
+            'pe_ratio':     round(pe, 1)        if pe        else None,
+            'eps':          round(eps, 2),
+            'gross_margin': round(gross_m * 100, 1),
+            'net_margin':   round(net_m  * 100, 1) if net_m  else None,
+            'roe':          round(roe    * 100, 1) if roe    else None,
+            'revenue_cr':   round(revenue / 1e7, 0) if revenue else None,
+            'beta':         round(beta, 2)       if beta      else None,
+            'de_ratio':     round(de_ratio / 100, 2) if de_ratio else None,
+            'curr_ratio':   round(curr_ratio, 2) if curr_ratio else None,
+        }
+    except Exception as e:
+        log.warning(f'Screener {sym}: {e}')
+        return None
+
+def _run_value_picks() -> list:
+    from concurrent.futures import ThreadPoolExecutor
+    results = []
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        for item in ex.map(_screener_fetch_one, INDIA_LARGE_CAP):
+            if item:
+                results.append(item)
+    results.sort(key=lambda x: x['decline_pct'], reverse=True)
+    return results
+
 # ── yfinance wrappers ────────────────────────────────────────────────────────
 RANGE_MAP = {
     '1d':  ('1d',  '5m'),
@@ -782,6 +887,36 @@ def batch_quotes():
     for t in threads: t.join(timeout=20)
 
     return jsonify({'ok': True, 'data': results})
+
+# ── Value-picks screener ─────────────────────────────────────────────────────
+@app.route('/api/screener/value-picks')
+def screener_value_picks():
+    db    = get_db()
+    cache = row_to_dict(db.execute(
+        "SELECT results, fetched_at FROM screener_cache WHERE screener_id='value-picks'"
+    ).fetchone())
+
+    if cache and not stale(cache['fetched_at'], SCREENER_TTL):
+        return jsonify({'ok': True, 'data': json.loads(cache['results']),
+                        'cached': True, 'fetched_at': cache['fetched_at']})
+
+    # Stale or missing — run synchronously (results cached for 6h)
+    log.info('Running value-picks screener over %d stocks…', len(INDIA_LARGE_CAP))
+    results = _run_value_picks()
+    db.execute(
+        "INSERT OR REPLACE INTO screener_cache (screener_id, results, fetched_at) VALUES (?,?,?)",
+        ('value-picks', json.dumps(results), now_ts())
+    )
+    db.commit()
+    return jsonify({'ok': True, 'data': results, 'cached': False,
+                    'fetched_at': now_ts(), 'universe': len(INDIA_LARGE_CAP)})
+
+@app.route('/api/screener/refresh', methods=['POST'])
+def screener_refresh():
+    db = get_db()
+    db.execute("DELETE FROM screener_cache WHERE screener_id='value-picks'")
+    db.commit()
+    return jsonify({'ok': True, 'message': 'Cache cleared — next fetch will re-run screener'})
 
 # ── Historical performance metrics ───────────────────────────────────────────
 @app.route('/api/performance/<path:symbol>')

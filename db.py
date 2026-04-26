@@ -337,6 +337,12 @@ CREATE TABLE IF NOT EXISTS search_cache (
     fetched_at  INTEGER DEFAULT (strftime('%s','now'))
 );
 
+CREATE TABLE IF NOT EXISTS screener_cache (
+    screener_id TEXT PRIMARY KEY,
+    results     TEXT,
+    fetched_at  INTEGER DEFAULT (strftime('%s','now'))
+);
+
 CREATE TABLE IF NOT EXISTS embeddings (
     chunk_id    INTEGER PRIMARY KEY AUTOINCREMENT,
     symbol      TEXT NOT NULL,
@@ -454,6 +460,12 @@ CREATE INDEX IF NOT EXISTS idx_news ON news(symbol, published DESC);
 
 CREATE TABLE IF NOT EXISTS search_cache (
     query       TEXT PRIMARY KEY,
+    results     TEXT,
+    fetched_at  INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS screener_cache (
+    screener_id TEXT PRIMARY KEY,
     results     TEXT,
     fetched_at  INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
 );

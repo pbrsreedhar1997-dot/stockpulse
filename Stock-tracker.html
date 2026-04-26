@@ -489,6 +489,52 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 18p
   .chat-panel{width:100%;right:-100%;border-left:none}
   .ai-fab{bottom:16px;right:16px;width:44px;height:44px;font-size:18px}
 }
+/* ── Main view switcher ── */
+.view-nav{display:flex;gap:3px;background:var(--bg3);padding:3px;border-radius:9px;margin:0 10px}
+.vnav-btn{padding:5px 14px;border:none;background:transparent;color:var(--text3);font-size:12px;font-weight:700;border-radius:7px;cursor:pointer;transition:.15s;font-family:inherit;white-space:nowrap}
+.vnav-btn.on{background:var(--card2);color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.3)}
+/* ── Value Picks tab ── */
+.vp-view{flex:1;overflow:hidden;display:none;flex-direction:column}
+.vp-view.show{display:flex}
+.vp-header{padding:18px 20px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-wrap:wrap;flex-shrink:0}
+.vp-title{font-size:17px;font-weight:900;letter-spacing:-.3px}
+.vp-subtitle{font-size:12px;color:var(--text3);flex:1}
+.vp-badge{background:rgba(0,212,170,.12);color:var(--accent);border:1px solid rgba(0,212,170,.25);padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700}
+.vp-refresh{background:transparent;border:1px solid var(--border2);border-radius:7px;padding:5px 12px;color:var(--text3);font-size:11px;font-weight:600;cursor:pointer;transition:.15s;font-family:inherit}
+.vp-refresh:hover{border-color:var(--accent);color:var(--accent)}
+.vp-filters{padding:10px 20px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg2)}
+.vp-filter-lbl{font-size:11px;color:var(--text3);font-weight:600}
+.vp-chip{padding:4px 11px;border:1px solid var(--border2);border-radius:20px;font-size:11px;font-weight:600;cursor:pointer;background:transparent;color:var(--text3);transition:.13s;font-family:inherit}
+.vp-chip.on{background:var(--accent);border-color:var(--accent);color:#000}
+.vp-grid{flex:1;overflow-y:auto;padding:16px 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;align-content:start}
+.vp-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;transition:.15s;cursor:pointer;position:relative;overflow:hidden}
+.vp-card:hover{border-color:var(--border2);box-shadow:0 4px 20px rgba(0,0,0,.3);transform:translateY(-1px)}
+.vp-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--grad-accent)}
+.vp-card.deep-value::before{background:linear-gradient(90deg,#ef4444,#f59e0b)}
+.vp-card-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px}
+.vp-sym{font-size:13px;font-weight:800;color:var(--accent)}
+.vp-name{font-size:12px;color:var(--text2);margin-top:2px;font-weight:600}
+.vp-sector{font-size:10px;color:var(--text3);margin-top:2px}
+.vp-decline-badge{background:rgba(239,68,68,.15);color:#f87171;border:1px solid rgba(239,68,68,.3);padding:4px 10px;border-radius:20px;font-size:12px;font-weight:800;white-space:nowrap;flex-shrink:0}
+.vp-price-row{display:flex;align-items:baseline;gap:8px;margin-bottom:8px}
+.vp-price{font-size:18px;font-weight:900;letter-spacing:-.5px}
+.vp-52h{font-size:11px;color:var(--text3)}
+.vp-metrics{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.vp-metric{background:var(--bg3);padding:3px 8px;border-radius:6px;font-size:10px;font-weight:700;color:var(--text3)}
+.vp-metric span{color:var(--text2)}
+.vp-metric.good span{color:var(--green)}
+.vp-metric.warn span{color:var(--amber)}
+.vp-metric.bad  span{color:var(--red)}
+.vp-mktcap{font-size:11px;color:var(--text3);margin-bottom:10px}
+.vp-add-btn{width:100%;padding:7px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;color:var(--text3);font-size:12px;font-weight:700;cursor:pointer;transition:.15s;font-family:inherit}
+.vp-add-btn:hover{background:rgba(0,212,170,.12);border-color:var(--accent);color:var(--accent)}
+.vp-add-btn.added{background:rgba(16,185,129,.1);border-color:var(--green);color:var(--green)}
+.vp-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--text3);padding:60px 20px;text-align:center}
+.vp-loading{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:var(--text3)}
+.vp-spin{width:36px;height:36px;border:3px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.vp-progress{font-size:12px;color:var(--text3);text-align:center}
+.vp-last-updated{font-size:10px;color:var(--text3)}
 /* ── Auth Modal ── */
 .auth-overlay{position:fixed;inset:0;background:rgba(7,9,15,.92);z-index:9999;display:none;align-items:center;justify-content:center;backdrop-filter:blur(6px)}
 .auth-overlay.show{display:flex}
@@ -531,6 +577,10 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 18p
       <span class="srch-icon">🔍</span>
       <input class="srchinp" id="si" placeholder="RELIANCE.NS · TCS.NS · INFY.NS · AAPL…" autocomplete="off">
       <div class="srchdrop" id="sd"></div>
+    </div>
+    <div class="view-nav">
+      <button class="vnav-btn on" id="vnav-watchlist" onclick="App.switchView('watchlist')">📊 Watchlist</button>
+      <button class="vnav-btn" id="vnav-valuepicks" onclick="App.switchView('value-picks')">💎 Value Picks</button>
     </div>
     <div class="hdr-right">
       <div class="live-pill"><span class="ldot"></span>LIVE</div>
@@ -576,7 +626,7 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 18p
       <button class="auth-guest" onclick="Auth.continueAsGuest()">Continue as guest &nbsp;(watchlist saved locally only)</button>
     </div>
   </div>
-  <div class="main">
+  <div class="main" id="main-view">
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar()"></div>
     <div class="sidebar">
       <div class="sbhdr">
@@ -615,6 +665,30 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 18p
       </div>
     </div>
   </div>
+  <!-- ── Value Picks View ── -->
+  <div class="vp-view" id="vp-view">
+    <div class="vp-header">
+      <div>
+        <div class="vp-title">💎 Value Picks</div>
+        <div class="vp-subtitle">Large-cap Indian stocks (Mkt Cap &gt; ₹50,000 Cr) trading ≥40% below 52-week high with strong fundamentals</div>
+      </div>
+      <span class="vp-badge" id="vp-count">—</span>
+      <span class="vp-last-updated" id="vp-updated"></span>
+      <button class="vp-refresh" onclick="ValuePicks.refresh()">⟳ Refresh</button>
+    </div>
+    <div class="vp-filters">
+      <span class="vp-filter-lbl">Sort by:</span>
+      <button class="vp-chip on" data-sort="decline" onclick="ValuePicks.sort('decline',this)">Biggest Drop</button>
+      <button class="vp-chip" data-sort="mktcap" onclick="ValuePicks.sort('mktcap',this)">Market Cap</button>
+      <button class="vp-chip" data-sort="pe" onclick="ValuePicks.sort('pe',this)">P/E (Low)</button>
+      <button class="vp-chip" data-sort="margin" onclick="ValuePicks.sort('margin',this)">Gross Margin</button>
+      <span class="vp-filter-lbl" style="margin-left:10px">Sector:</span>
+      <button class="vp-chip on" data-sector="all" onclick="ValuePicks.filterSector('all',this)">All</button>
+      <div id="vp-sector-chips"></div>
+    </div>
+    <div id="vp-body" class="vp-grid"></div>
+  </div>
+
   <div class="statusbar">
     <span><span class="sdot" id="sdot"></span><span id="stxt">Connecting…</span></span>
     <span id="mkt"></span>
@@ -1894,6 +1968,15 @@ const App = {
     if(btn) btn.textContent=isOpen?'✕':'☰';
   },
 
+  switchView(view){
+    const isWL = view === 'watchlist';
+    document.getElementById('main-view').style.display  = isWL ? '' : 'none';
+    document.getElementById('vp-view').classList.toggle('show', !isWL);
+    document.getElementById('vnav-watchlist').classList.toggle('on',  isWL);
+    document.getElementById('vnav-valuepicks').classList.toggle('on', !isWL);
+    if(!isWL) ValuePicks.load();
+  },
+
   toggleTheme(){
     const isLight=document.documentElement.classList.toggle('light');
     localStorage.setItem('sp_theme', isLight?'light':'dark');
@@ -2202,6 +2285,175 @@ const Chat = {
 };
 
 App.start();
+
+/* ── VALUE PICKS SCREENER ── */
+const ValuePicks = {
+  _data:    [],
+  _sort:    'decline',
+  _sector:  'all',
+  _loaded:  false,
+  _loading: false,
+
+  async load(force=false){
+    if(this._loading) return;
+    if(this._loaded && !force) return;
+    this._loading = true;
+    this._showLoading();
+    try{
+      const r = await fetch(API+'/screener/value-picks', {headers:_authHeaders()});
+      const j = await r.json();
+      if(!j.ok){ this._showError('Could not load screener data.'); return; }
+      this._data   = j.data || [];
+      this._loaded = true;
+      const el = document.getElementById('vp-updated');
+      if(el && j.fetched_at){
+        const mins = Math.round((Date.now()/1000 - j.fetched_at)/60);
+        el.textContent = mins < 2 ? 'Just updated' : `Updated ${mins}m ago`;
+      }
+      this._buildSectorChips();
+      this._render();
+    }catch(e){
+      this._showError('Network error: '+e.message);
+    }finally{
+      this._loading = false;
+    }
+  },
+
+  async refresh(){
+    if(this._loading) return;
+    await fetch(API+'/screener/refresh', {method:'POST', headers:_authHeaders()});
+    this._loaded = false;
+    await this.load(true);
+  },
+
+  sort(key, btn){
+    this._sort = key;
+    document.querySelectorAll('[data-sort]').forEach(b=>b.classList.remove('on'));
+    btn.classList.add('on');
+    this._render();
+  },
+
+  filterSector(sector, btn){
+    this._sector = sector;
+    document.querySelectorAll('[data-sector]').forEach(b=>b.classList.remove('on'));
+    btn.classList.add('on');
+    this._render();
+  },
+
+  _buildSectorChips(){
+    const sectors = [...new Set(this._data.map(d=>d.sector).filter(Boolean))].sort();
+    const wrap = document.getElementById('vp-sector-chips');
+    if(!wrap) return;
+    wrap.innerHTML = sectors.map(s=>
+      `<button class="vp-chip" data-sector="${s}" onclick="ValuePicks.filterSector('${s}',this)">${s}</button>`
+    ).join('');
+  },
+
+  _filtered(){
+    let d = [...this._data];
+    if(this._sector !== 'all') d = d.filter(x=>x.sector===this._sector);
+    const sortFns = {
+      decline: (a,b)=> b.decline_pct - a.decline_pct,
+      mktcap:  (a,b)=> b.mkt_cap_cr  - a.mkt_cap_cr,
+      pe:      (a,b)=> (a.pe_ratio||999) - (b.pe_ratio||999),
+      margin:  (a,b)=> b.gross_margin - a.gross_margin,
+    };
+    d.sort(sortFns[this._sort] || sortFns.decline);
+    return d;
+  },
+
+  _metricTag(label, val, good, warn){
+    if(val == null) return '';
+    const cls = val >= good ? 'good' : val >= warn ? '' : 'warn';
+    return `<span class="vp-metric ${cls}">${label}: <span>${val}</span></span>`;
+  },
+
+  _render(){
+    const body = document.getElementById('vp-body');
+    if(!body) return;
+    const items   = this._filtered();
+    const countEl = document.getElementById('vp-count');
+    if(countEl) countEl.textContent = `${items.length} stock${items.length!==1?'s':''}`;
+
+    if(!items.length){
+      body.innerHTML = `<div class="vp-empty" style="grid-column:1/-1">
+        <div style="font-size:40px">📭</div>
+        <div style="font-weight:700;color:var(--text2)">No stocks match right now</div>
+        <div>Currently no large-cap Indian stocks are trading ≥40% below their 52W high with strong fundamentals.</div>
+        <button class="vp-refresh" onclick="ValuePicks.refresh()">Re-run screener</button>
+      </div>`;
+      return;
+    }
+
+    const inWL = new Set(St.list.map(w=>w.symbol));
+    body.innerHTML = items.map(s=>{
+      const deep    = s.decline_pct >= 55;
+      const peLbl   = s.pe_ratio ? (s.pe_ratio < 15 ? 'Attractive' : s.pe_ratio < 25 ? 'Fair' : 'Expensive') : null;
+      const peClass = s.pe_ratio  ? (s.pe_ratio < 15 ? 'good' : s.pe_ratio < 25 ? '' : 'warn') : '';
+      const gmClass = s.gross_margin >= 40 ? 'good' : s.gross_margin >= 20 ? '' : 'warn';
+      const roeCls  = !s.roe ? '' : s.roe >= 15 ? 'good' : 'warn';
+      const added   = inWL.has(s.symbol);
+      return `
+      <div class="vp-card${deep?' deep-value':''}" onclick="ValuePicks.openStock('${s.symbol}','${(s.name||s.symbol).replace(/'/g,'\\'')}')">
+        <div class="vp-card-top">
+          <div>
+            <div class="vp-sym">${s.symbol.replace('.NS','')}</div>
+            <div class="vp-name">${s.name||s.symbol}</div>
+            <div class="vp-sector">${[s.sector,s.industry].filter(Boolean).join(' · ')}</div>
+          </div>
+          <div class="vp-decline-badge">↓ ${s.decline_pct}%</div>
+        </div>
+        <div class="vp-price-row">
+          <span class="vp-price">₹${s.price.toLocaleString('en-IN')}</span>
+          <span class="vp-52h">52W High ₹${s.week52_high.toLocaleString('en-IN')}</span>
+        </div>
+        <div class="vp-mktcap">Mkt Cap ₹${Number(s.mkt_cap_cr).toLocaleString('en-IN')} Cr${s.revenue_cr ? ' · Rev ₹'+Number(s.revenue_cr).toLocaleString('en-IN')+' Cr' : ''}</div>
+        <div class="vp-metrics">
+          ${s.pe_ratio ? `<span class="vp-metric ${peClass}">P/E <span>${s.pe_ratio} ${peLbl?'['+peLbl+']':''}</span></span>` : ''}
+          ${s.gross_margin != null ? `<span class="vp-metric ${gmClass}">Gross Margin <span>${s.gross_margin}%</span></span>` : ''}
+          ${s.roe != null ? `<span class="vp-metric ${roeCls}">ROE <span>${s.roe}%</span></span>` : ''}
+          ${s.eps  != null ? `<span class="vp-metric">EPS <span>₹${s.eps}</span></span>` : ''}
+          ${s.beta != null ? `<span class="vp-metric">Beta <span>${s.beta}</span></span>` : ''}
+          ${s.net_margin != null ? `<span class="vp-metric">Net Margin <span>${s.net_margin}%</span></span>` : ''}
+        </div>
+        <button class="vp-add-btn${added?' added':''}"
+          onclick="event.stopPropagation();ValuePicks.addToWL('${s.symbol}','${(s.name||s.symbol).replace(/'/g,'\\'')}',this)"
+        >${added ? '✓ In Watchlist' : '+ Add to Watchlist'}</button>
+      </div>`;
+    }).join('');
+  },
+
+  openStock(sym, name){
+    App.switchView('watchlist');
+    if(!St.list.find(w=>w.symbol===sym)) App.add(sym, name);
+    else { App.pick(sym); }
+  },
+
+  addToWL(sym, name, btn){
+    if(St.list.find(w=>w.symbol===sym)){
+      Toast.show('ℹ','Already tracking', sym+' is in your watchlist.'); return;
+    }
+    App.add(sym, name);
+    btn.textContent = '✓ In Watchlist';
+    btn.classList.add('added');
+  },
+
+  _showLoading(){
+    const body = document.getElementById('vp-body');
+    if(body) body.innerHTML = `<div class="vp-loading" style="grid-column:1/-1">
+      <div class="vp-spin"></div>
+      <div class="vp-progress">Scanning ${100}+ large-cap stocks…<br>Checking fundamentals & valuation</div>
+      <div style="font-size:11px;color:var(--text3)">This may take 30–60 seconds on first load. Results are cached for 6 hours.</div>
+    </div>`;
+  },
+
+  _showError(msg){
+    const body = document.getElementById('vp-body');
+    if(body) body.innerHTML = `<div class="vp-empty" style="grid-column:1/-1">
+      <div style="font-size:32px">⚠️</div><div>${msg}</div>
+    </div>`;
+  },
+};
 
 /* ── PWA service worker registration ── */
 if ('serviceWorker' in navigator) {
