@@ -6,13 +6,10 @@ echo "╔═══════════════════════�
 echo "║       StockPulse Backend Server      ║"
 echo "╚══════════════════════════════════════╝"
 
-# ── Load AI API key from stockpulse.env if it exists ──────────────────────
-# To set up: create a file called stockpulse.env next to this script with:
-#   GROQ_API_KEY=gsk_...
-# Get a FREE key at https://console.groq.com (no credit card needed)
+# ── Load keys from stockpulse.env ─────────────────────────────────────────
 if [ -f "stockpulse.env" ]; then
   export $(grep -v '^#' stockpulse.env | xargs) 2>/dev/null
-  echo "✓ Loaded API keys from stockpulse.env"
+  echo "✓ Loaded config from stockpulse.env"
 fi
 
 # Show AI status
@@ -24,6 +21,13 @@ else
   echo "⚠ AI chat disabled — no API key found"
   echo "  Get a FREE key: https://console.groq.com"
   echo "  Then add  GROQ_API_KEY=gsk_...  to stockpulse.env"
+fi
+
+# Show database status
+if [ -n "$DATABASE_URL" ]; then
+  echo "✓ Database: PostgreSQL (pgvector)"
+else
+  echo "✓ Database: SQLite (default)"
 fi
 
 echo ""

@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>StockPulse — India & Global Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:ital,wght@0,300..900;1,300..900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -15,6 +18,7 @@
   --green:#10b981;--red:#ef4444;--amber:#f59e0b;--blue:#60a5fa;--purple:#a78bfa;
   --radius:10px;--radius-sm:7px;--radius-xs:5px;
   --chart-grid:rgba(255,255,255,0.04);--chart-tick:#64748b;
+  --grad-accent:linear-gradient(135deg,#00d4aa 0%,#00a86b 100%);
 }
 /* ── Light mode ── */
 html.light{
@@ -24,11 +28,12 @@ html.light{
   --accent:#00a37a;--accent2:#008f6b;
   --green:#059669;--red:#dc2626;--amber:#d97706;--blue:#2563eb;--purple:#7c3aed;
   --chart-grid:rgba(0,0,0,0.06);--chart-tick:#94a3b8;
+  --grad-accent:linear-gradient(135deg,#00a37a 0%,#008f6b 100%);
 }
 html.light ::-webkit-scrollbar-thumb{background:var(--border2)}
 html.light .chload{background:rgba(240,244,248,0.88)}
 html.light .toast{box-shadow:0 8px 24px rgba(0,0,0,.15)}
-body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;min-height:100vh;overflow-x:hidden;transition:background .25s,color .25s}
+body{background:var(--bg);color:var(--text);font-family:'Figtree',system-ui,sans-serif;font-size:14px;min-height:100vh;overflow-x:hidden;transition:background .25s,color .25s}
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
@@ -77,9 +82,9 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 18p
 .witem.on{background:var(--card2);border-color:var(--accent)}
 .wit{display:flex;align-items:center;justify-content:space-between}
 .wsym{font-weight:800;font-size:13px;color:var(--text)}
-.wprice{font-weight:700;font-size:13px;font-variant-numeric:tabular-nums}
+.wprice{font-weight:600;font-size:13px;font-variant-numeric:tabular-nums;font-family:'JetBrains Mono',monospace}
 .wname{font-size:11px;color:var(--text3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:115px}
-.wchg{font-size:11px;font-weight:600;text-align:right;margin-top:2px}
+.wchg{font-size:11px;font-weight:600;text-align:right;margin-top:2px;font-family:'JetBrains Mono',monospace}
 .pos{color:var(--green)}.neg{color:var(--red)}
 .wrmbtn{position:absolute;top:5px;right:5px;width:16px;height:16px;background:rgba(239,68,68,.8);border:none;border-radius:50%;color:#fff;font-size:9px;cursor:pointer;display:none;align-items:center;justify-content:center}
 .witem:hover .wrmbtn{display:flex}
@@ -87,9 +92,12 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 18p
 .sbempty{padding:32px 14px;text-align:center;color:var(--text3);font-size:12px;line-height:1.8}
 /* Detail */
 .detail{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
-.dempty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text3);gap:8px}
-.dempty-icon{font-size:48px;opacity:.35}
-.dempty-txt{font-size:14px;font-weight:600;color:var(--text2)}
+.dempty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text3);gap:10px;padding:40px}
+.dempty-icon{font-size:52px;opacity:.3;filter:grayscale(1)}
+.dempty-txt{font-size:15px;font-weight:700;color:var(--text2)}
+.dempty-hint{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-top:4px}
+.dempty-tag{padding:4px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:12px;font-size:11px;font-weight:600;color:var(--text3);cursor:pointer;transition:.12s}
+.dempty-tag:hover{border-color:var(--accent);color:var(--accent)}
 /* Detail header */
 .dhdr{background:var(--bg2);border-bottom:1px solid var(--border);padding:12px 22px;display:flex;align-items:flex-start;gap:14px;flex-shrink:0;flex-wrap:wrap;min-height:80px}
 .dlogo{width:42px;height:42px;border-radius:9px;background:var(--card);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:900;color:var(--accent);flex-shrink:0;overflow:hidden}
@@ -103,9 +111,9 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 18p
 .bx-cap{background:rgba(167,139,250,.1);color:var(--purple);border:1px solid rgba(167,139,250,.2)}
 .bx-pe{background:rgba(251,191,36,.1);color:var(--amber);border:1px solid rgba(251,191,36,.2)}
 .price-area{margin-left:auto;text-align:right;min-width:150px}
-.pbig{font-size:26px;font-weight:900;font-variant-numeric:tabular-nums}
-.pchg{font-size:12px;font-weight:600;margin-top:3px}
-.pohlc{font-size:10px;color:var(--text3);margin-top:3px}
+.pbig{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;font-family:'JetBrains Mono',monospace;letter-spacing:-0.5px}
+.pchg{font-size:12px;font-weight:600;margin-top:3px;font-family:'JetBrains Mono',monospace}
+.pohlc{font-size:10px;color:var(--text3);margin-top:3px;font-family:'JetBrains Mono',monospace}
 .psrc{font-size:9px;color:var(--text3);margin-top:2px}
 /* Tabs */
 .tabs{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 22px;display:flex;flex-shrink:0;overflow-x:auto}
@@ -118,8 +126,8 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 18p
 /* Chart */
 .chart-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:18px}
 .chart-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px;gap:10px;flex-wrap:wrap}
-.chart-price-area .clive{font-size:20px;font-weight:900;font-variant-numeric:tabular-nums}
-.chart-price-area .cchg{font-size:12px;font-weight:600;margin-top:2px}
+.chart-price-area .clive{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;font-family:'JetBrains Mono',monospace}
+.chart-price-area .cchg{font-size:12px;font-weight:600;margin-top:2px;font-family:'JetBrains Mono',monospace}
 .chart-price-area .ctitle{font-size:10px;color:var(--text3);margin-bottom:4px}
 .rbns{display:flex;gap:4px;flex-wrap:wrap}
 .rbn{padding:4px 10px;background:transparent;border:1px solid var(--border);border-radius:11px;color:var(--text3);font-size:11px;font-weight:600;cursor:pointer;transition:.12s}
@@ -136,7 +144,7 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 18p
 .sgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-bottom:18px}
 .sbox{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:11px 12px}
 .slbl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:3px}
-.sval{font-size:14px;font-weight:800;color:var(--text);font-variant-numeric:tabular-nums}
+.sval{font-size:14px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums;font-family:'JetBrains Mono',monospace}
 /* Section title */
 .stitle{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:10px;display:flex;align-items:center;gap:7px}
 .stitle::before{content:'';display:inline-block;width:3px;height:13px;background:var(--accent);border-radius:2px}
@@ -172,7 +180,7 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 18p
 .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
 .fbox{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:13px}
 .flbl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:3px}
-.fval{font-size:17px;font-weight:800;color:var(--text);margin-bottom:3px}
+.fval{font-size:17px;font-weight:700;color:var(--text);margin-bottom:3px;font-family:'JetBrains Mono',monospace}
 .fyoy{font-size:10px;font-weight:600;display:flex;align-items:center;gap:3px}
 .yp{color:var(--green)}.yn{color:var(--red)}
 .rchwrap{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:12px;height:210px}
@@ -225,6 +233,13 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 18p
 .nodata{text-align:center;padding:40px 20px;color:var(--text3);font-size:12px;line-height:1.7}
 .nload{text-align:center;padding:40px;color:var(--text3)}
 .nspin{width:22px;height:22px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 9px}
+/* Loading skeleton pulse */
+@keyframes skelpulse{0%,100%{opacity:.45}50%{opacity:.9}}
+.skel{background:var(--border);border-radius:4px;animation:skelpulse 1.4s ease infinite}
+.wchg-skel{width:44px;height:10px;display:inline-block}
+/* Retry button */
+.retry-btn{margin-top:10px;padding:6px 14px;background:var(--bg3);border:1px solid var(--border2);border-radius:14px;color:var(--accent);font-size:11px;font-weight:600;cursor:pointer;font-family:'Figtree',sans-serif;transition:.15s}
+.retry-btn:hover{border-color:var(--accent);background:rgba(0,212,170,.06)}
 /* ═══════════════════════════════════════
    RESPONSIVE — mobile-first breakpoints
    ═══════════════════════════════════════ */
@@ -397,7 +412,7 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 18p
   display:flex;align-items:center;gap:10px;flex-shrink:0;background:var(--bg2);
 }
 .chat-hdr-icon{font-size:24px;flex-shrink:0}
-.chat-hdr-title{font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:800;color:var(--text)}
+.chat-hdr-title{font-family:'Figtree',sans-serif;font-size:14px;font-weight:800;color:var(--text)}
 .chat-hdr-sub{font-size:10px;color:var(--text3);margin-top:1px}
 .chat-close{margin-left:auto;background:none;border:none;color:var(--text3);
   font-size:18px;cursor:pointer;padding:2px 6px;border-radius:5px;line-height:1}
@@ -422,7 +437,7 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 18p
 .chat-qbtn{
   padding:4px 10px;background:var(--bg3);border:1px solid var(--border2);
   border-radius:12px;color:var(--text2);font-size:10px;font-weight:600;
-  font-family:'Space Grotesk',sans-serif;cursor:pointer;transition:.12s;white-space:nowrap;
+  font-family:'Figtree',sans-serif;cursor:pointer;transition:.12s;white-space:nowrap;
 }
 .chat-qbtn:hover{border-color:var(--accent);color:var(--accent)}
 
@@ -499,18 +514,27 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 18p
     </div>
     <div class="detail" id="det">
       <div class="dempty" id="dempty">
-        <div class="dempty-icon">📊</div>
-        <div class="dempty-txt">Add a stock to get started</div>
-        <div style="font-size:12px;color:var(--text3);margin-top:4px">Popular: RELIANCE.NS · TCS.NS · HDFC.NS · INFY.NS</div>
+        <div class="dempty-icon">📈</div>
+        <div class="dempty-txt">Search above to add stocks</div>
+        <div style="font-size:12px;color:var(--text3)">Popular picks</div>
+        <div class="dempty-hint">
+          <span class="dempty-tag" onclick="App._pick('RELIANCE.NS','Reliance Industries')">RELIANCE</span>
+          <span class="dempty-tag" onclick="App._pick('TCS.NS','Tata Consultancy Services')">TCS</span>
+          <span class="dempty-tag" onclick="App._pick('INFY.NS','Infosys Ltd.')">INFY</span>
+          <span class="dempty-tag" onclick="App._pick('HDFCBANK.NS','HDFC Bank')">HDFC Bank</span>
+          <span class="dempty-tag" onclick="App._pick('AAPL','Apple Inc.')">AAPL</span>
+          <span class="dempty-tag" onclick="App._pick('NVDA','NVIDIA Corp.')">NVDA</span>
+        </div>
       </div>
       <div id="dcont" style="display:none;flex-direction:column;flex:1;overflow:hidden">
         <div class="dhdr" id="dhdr"></div>
         <div class="tabs">
-          <button class="tbtn on" data-t="overview"   onclick="App.tab('overview',this)">Overview</button>
-          <button class="tbtn"    data-t="news"       onclick="App.tab('news',this)">News & Alerts</button>
-          <button class="tbtn"    data-t="financials" onclick="App.tab('financials',this)">Financials</button>
-          <button class="tbtn"    data-t="company"    onclick="App.tab('company',this)">Company</button>
-          <button class="tbtn"    data-t="insights"   onclick="App.tab('insights',this)">Insights</button>
+          <button class="tbtn on" data-t="overview"    onclick="App.tab('overview',this)">Overview</button>
+          <button class="tbtn"    data-t="news"        onclick="App.tab('news',this)">News & Alerts</button>
+          <button class="tbtn"    data-t="financials"  onclick="App.tab('financials',this)">Financials</button>
+          <button class="tbtn"    data-t="performance" onclick="App.tab('performance',this)">Performance</button>
+          <button class="tbtn"    data-t="company"     onclick="App.tab('company',this)">Company</button>
+          <button class="tbtn"    data-t="insights"    onclick="App.tab('insights',this)">Insights</button>
         </div>
         <div class="tc" id="tc"></div>
       </div>
@@ -560,9 +584,6 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 18p
 
 <script>
 'use strict';
-
-/* ─── CONFIG ─── */
-const FH_KEY = 'vd7l5h51r01qm7o0aj74gd7l5h51r01qm7o0aj750';
 
 /* ─── STOCK LISTS ─── */
 const NSE = [
@@ -637,7 +658,9 @@ function setSrc(id,state){ // state: 'ok'|'err'|''
 }
 
 /* ─── BACKEND API ─── */
-const API = 'http://localhost:5001/api';
+const API = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+  ? 'http://localhost:5001/api'
+  : '/api';
 let _backendOk = false;
 
 async function apiGet(path, ms=15000){
@@ -825,7 +848,7 @@ const St = {
 };
 
 /* ─── CHART ENGINE ─── */
-let PChart=null, RChart=null;
+let PChart=null, RChart=null, YChart=null;
 let _chartLock=false; // prevent concurrent draws
 
 async function drawPriceChart(sym, range){
@@ -1025,7 +1048,7 @@ function rWatchlist(){
   const el=document.getElementById('wlist');
   document.getElementById('wcnt').textContent=St.list.length;
   if(!St.list.length){
-    el.innerHTML='<div class="sbempty">Search above to add stocks.<br><br>Try: <b>RELIANCE.NS</b></div>'; return;
+    el.innerHTML='<div class="sbempty">Search above to add stocks.<br><br>Try: <b>RELIANCE.NS</b> · <b>TCS.NS</b><br><b>INFY.NS</b> · <b>AAPL</b></div>'; return;
   }
   el.innerHTML=St.list.map(({symbol:s,name:n})=>{
     const q=St.quotes[s]||{};
@@ -1033,7 +1056,7 @@ function rWatchlist(){
     return `<div class="witem ${St.sym===s?'on':''}" onclick="App.pick('${s}')">
       <button class="wrmbtn" onclick="event.stopPropagation();App.rm('${s}')" title="Remove">✕</button>
       <div class="wit"><span class="wsym">${base(s)}${hasNew(s)?'<span class="ndot"></span>':''}</span><span class="wprice ${cls}">${Fmt.price(q.c,s)}</span></div>
-      <div style="display:flex;justify-content:space-between"><span class="wname">${n}</span><span class="wchg ${cls}">${q.dp!=null?Fmt.pct(q.dp):'loading…'}</span></div>
+      <div style="display:flex;justify-content:space-between"><span class="wname">${n}</span><span class="wchg ${cls}">${q.dp!=null?Fmt.pct(q.dp):'<span class="skel wchg-skel"></span>'}</span></div>
     </div>`;
   }).join('');
 }
@@ -1135,7 +1158,7 @@ function nCard(a, sym, chkNew=true){
 
 function rNews(sym){
   const arts=St.news[sym]||[];
-  if(!arts.length) return `<div class="nload"><div class="nspin"></div>Fetching news from Economic Times, Moneycontrol, Business Standard, LiveMint &amp; Finnhub…<br><br>This may take a few seconds.</div>`;
+  if(!arts.length) return `<div class="nload"><div class="nspin"></div>Fetching news from Economic Times, Moneycontrol &amp; more…<br><br><button class="retry-btn" onclick="DS.getNews('${sym}').then(a=>{if(a?.length){St.news['${sym}']=a;App.tab('news',document.querySelector('.tbtn[data-t=\\'news\\']'))}})">Retry</button></div>`;
   const sources=[...new Set(arts.map(a=>a.source))].slice(0,6);
   const cats=['all','contract','results','earn','acq','part','gen'];
   const cLabels={all:'All',contract:'📋 Contracts',results:'📊 Results',earn:'Earnings',acq:'Acquisition',part:'Partnership',gen:'General'};
@@ -1146,7 +1169,7 @@ function rNews(sym){
       <span style="margin-left:auto;font-size:10px;color:var(--text3)">${directCount} direct · ${arts.length-directCount} related</span>
     </div>
     <div class="nfilts" id="nfilts">
-      ${cats.map(c=>`<button class="nfbtn ${c==='all'?'on':''}" onclick="App.filterNews('${sym}','${c}','all',this)">${cLabels[c]}</button>`).join('')}
+      ${cats.map(c=>`<button class="nfbtn ${c==='all'?'on':''}" data-cat="${c}" onclick="App.filterNews('${sym}','${c}','all',this)">${cLabels[c]}</button>`).join('')}
       <button class="nfbtn" style="margin-left:auto;border-color:var(--accent);color:var(--accent)" id="rel-toggle" onclick="App.toggleRelFilter('${sym}',this)">⬤ Direct only</button>
     </div>
     <div class="nlist" id="nlist">${arts.map(a=>nCard(a,sym)).join('')}</div>`;
@@ -1154,7 +1177,7 @@ function rNews(sym){
 
 function rFinancials(sym){
   const f=St.fins[sym];
-  if(!f?.quarters?.length) return `<div class="nodata">Financial data is loading…<br>Try refreshing if it doesn't appear.</div>`;
+  if(!f?.quarters?.length) return `<div class="nodata">Financial data is loading…<br><button class="retry-btn" onclick="DS.getFinancials('${sym}').then(f=>{if(f){St.fins['${sym}']=f;App.tab('financials',document.querySelector('.tbtn[data-t=\\'financials\\']'))}})">Retry</button></div>`;
   const lq=f.quarters[0];
   const revVals=f.quarters.map(q=>q.revenue||0);
   const maxR=revVals.length ? Math.max(...revVals) : 0;
@@ -1283,6 +1306,127 @@ function rInsights(sym){
         </div>
       </div>
     </div>`;
+}
+
+/* ─── PERFORMANCE TAB ─── */
+
+function rPerformance(sym, d) {
+  const ar   = d.annual_returns || [];
+  const wins = ar.filter(r => r.return > 0).length;
+  const c1   = d.cagr_1y, c3 = d.cagr_3y, c5 = d.cagr_5y;
+  const vol  = d.volatility, mdd = d.max_drawdown;
+  const best = d.best_year, worst = d.worst_year;
+
+  const fmtCagr = v => v == null ? '—' : `${v >= 0 ? '+' : ''}${v}%`;
+  const riskLbl = vol == null ? '—' : vol < 20 ? 'Low' : vol < 35 ? 'Medium' : 'High';
+  const riskCls = vol == null ? '' : vol < 20 ? 'pos' : vol < 35 ? '' : 'neg';
+  const trendUp = (c5 != null && c5 > 8) || (c3 != null && c3 > 5) || (c1 != null && c1 > 5);
+  const trendDn = (c5 != null && c5 < -5) || (c3 != null && c3 < -5) || (c1 != null && c1 < -10);
+
+  return `
+  <div class="stitle">Performance Snapshot</div>
+  <div class="sgrid" style="grid-template-columns:repeat(3,1fr)">
+    <div class="sbox"><div class="slbl">1Y Return</div><div class="sval ${c1!=null?(c1>=0?'pos':'neg'):''}">${fmtCagr(c1)}</div></div>
+    <div class="sbox"><div class="slbl">3Y CAGR</div><div class="sval ${c3!=null?(c3>=0?'pos':'neg'):''}">${fmtCagr(c3)}</div></div>
+    <div class="sbox"><div class="slbl">5Y CAGR</div><div class="sval ${c5!=null?(c5>=0?'pos':'neg'):''}">${fmtCagr(c5)}</div></div>
+    <div class="sbox"><div class="slbl">Annualised Volatility</div><div class="sval ${riskCls}">${vol != null ? vol + '%' : '—'}</div></div>
+    <div class="sbox"><div class="slbl">Max Drawdown</div><div class="sval neg">${mdd != null ? '-' + mdd + '%' : '—'}</div></div>
+    <div class="sbox"><div class="slbl">Winning Years</div><div class="sval ${wins / (ar.length||1) >= 0.5 ? 'pos' : 'neg'}">${ar.length ? wins + '/' + ar.length : '—'}</div></div>
+  </div>
+
+  ${ar.length ? `
+  <div class="stitle">Year-by-Year Returns</div>
+  <div class="rchwrap" style="height:210px;margin-bottom:0"><canvas id="yrctx"></canvas></div>
+  <div style="overflow-x:auto;margin-top:14px">
+    <table class="qtbl">
+      <thead><tr><th>Year</th><th>Start Price</th><th>End Price</th><th>Annual Return</th></tr></thead>
+      <tbody>
+        ${(()=>{const curYr=new Date().getFullYear();return ar.map(r => `<tr>
+          <td style="font-weight:700;color:var(--text)">${r.year}${r.year===curYr?' <span style="font-size:9px;color:var(--text3);font-weight:400">(YTD)</span>':''}</td>
+          <td>${Fmt.price(r.first, sym)}</td>
+          <td>${Fmt.price(r.last, sym)}</td>
+          <td class="${r.return >= 0 ? 'pos' : 'neg'}" style="font-weight:700;font-family:'JetBrains Mono',monospace">
+            ${r.return >= 0 ? '+' : ''}${r.return}%
+          </td>
+        </tr>`).join('');})()}
+      </tbody>
+    </table>
+  </div>` : ''}
+
+  ${best || worst ? `
+  <div class="stitle" style="margin-top:18px">Historical Extremes</div>
+  <div class="fgrid">
+    ${best  ? `<div class="fbox"><div class="flbl">🏆 Best Year</div><div class="fval pos">${best.year}: +${best.return}%</div><div style="font-size:10px;color:var(--text3);margin-top:3px">${Fmt.price(best.first,sym)} → ${Fmt.price(best.last,sym)}</div></div>` : ''}
+    ${worst ? `<div class="fbox"><div class="flbl">📉 Worst Year</div><div class="fval neg">${worst.year}: ${worst.return}%</div><div style="font-size:10px;color:var(--text3);margin-top:3px">${Fmt.price(worst.first,sym)} → ${Fmt.price(worst.last,sym)}</div></div>` : ''}
+  </div>` : ''}
+
+  <div class="stitle" style="margin-top:18px">Trend Assessment</div>
+  <div class="icard ${trendUp ? 'bull' : trendDn ? 'bear' : ''}">
+    <div class="ilbl">${trendUp ? '▲ Positive Long-Term Trend' : trendDn ? '▼ Negative Long-Term Trend' : '● Mixed / Sideways Trend'}</div>
+    <div class="itxt">
+      ${c5 != null ? `5Y CAGR: ${fmtCagr(c5)}. ` : ''}
+      ${c3 != null ? `3Y CAGR: ${fmtCagr(c3)}. ` : ''}
+      ${c1 != null ? `1Y return: ${fmtCagr(c1)}. ` : ''}
+      ${vol != null ? `Volatility is <b>${riskLbl}</b> at ${vol}% annualised. ` : ''}
+      ${mdd != null ? `Worst peak-to-trough decline: -${mdd}%.` : ''}
+    </div>
+  </div>
+
+  <div style="font-size:10px;color:var(--text3);margin-top:8px;padding:9px 12px;background:rgba(245,158,11,.06);border-radius:7px;border-left:2px solid var(--amber)">
+    ⚠ Past performance does not guarantee future results. For informational purposes only — not financial advice.
+  </div>`;
+}
+
+function drawYearlyChart(ar) {
+  if (YChart) { try { YChart.destroy(); } catch {} YChart = null; }
+  const ctx = document.getElementById('yrctx');
+  if (!ctx || !ar?.length) return;
+  const isLight = document.documentElement.classList.contains('light');
+  const gridClr = isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.04)';
+  const tickClr = isLight ? '#94a3b8' : '#64748b';
+  YChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: ar.map(r => r.year),
+      datasets: [{
+        data: ar.map(r => r.return),
+        backgroundColor: ar.map(r => r.return >= 0 ? 'rgba(16,185,129,0.78)' : 'rgba(239,68,68,0.78)'),
+        borderRadius: 5,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: item => `  ${item.raw >= 0 ? '+' : ''}${item.raw}%`,
+          },
+        },
+      },
+      scales: {
+        x: { ticks: { color: tickClr, font: { size: 11 } }, grid: { color: gridClr } },
+        y: {
+          ticks: { color: tickClr, font: { size: 10 }, callback: v => v + '%' },
+          grid: { color: gridClr },
+        },
+      },
+    },
+  });
+}
+
+async function loadAndRenderPerformance(sym) {
+  if (YChart) { try { YChart.destroy(); } catch {} YChart = null; }
+  const tc = document.getElementById('tc');
+  tc.innerHTML = '<div class="nload"><div class="nspin"></div>Loading 5-year performance data…</div>';
+  const d = await apiGet('/performance/' + encodeURIComponent(sym), 35000);
+  if (!d) {
+    tc.innerHTML = `<div class="nodata">Could not load performance data.<br>Load the 1Y or 5Y chart first to cache history.<br>
+      <button class="retry-btn" onclick="loadAndRenderPerformance('${sym}')">Retry</button></div>`;
+    return;
+  }
+  tc.innerHTML = rPerformance(sym, d);
+  setTimeout(() => drawYearlyChart(d.annual_returns), 50);
 }
 
 /* ─── SEARCH HELPERS ─── */
@@ -1467,11 +1611,12 @@ const App = {
     if(btn) btn.classList.add('on');
     const sym=St.sym; if(!sym) return;
     const tc=document.getElementById('tc');
-    if     (name==='overview')   { tc.innerHTML=rOverview(sym);    setTimeout(()=>drawPriceChart(sym,St.range),50); }
-    else if(name==='news')       { tc.innerHTML=rNews(sym);        this.seenAll(sym); }
-    else if(name==='financials') { tc.innerHTML=rFinancials(sym);  setTimeout(()=>drawRevenueChart(St.fins[sym],sym),50); }
-    else if(name==='company')    { tc.innerHTML=rCompany(sym); }
-    else if(name==='insights')   { tc.innerHTML=rInsights(sym); }
+    if     (name==='overview')    { tc.innerHTML=rOverview(sym);    setTimeout(()=>drawPriceChart(sym,St.range),50); }
+    else if(name==='news')        { tc.innerHTML=rNews(sym);        this.seenAll(sym); }
+    else if(name==='financials')  { tc.innerHTML=rFinancials(sym);  setTimeout(()=>drawRevenueChart(St.fins[sym],sym),50); }
+    else if(name==='performance') { loadAndRenderPerformance(sym); }
+    else if(name==='company')     { tc.innerHTML=rCompany(sym); }
+    else if(name==='insights')    { tc.innerHTML=rInsights(sym); }
   },
 
   chRange(r, btn){
@@ -1496,11 +1641,9 @@ const App = {
   toggleRelFilter(sym,btn){
     this._relStrict=!this._relStrict;
     btn.classList.toggle('on', this._relStrict);
-    // Re-apply current category filter
     const activeBtn=document.querySelector('#nfilts .nfbtn.on:not(#rel-toggle)');
-    const cat=activeBtn?activeBtn.textContent.toLowerCase().replace(/ /g,''):'all';
-    const catMap={'all':'all','earnings':'earn','acquisition':'acq','partnership':'part','general':'gen'};
-    this.filterNews(sym, catMap[cat]||'all', null, null);
+    const cat=activeBtn?.dataset?.cat||'all';
+    this.filterNews(sym, cat, null, null);
   },
 
   toggleSidebar(){
@@ -1649,20 +1792,37 @@ const Chat = {
     );
   },
 
+  _qs: [],   // stores quick-action queries by index — avoids HTML-escaping issues
+
   updateQuickActions() {
+    Chat._qs = [];
     const el  = document.getElementById('chat-quick');
     if (!el) return;
     const sym  = St.sym;
     const name = sym ? (St.profiles[sym]?.name || base(sym)) : null;
-    const btns = [
-      sym ? { label: `Analyze ${base(sym)}`,     q: `Give me a brief analysis of ${name||sym} — recent performance, news, and outlook.` } : null,
-      sym ? { label: `${base(sym)} contracts`,   q: `What contract wins or order announcements has ${name||sym} had recently?` }           : null,
-      sym ? { label: `${base(sym)} earnings`,    q: `Summarize the latest quarterly earnings for ${name||sym}.` }                          : null,
-      { label: 'Compare watchlist', q: 'Compare the stocks in my watchlist — recent performance, news sentiment, and standout movers.' },
+    const b    = sym ? base(sym) : '';
+    const actions = [
+      sym ? { label: `📊 Analyse ${b}`,      q: `Give me a comprehensive analysis of ${name||sym} — current price movement, recent news, financial health, and near-term outlook.` } : null,
+      sym ? { label: `📋 Contracts & Orders`, q: `What are the recent contract wins, government orders, or major deals announced by ${name||sym}? Include amounts if mentioned.` } : null,
+      sym ? { label: `📈 Earnings & Results`, q: `Summarise the latest quarterly and annual financial results for ${name||sym}. Cover revenue, net profit, margins, and year-on-year comparison.` } : null,
+      sym ? { label: `🔮 Predict Next Quarter`, q: `Based on ${name||sym}'s multi-year performance history, recent earnings trend, and current news, predict how the next quarter might look. What are the key growth drivers and downside risks?` } : null,
+      sym ? { label: `⚠️ Risks`,              q: `What are the main risks, concerns, or negative developments for ${name||sym} based on recent news, financials, and market position?` } : null,
+      { label: `💼 Compare Watchlist`,        q: `Compare all stocks in my watchlist — recent performance, news sentiment, key financial metrics, and which stands out positively or negatively.` },
     ].filter(Boolean);
-    el.innerHTML = btns.map(b =>
-      `<button class="chat-qbtn" onclick="Chat.prefill(${JSON.stringify(b.q)})">${b.label}</button>`
+    Chat._qs = actions.map(a => a.q);
+    el.innerHTML = actions.map((a, i) =>
+      `<button class="chat-qbtn" onclick="Chat.sendQuick(${i})">${a.label}</button>`
     ).join('');
+  },
+
+  sendQuick(idx) {
+    const q = Chat._qs[idx];
+    if (!q) return;
+    const inp = document.getElementById('chat-inp');
+    inp.value = q;
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(inp.scrollHeight, 100) + 'px';
+    this.send();
   },
 
   prefill(q) {

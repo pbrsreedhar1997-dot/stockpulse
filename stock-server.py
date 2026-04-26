@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-StockPulse Backend — Flask + SQLite + yfinance
+StockPulse Backend — Flask + yfinance + PostgreSQL (pgvector) or SQLite
 Serves Indian (NSE/BSE) and US stock data without CORS issues.
 """
 
@@ -13,11 +13,16 @@ import yfinance as yf
 import numpy as np
 import groq as groq_sdk
 import anthropic
-from flask import Flask, jsonify, request, g, Response, stream_with_context
+from flask import Flask, jsonify, request, g, Response, stream_with_context, send_from_directory
 from flask_cors import CORS
+from db import (
+    USE_PG, DB_PATH,
+    get_db, close_db, init_db,
+    store_embedding_vec, retrieve_top_chunks as db_retrieve_top_chunks,
+    thread_connection,
+)
 
 # ── Config ──────────────────────────────────────────────────────────────────
-DB_PATH   = os.path.join(os.path.dirname(__file__), 'stockpulse.db')
 CACHE_TTL = 60          # seconds — quote cache lifetime
 HIST_TTL  = 300         # seconds — history cache lifetime
 NEWS_TTL  = 600         # seconds — news cache lifetime
@@ -27,6 +32,15 @@ log = logging.getLogger('stockpulse')
 
 app = Flask(__name__)
 CORS(app, origins='*')
+app.teardown_appcontext(close_db)
+
+@app.after_request
+def add_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    return response
 
 # ── Embedding model (lazy-loaded) ────────────────────────────────────────────
 _embed_model      = None
@@ -47,136 +61,8 @@ def get_embed_model():
                     log.error(f'Embedding model load failed: {e}')
     return _embed_model
 
-# ── Database ─────────────────────────────────────────────────────────────────
-SCHEMA = """
-PRAGMA journal_mode=WAL;
-
-CREATE TABLE IF NOT EXISTS watchlist (
-    symbol      TEXT PRIMARY KEY,
-    name        TEXT,
-    exchange    TEXT,
-    added_at    INTEGER DEFAULT (strftime('%s','now'))
-);
-
-CREATE TABLE IF NOT EXISTS quotes (
-    symbol      TEXT PRIMARY KEY,
-    price       REAL,
-    open        REAL,
-    high        REAL,
-    low         REAL,
-    prev_close  REAL,
-    change      REAL,
-    change_pct  REAL,
-    volume      INTEGER,
-    mkt_cap     REAL,
-    currency    TEXT,
-    fetched_at  INTEGER DEFAULT (strftime('%s','now'))
-);
-
-CREATE TABLE IF NOT EXISTS history (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    symbol      TEXT NOT NULL,
-    range_key   TEXT NOT NULL,
-    ts          INTEGER NOT NULL,
-    open        REAL,
-    high        REAL,
-    low         REAL,
-    close       REAL,
-    volume      INTEGER,
-    UNIQUE(symbol, range_key, ts)
-);
-CREATE INDEX IF NOT EXISTS idx_history ON history(symbol, range_key, ts DESC);
-
-CREATE TABLE IF NOT EXISTS profiles (
-    symbol      TEXT PRIMARY KEY,
-    name        TEXT,
-    sector      TEXT,
-    industry    TEXT,
-    exchange    TEXT,
-    currency    TEXT,
-    website     TEXT,
-    description TEXT,
-    employees   INTEGER,
-    country     TEXT,
-    logo_url    TEXT,
-    fetched_at  INTEGER DEFAULT (strftime('%s','now'))
-);
-
-CREATE TABLE IF NOT EXISTS financials (
-    symbol          TEXT PRIMARY KEY,
-    market_cap      REAL,
-    revenue_ttm     REAL,
-    revenue_q       REAL,
-    revenue_q_prev  REAL,
-    net_income_ttm  REAL,
-    gross_margin    REAL,
-    pe_ratio        REAL,
-    eps             REAL,
-    dividend_yield  REAL,
-    beta            REAL,
-    week52_high     REAL,
-    week52_low      REAL,
-    avg_volume      INTEGER,
-    fetched_at      INTEGER DEFAULT (strftime('%s','now'))
-);
-
-CREATE TABLE IF NOT EXISTS news (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    symbol      TEXT NOT NULL,
-    source      TEXT,
-    title       TEXT NOT NULL,
-    url         TEXT,
-    published   INTEGER,
-    summary     TEXT,
-    relevance   TEXT DEFAULT 'medium',
-    fetched_at  INTEGER DEFAULT (strftime('%s','now')),
-    UNIQUE(symbol, url)
-);
-CREATE INDEX IF NOT EXISTS idx_news ON news(symbol, published DESC);
-
-CREATE TABLE IF NOT EXISTS search_cache (
-    query       TEXT PRIMARY KEY,
-    results     TEXT,
-    fetched_at  INTEGER DEFAULT (strftime('%s','now'))
-);
-
-CREATE TABLE IF NOT EXISTS embeddings (
-    chunk_id    INTEGER PRIMARY KEY AUTOINCREMENT,
-    symbol      TEXT NOT NULL,
-    content     TEXT NOT NULL,
-    vector      BLOB NOT NULL,
-    source      TEXT,
-    article_url TEXT,
-    ts          INTEGER DEFAULT (strftime('%s','now'))
-);
-CREATE INDEX IF NOT EXISTS idx_embed_symbol ON embeddings(symbol, ts DESC);
-"""
-
-def get_db():
-    if 'db' not in g:
-        g.db = sqlite3.connect(DB_PATH)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
-    return g.db
-
-@app.teardown_appcontext
-def close_db(e=None):
-    db = g.pop('db', None)
-    if db: db.close()
-
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.executescript(SCHEMA)
-    conn.commit()
-    # Migrate: add category column to news if not present
-    try:
-        conn.execute("ALTER TABLE news ADD COLUMN category TEXT DEFAULT 'gen'")
-        conn.commit()
-        log.info('Migrated news table: added category column')
-    except sqlite3.OperationalError:
-        pass  # column already exists
-    conn.close()
-    log.info(f'Database ready at {DB_PATH}')
+# ── Database — delegated to db.py ────────────────────────────────────────────
+# get_db, close_db, init_db are imported from db.py at the top of this file.
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 def now_ts():
@@ -193,102 +79,67 @@ def rows_to_list(rows):
 
 # ── Embedding helpers ────────────────────────────────────────────────────────
 
-def _embed_text(text: str):
-    """Encode text to float32 bytes for SQLite BLOB storage."""
+def _embed_vec(text: str):
+    """Encode text → float32 numpy array (384-dim).  Returns None on failure."""
     model = get_embed_model()
     if not model:
         return None
     try:
-        return model.encode(text, convert_to_numpy=True).astype(np.float32).tobytes()
+        return model.encode(text, convert_to_numpy=True).astype(np.float32)
     except Exception as e:
-        log.warning(f'_embed_text: {e}')
+        log.warning(f'_embed_vec: {e}')
         return None
-
-def _cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
-    d = np.linalg.norm(a) * np.linalg.norm(b)
-    return float(np.dot(a, b) / d) if d else 0.0
 
 def store_embedding(conn, symbol: str, content: str, source: str,
                     article_url: str = '', ts: int = None):
-    """Generate and store an embedding; skips duplicates by (symbol, article_url)."""
-    if not content or len(content.strip()) < 40:
-        return
-    if article_url and conn.execute(
-            'SELECT 1 FROM embeddings WHERE symbol=? AND article_url=?',
-            (symbol, article_url)).fetchone():
-        return  # already embedded
-    vec = _embed_text(content)
+    """Encode content and persist via db.store_embedding_vec (PG or SQLite)."""
+    vec = _embed_vec(content)
     if vec is None:
         return
-    conn.execute(
-        'INSERT INTO embeddings (symbol,content,vector,source,article_url,ts) VALUES (?,?,?,?,?,?)',
-        (symbol, content[:2000], vec, source, article_url or '', ts or now_ts()))
-    conn.commit()
+    store_embedding_vec(conn, symbol, content, vec, source, article_url, ts or now_ts())
 
 def retrieve_top_chunks(symbols: list, query: str, top_k: int = 5) -> list:
-    """Embed query and return top-k most similar chunks for the given symbols."""
-    model = get_embed_model()
-    if not model or not symbols:
+    """Embed query string and return top-k similar chunks via db layer."""
+    q_vec = _embed_vec(query)
+    if q_vec is None or not symbols:
         return []
-    q_vec = model.encode(query, convert_to_numpy=True).astype(np.float32)
-    conn  = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    placeholders = ','.join('?' * len(symbols))
-    rows = conn.execute(
-        f'SELECT symbol,content,vector,source,article_url,ts FROM embeddings WHERE symbol IN ({placeholders})',
-        symbols).fetchall()
-    conn.close()
-    scored = []
-    for r in rows:
-        try:
-            vec = np.frombuffer(r['vector'], dtype=np.float32)
-            scored.append({**dict(r), 'score': _cosine_sim(q_vec, vec)})
-        except Exception:
-            continue
-    scored.sort(key=lambda x: x['score'], reverse=True)
-    return scored[:top_k]
+    return db_retrieve_top_chunks(symbols, q_vec, top_k)
 
 # ── Background embedding workers ─────────────────────────────────────────────
 
 def _embed_articles_bg(symbol: str, articles: list):
-    conn = sqlite3.connect(DB_PATH)
     try:
-        for a in articles:
-            store_embedding(conn, symbol,
-                f"{a['title']}\n\n{a.get('summary', '')}",
-                source=a.get('source', 'news'),
-                article_url=a.get('url', ''),
-                ts=a.get('published'))
+        with thread_connection() as conn:
+            for a in articles:
+                store_embedding(conn, symbol,
+                    f"{a['title']}\n\n{a.get('summary', '')}",
+                    source=a.get('source', 'news'),
+                    article_url=a.get('url', ''),
+                    ts=a.get('published'))
     except Exception as e:
         log.warning(f'_embed_articles_bg({symbol}): {e}')
-    finally:
-        conn.close()
 
 def _embed_profile_bg(symbol: str, profile: dict):
-    conn = sqlite3.connect(DB_PATH)
     try:
-        store_embedding(conn, symbol,
-            f"{profile.get('name','')} — {profile.get('sector','')} / {profile.get('industry','')}\n"
-            f"{profile.get('description','')}",
-            source='profile', article_url=f'profile:{symbol}')
+        with thread_connection() as conn:
+            store_embedding(conn, symbol,
+                f"{profile.get('name','')} — {profile.get('sector','')} / {profile.get('industry','')}\n"
+                f"{profile.get('description','')}",
+                source='profile', article_url=f'profile:{symbol}')
     except Exception as e:
         log.warning(f'_embed_profile_bg({symbol}): {e}')
-    finally:
-        conn.close()
 
 def _embed_financials_bg(symbol: str, data: dict):
-    conn = sqlite3.connect(DB_PATH)
     try:
-        store_embedding(conn, symbol,
-            f"Financials for {symbol}: P/E {data.get('pe_ratio')}, "
-            f"Revenue TTM {data.get('revenue_ttm')}, Net Income TTM {data.get('net_income_ttm')}, "
-            f"Gross Margin {data.get('gross_margin')}, EPS {data.get('eps')}, "
-            f"52W High {data.get('week52_high')}, 52W Low {data.get('week52_low')}",
-            source='financials', article_url=f'financials:{symbol}')
+        with thread_connection() as conn:
+            store_embedding(conn, symbol,
+                f"Financials for {symbol}: P/E {data.get('pe_ratio')}, "
+                f"Revenue TTM {data.get('revenue_ttm')}, Net Income TTM {data.get('net_income_ttm')}, "
+                f"Gross Margin {data.get('gross_margin')}, EPS {data.get('eps')}, "
+                f"52W High {data.get('week52_high')}, 52W Low {data.get('week52_low')}",
+                source='financials', article_url=f'financials:{symbol}')
     except Exception as e:
         log.warning(f'_embed_financials_bg({symbol}): {e}')
-    finally:
-        conn.close()
 
 # ── yfinance wrappers ────────────────────────────────────────────────────────
 RANGE_MAP = {
@@ -416,22 +267,27 @@ def fetch_financials(symbol: str) -> dict | None:
 
 # ── RSS news ─────────────────────────────────────────────────────────────────
 RSS_FEEDS = [
-    # ── Existing market feeds ────────────────────────────────────────────────
-    ('Economic Times',   'https://economictimes.indiatimes.com/markets/stocks/news/rssfeeds/2143429.cms'),
-    ('Moneycontrol',     'https://www.moneycontrol.com/rss/MCtopnews.xml'),
-    ('Business Standard','https://www.business-standard.com/rss/markets-106.rss'),
-    ('LiveMint',         'https://www.livemint.com/rss/markets'),
-    ('CNBC TV18',        'https://www.cnbctv18.com/commonfeeds/v1/eng/rss/market.xml'),
-    # ── Quarterly results & earnings ─────────────────────────────────────────
-    ('Financial Express','https://www.financialexpress.com/market/feed/'),
+    # ── Core Indian market feeds ─────────────────────────────────────────────
+    ('Economic Times',    'https://economictimes.indiatimes.com/markets/stocks/news/rssfeeds/2143429.cms'),
+    ('Moneycontrol',      'https://www.moneycontrol.com/rss/MCtopnews.xml'),
+    ('Business Standard', 'https://www.business-standard.com/rss/markets-106.rss'),
+    ('LiveMint',          'https://www.livemint.com/rss/markets'),
+    ('CNBC TV18',         'https://www.cnbctv18.com/commonfeeds/v1/eng/rss/market.xml'),
+    # ── Earnings & quarterly results ─────────────────────────────────────────
+    ('Financial Express', 'https://www.financialexpress.com/market/feed/'),
     ('Hindu BusinessLine','https://www.thehindubusinessline.com/markets/feeder/default.rss'),
-    ('ET Earnings',      'https://economictimes.indiatimes.com/markets/earnings/rssfeeds/2143522.cms'),
-    # ── Contracts, orders, government news ───────────────────────────────────
-    ('ET Industry',      'https://economictimes.indiatimes.com/industry/rssfeeds/13352306.cms'),
-    ('PIB India',        'https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3'),
-    ('BQ Prime',         'https://www.bqprime.com/feeds/rss.xml'),
-    ('Reuters India',    'https://feeds.reuters.com/reuters/INbusinessNews'),
-    ('BSE Corporate',    'https://www.bseindia.com/xml-data/corpfiling/AttachLive/rss.xml'),
+    ('ET Earnings',       'https://economictimes.indiatimes.com/markets/earnings/rssfeeds/2143522.cms'),
+    # ── Contracts, orders, sector news ───────────────────────────────────────
+    ('ET Industry',       'https://economictimes.indiatimes.com/industry/rssfeeds/13352306.cms'),
+    ('ET Technology',     'https://economictimes.indiatimes.com/tech/rssfeeds/13357270.cms'),
+    ('ET Auto',           'https://economictimes.indiatimes.com/industry/auto/rssfeeds/19430249.cms'),
+    ('PIB India',         'https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3'),
+    ('BQ Prime',          'https://www.bqprime.com/feeds/rss.xml'),
+    ('Business Today',    'https://www.businesstoday.in/rss/story.xml'),
+    # ── Wire services & global coverage ──────────────────────────────────────
+    ('Reuters India',     'https://feeds.reuters.com/reuters/INbusinessNews'),
+    ('Reuters Business',  'https://feeds.reuters.com/reuters/businessNews'),
+    ('BSE Corporate',     'https://www.bseindia.com/xml-data/corpfiling/AttachLive/rss.xml'),
 ]
 
 # ── Contract & quarterly-results keyword sets ────────────────────────────────
@@ -549,7 +405,9 @@ def fetch_news(symbol: str, name: str, max_items: int = 30) -> list:
 def fetch_finnhub_news(symbol: str) -> list:
     """Pull from Finnhub news endpoint as bonus source."""
     try:
-        api_key = 'vd7l5h51r01qm7o0aj74gd7l5h51r01qm7o0aj750'
+        api_key = os.environ.get('FINNHUB_API_KEY', '')
+        if not api_key:
+            return []
         base    = symbol.replace('.NS','').replace('.BO','')
         fh_sym  = f"NSE:{base}" if '.NS' in symbol else (f"BSE:{base}" if '.BO' in symbol else symbol)
         from datetime import timezone
@@ -814,16 +672,15 @@ def batch_quotes():
         data = fetch_quote(sym)
         if data:
             results[sym] = data
-            db2 = sqlite3.connect(DB_PATH)
-            db2.execute("""
-                INSERT OR REPLACE INTO quotes
-                    (symbol,price,open,high,low,prev_close,change,change_pct,volume,mkt_cap,currency,fetched_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-            """, (sym, data['price'], data['open'], data['high'], data['low'],
-                  data['prev_close'], data['change'], data['change_pct'],
-                  data['volume'], data['mkt_cap'], data['currency'], now_ts()))
-            db2.commit()
-            db2.close()
+            with thread_connection() as db2:
+                db2.execute("""
+                    INSERT OR REPLACE INTO quotes
+                        (symbol,price,open,high,low,prev_close,change,change_pct,volume,mkt_cap,currency,fetched_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (sym, data['price'], data['open'], data['high'], data['low'],
+                      data['prev_close'], data['change'], data['change_pct'],
+                      data['volume'], data['mkt_cap'], data['currency'], now_ts()))
+                db2.commit()
 
     threads = [threading.Thread(target=fetch_one, args=(sym,)) for sym in missing]
     for t in threads: t.start()
@@ -831,21 +688,113 @@ def batch_quotes():
 
     return jsonify({'ok': True, 'data': results})
 
+# ── Historical performance metrics ───────────────────────────────────────────
+@app.route('/api/performance/<path:symbol>')
+def api_performance(symbol):
+    """Year-by-year returns, CAGR, volatility, max drawdown from 5y monthly history."""
+    db = get_db()
+
+    # Pull from DB first (5y range_key uses monthly interval = ~60 pts)
+    rows = rows_to_list(db.execute(
+        'SELECT ts, close FROM history WHERE symbol=? AND range_key=? ORDER BY ts ASC',
+        (symbol, '5y')
+    ).fetchall())
+
+    if len(rows) < 12:
+        pts = fetch_history(symbol, '5y')
+        if pts:
+            db.executemany("""
+                INSERT OR IGNORE INTO history (symbol,range_key,ts,open,high,low,close,volume)
+                VALUES (?,?,?,?,?,?,?,?)
+            """, [(symbol, '5y', p['ts'], p['open'], p['high'], p['low'], p['close'], p['volume'])
+                  for p in pts])
+            db.commit()
+            rows = [{'ts': p['ts'], 'close': p['close']} for p in pts]
+
+    if len(rows) < 12:
+        return jsonify({'ok': False, 'error': 'Insufficient historical data'}), 404
+
+    closes     = np.array([r['close'] for r in rows], dtype=np.float64)
+    timestamps = [r['ts'] for r in rows]
+
+    # ── Year-by-year returns ──────────────────────────────────────────────────
+    from collections import defaultdict
+    year_buckets = defaultdict(list)
+    for ts, c in zip(timestamps, closes):
+        year_buckets[datetime.fromtimestamp(ts).year].append((ts, float(c)))
+
+    annual_returns = []
+    for yr in sorted(year_buckets):
+        pts_yr  = sorted(year_buckets[yr])
+        first_p = pts_yr[0][1]
+        last_p  = pts_yr[-1][1]
+        ret     = (last_p - first_p) / first_p * 100
+        annual_returns.append({'year': yr, 'return': round(ret, 2),
+                                'first': round(first_p, 2), 'last': round(last_p, 2)})
+
+    # ── CAGR ─────────────────────────────────────────────────────────────────
+    def cagr_n(n_years):
+        cutoff = timestamps[-1] - int(n_years * 365.25 * 86400)
+        start  = next((c for ts, c in zip(timestamps, closes) if ts >= cutoff), None)
+        if start is None or start <= 0:
+            return None
+        actual = (timestamps[-1] - cutoff) / (365.25 * 86400)
+        if actual < 0.25:
+            return None
+        return round((float((closes[-1] / start) ** (1 / actual)) - 1) * 100, 2)
+
+    # ── Annualised volatility (monthly → × √12) ───────────────────────────────
+    vol = None
+    if len(closes) > 2:
+        log_ret = np.diff(np.log(closes[closes > 0]))
+        vol     = round(float(np.std(log_ret) * np.sqrt(12) * 100), 2)
+
+    # ── Max drawdown ──────────────────────────────────────────────────────────
+    peak   = float(closes[0])
+    max_dd = 0.0
+    for c in closes:
+        c = float(c)
+        if c > peak: peak = c
+        dd = (peak - c) / peak
+        if dd > max_dd: max_dd = dd
+
+    best  = max(annual_returns, key=lambda x: x['return']) if annual_returns else None
+    worst = min(annual_returns, key=lambda x: x['return']) if annual_returns else None
+
+    return jsonify({'ok': True, 'data': {
+        'annual_returns': annual_returns,
+        'cagr_1y':        cagr_n(1),
+        'cagr_3y':        cagr_n(3),
+        'cagr_5y':        cagr_n(5),
+        'volatility':     vol,
+        'max_drawdown':   round(max_dd * 100, 2),
+        'best_year':      best,
+        'worst_year':     worst,
+        'data_points':    len(rows),
+    }})
+
+# ── Frontend static serving ───────────────────────────────────────────────────
+@app.route('/')
+def index():
+    return send_from_directory('.', 'Stock-tracker.html')
+
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.route('/api/ping')
 def ping():
-    return jsonify({'ok': True, 'ts': now_ts(), 'version': '2.0.0'})
+    return jsonify({'ok': True, 'ts': now_ts(), 'version': '2.1.0'})
 
 # ── AI provider helpers ───────────────────────────────────────────────────────
 # Priority: GROQ_API_KEY (free, open-source Llama) → ANTHROPIC_API_KEY (Claude)
 
 SYSTEM_PROMPT = (
-    "You are a stock analysis assistant for StockPulse, an Indian market tracker. "
-    "You have access to recent news, financial data, and price info for the user's watchlist. "
-    "Answer questions concisely and accurately based ONLY on the provided context. "
-    "If the context is insufficient to answer, say so clearly — do not fabricate data. "
-    "Format Indian currency as ₹ with Indian number notation (e.g. ₹1,23,456 Cr). "
-    "Keep responses under 300 words unless a longer analysis is explicitly requested."
+    "You are StockPulse AI, a financial research assistant for Indian and global markets. "
+    "You receive live price data, financial metrics, recent news, and RAG-retrieved document chunks. "
+    "Answer ANY question the user has — stock analysis, earnings, contracts, sector trends, comparisons, outlooks, risks, macro, economy. "
+    "Use the provided context accurately. Cite sources and article dates when relevant. "
+    "If the context is insufficient for a specific number, say so clearly — never fabricate data. "
+    "For Indian stocks: format currency as ₹ using Indian notation (e.g. ₹1,23,456 Cr). "
+    "For predictions and outlooks: acknowledge uncertainty, highlight key catalysts and risks. "
+    "Be specific with numbers when context has them. Keep answers under 400 words unless detailed analysis is explicitly requested."
 )
 
 # Groq free models (open-source, no credit card needed)
@@ -875,19 +824,67 @@ def _get_ai_provider():
     return None, None
 
 def _build_context(symbols, question):
-    """RAG: retrieve top chunks and format context block."""
-    chunks = retrieve_top_chunks(symbols, question, top_k=5)
-    if not chunks:
-        return "No specific context found yet — add stocks to your watchlist so data gets indexed."
+    """Build rich context: live quotes + financials + recent news + RAG chunks."""
     parts = []
-    for i, c in enumerate(chunks, 1):
-        age = ''
-        if c.get('ts'):
-            days = (now_ts() - c['ts']) // 86400
-            if days < 30:
-                age = f' ({days}d ago)'
-        parts.append(f"[{i}] {c['symbol']} — {c['source']}{age}\n{c['content']}")
-    return "--- RELEVANT CONTEXT ---\n" + "\n\n".join(parts) + "\n--- END CONTEXT ---"
+
+    # ── Structured live data per symbol ──────────────────────────────────────
+    with thread_connection() as conn:
+        for sym in symbols[:6]:
+            q_row = conn.execute('SELECT * FROM quotes    WHERE symbol=?', (sym,)).fetchone()
+            f_row = conn.execute('SELECT * FROM financials WHERE symbol=?', (sym,)).fetchone()
+            p_row = conn.execute('SELECT name,sector,description FROM profiles WHERE symbol=?', (sym,)).fetchone()
+            n_rows = conn.execute(
+                'SELECT title,source,published FROM news WHERE symbol=? ORDER BY published DESC LIMIT 6',
+                (sym,)).fetchall()
+
+            if not (q_row or f_row or n_rows):
+                continue
+
+            parts.append(f'=== {sym} ===')
+            if p_row and p_row['name']:
+                line = f'Company: {p_row["name"]}'
+                if p_row['sector']: line += f' | Sector: {p_row["sector"]}'
+                parts.append(line)
+            if q_row:
+                chg = q_row['change_pct'] or 0
+                parts.append(
+                    f'Price: {q_row["currency"]} {q_row["price"]} '
+                    f'({("+" if chg >= 0 else "")}{chg:.2f}%) | '
+                    f'Mkt Cap: {q_row["mkt_cap"] or "N/A"}'
+                )
+            if f_row:
+                m = []
+                if f_row['pe_ratio']:     m.append(f'P/E {f_row["pe_ratio"]:.1f}')
+                if f_row['eps']:          m.append(f'EPS {f_row["eps"]:.2f}')
+                if f_row['gross_margin']: m.append(f'Gross Margin {f_row["gross_margin"]*100:.1f}%')
+                if f_row['revenue_ttm']:  m.append(f'Revenue TTM {f_row["revenue_ttm"]/1e9:.2f}B')
+                if f_row['beta']:         m.append(f'Beta {f_row["beta"]:.2f}')
+                if f_row['week52_high']:  m.append(f'52W {f_row["week52_low"]:.2f}–{f_row["week52_high"]:.2f}')
+                if m: parts.append('Metrics: ' + ' | '.join(m))
+            if n_rows:
+                parts.append('Recent news:')
+                for n in n_rows:
+                    age_d = (now_ts() - (n['published'] or 0)) // 86400
+                    parts.append(f'  [{n["source"]}] {n["title"]} ({age_d}d ago)')
+            parts.append('')
+
+    # ── RAG chunks ────────────────────────────────────────────────────────────
+    chunks = retrieve_top_chunks(symbols, question, top_k=6)
+    if chunks:
+        parts.append('--- RELEVANT CONTEXT FROM NEWS & DOCUMENTS ---')
+        for i, c in enumerate(chunks, 1):
+            age = ''
+            if c.get('ts'):
+                days = (now_ts() - c['ts']) // 86400
+                if days < 60:
+                    age = f' ({days}d ago)'
+            parts.append(f'[{i}] {c["symbol"]} — {c["source"]}{age}\n{c["content"]}')
+        parts.append('--- END CONTEXT ---')
+
+    if not parts:
+        return 'No context available yet. Add stocks to your watchlist and refresh to load data.'
+
+    return '\n'.join(parts)
 
 # ── AI Chat endpoint (streaming SSE) ─────────────────────────────────────────
 @app.route('/api/chat', methods=['POST'])
@@ -1024,7 +1021,7 @@ def api_ai_status():
 # ── Main ──────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     init_db()
-    # Preload embedding model in background so first chat isn't slow
     threading.Thread(target=get_embed_model, daemon=True).start()
-    log.info('StockPulse server starting on http://localhost:5001')
-    app.run(host='0.0.0.0', port=5001, debug=False, threaded=True)
+    port = int(os.environ.get('PORT', 5001))
+    log.info(f'StockPulse server starting on http://0.0.0.0:{port}')
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
