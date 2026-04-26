@@ -6,17 +6,15 @@ Serves Indian (NSE/BSE) and US stock data without CORS issues.
 
 import os, json, time, threading, logging, re
 from datetime import datetime, timedelta
-import sqlite3
 import requests as http_requests
 import feedparser
 import yfinance as yf
 import numpy as np
 import groq as groq_sdk
 import anthropic
-from flask import Flask, jsonify, request, g, Response, stream_with_context, send_from_directory
+from flask import Flask, jsonify, request, Response, stream_with_context, send_from_directory
 from flask_cors import CORS
 from db import (
-    USE_PG, DB_PATH,
     get_db, close_db, init_db,
     store_embedding_vec, retrieve_top_chunks as db_retrieve_top_chunks,
     thread_connection,
@@ -775,10 +773,27 @@ def api_performance(symbol):
         'data_points':    len(rows),
     }})
 
-# ── Frontend static serving ───────────────────────────────────────────────────
+# ── Frontend / PWA static serving ────────────────────────────────────────────
 @app.route('/')
 def index():
     return send_from_directory('.', 'Stock-tracker.html')
+
+@app.route('/manifest.json')
+def manifest():
+    return send_from_directory('.', 'manifest.json',
+                               mimetype='application/manifest+json')
+
+@app.route('/sw.js')
+def service_worker():
+    resp = send_from_directory('.', 'sw.js',
+                               mimetype='application/javascript')
+    resp.headers['Service-Worker-Allowed'] = '/'
+    return resp
+
+@app.route('/favicon.ico')
+def favicon():
+    return send_from_directory('static', 'favicon.png',
+                               mimetype='image/png')
 
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.route('/api/ping')
