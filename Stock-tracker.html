@@ -686,20 +686,30 @@ async function apiGet(path, ms=15000){
 }
 
 async function checkBackend(){
-  try{
-    const r = await fetch(API+'/ping', {signal: AbortSignal.timeout(3000)});
-    const j = await r.json();
-    _backendOk = !!(j?.ok);
-  }catch{ _backendOk = false; }
+  const isLocal = location.protocol === 'file:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  // Retry up to 3 times — Railway cold-start can take several seconds
+  for(let attempt = 0; attempt < 3; attempt++){
+    try{
+      const r = await fetch(API+'/ping', {signal: AbortSignal.timeout(10000)});
+      const j = await r.json();
+      _backendOk = !!(j?.ok);
+      if(_backendOk) break;
+    }catch{
+      if(attempt < 2){ await new Promise(r=>setTimeout(r,3000)); continue; }
+      _backendOk = false;
+    }
+  }
   const el = document.getElementById('backend-status');
   if(el){
     el.className = 'backend-pill '+ (_backendOk ? 'ok' : 'err');
-    el.title     = _backendOk ? 'Backend connected' : 'Backend offline — start stock-server.py';
+    el.title     = _backendOk ? 'Backend connected' : 'Backend offline';
     el.textContent = _backendOk ? '● Backend' : '○ Backend offline';
   }
   if(!_backendOk){
-    Toast.show('⚠️','Backend Offline',
-      'Start stock-server.py to get live data. Run: python3 stock-server.py',8000);
+    const msg = isLocal
+      ? 'Start stock-server.py to get live data. Run: python3 stock-server.py'
+      : 'Server is starting up — please wait a moment and refresh.';
+    Toast.show('⚠️','Backend Offline', msg, 8000);
   }
   return _backendOk;
 }
