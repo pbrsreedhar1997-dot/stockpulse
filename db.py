@@ -24,10 +24,12 @@ from contextlib import contextmanager
 log = logging.getLogger('stockpulse.db')
 
 # ── Backend selection ─────────────────────────────────────────────────────────
-DATABASE_URL = os.environ.get('DATABASE_URL', '')
-# Render provides postgres:// but psycopg2 requires postgresql://
+DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
+# Normalize scheme: postgres:// → postgresql://, bare host → add postgresql://
 if DATABASE_URL.startswith('postgres://'):
     DATABASE_URL = 'postgresql://' + DATABASE_URL[len('postgres://'):]
+elif DATABASE_URL and not DATABASE_URL.startswith('postgresql://'):
+    DATABASE_URL = 'postgresql://' + DATABASE_URL
 USE_PG = bool(DATABASE_URL)
 DB_PATH      = os.path.join(os.path.dirname(__file__), 'stockpulse.db')
 
