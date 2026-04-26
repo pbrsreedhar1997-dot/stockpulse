@@ -3,10 +3,10 @@ services:
     name: stockpulse
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn stock-server:app --workers 2 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT
+    startCommand: gunicorn wsgi:app --workers 1 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT
     envVars:
       - key: GROQ_API_KEY
-        sync: false          # set manually in Render dashboard
+        sync: false          # set manually in Render dashboard → Environment
       - key: DATABASE_URL
         fromDatabase:
           name: stockpulse-db

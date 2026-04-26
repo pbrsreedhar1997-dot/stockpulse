@@ -47,15 +47,15 @@ _embed_model      = None
 _embed_model_lock = threading.Lock()
 
 def get_embed_model():
-    """Lazily load sentence-transformer model — thread-safe, ~90MB download once."""
+    """Lazily load fastembed BGE model — ONNX, no PyTorch, ~25 MB."""
     global _embed_model
     if _embed_model is None:
         with _embed_model_lock:
             if _embed_model is None:
                 try:
-                    from sentence_transformers import SentenceTransformer
-                    log.info('Loading embedding model all-MiniLM-L6-v2 …')
-                    _embed_model = SentenceTransformer('all-MiniLM-L6-v2')
+                    from fastembed import TextEmbedding
+                    log.info('Loading embedding model BAAI/bge-small-en-v1.5 …')
+                    _embed_model = TextEmbedding('BAAI/bge-small-en-v1.5')
                     log.info('Embedding model ready.')
                 except Exception as e:
                     log.error(f'Embedding model load failed: {e}')
@@ -85,7 +85,7 @@ def _embed_vec(text: str):
     if not model:
         return None
     try:
-        return model.encode(text, convert_to_numpy=True).astype(np.float32)
+        return np.array(next(model.embed([text])), dtype=np.float32)
     except Exception as e:
         log.warning(f'_embed_vec: {e}')
         return None
