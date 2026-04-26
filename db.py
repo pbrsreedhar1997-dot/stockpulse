@@ -138,10 +138,14 @@ def _get_pg_pool():
         with _pg_pool_lock:
             if _pg_pool is None:
                 import psycopg2.pool
+                # Inject connect_timeout so pool init never hangs indefinitely
+                dsn = DATABASE_URL
+                if 'connect_timeout' not in dsn:
+                    dsn += ('&' if '?' in dsn else '?') + 'connect_timeout=10'
                 _pg_pool = psycopg2.pool.ThreadedConnectionPool(
-                    minconn=2, maxconn=10, dsn=DATABASE_URL
+                    minconn=1, maxconn=10, dsn=dsn
                 )
-                log.info(f'PostgreSQL pool ready ({DATABASE_URL})')
+                log.info(f'PostgreSQL pool ready')
     return _pg_pool
 
 
@@ -429,35 +433,37 @@ CREATE INDEX IF NOT EXISTS idx_embed_hnsw   ON embeddings USING hnsw (vector vec
 def init_db():
     """Create tables and indexes. Safe to call on every startup (IF NOT EXISTS)."""
     if USE_PG:
-        try:
-            with thread_connection() as conn:
-                # Enable pgvector — may fail if not installed on this PG instance
-                try:
-                    conn.execute('CREATE EXTENSION IF NOT EXISTS vector')
-                    conn.commit()
-                except Exception as e:
-                    log.warning(f'pgvector extension unavailable ({e}); embeddings will use SQLite fallback')
-                    _init_sqlite()
-                    return
-
-                # Create tables one statement at a time
-                for stmt in _PG_SCHEMA.split(';'):
-                    stmt = stmt.strip()
-                    if not stmt:
-                        continue
+        for attempt in range(3):
+            try:
+                with thread_connection() as conn:
+                    # Enable pgvector — non-fatal if not available
                     try:
-                        conn.execute(stmt)
+                        conn.execute('CREATE EXTENSION IF NOT EXISTS vector')
+                        conn.commit()
                     except Exception as e:
-                        # HNSW index may fail on older pgvector — non-fatal
-                        if 'hnsw' in stmt.lower():
-                            log.warning(f'HNSW index skipped (pgvector too old?): {e}')
-                        else:
-                            log.warning(f'Schema stmt skipped: {e}')
-                conn.commit()
-            log.info('PostgreSQL schema ready')
-        except Exception as e:
-            log.error(f'PostgreSQL init failed ({e}); falling back to SQLite')
-            _init_sqlite()
+                        log.warning(f'pgvector unavailable ({e}); vector search will use numpy')
+
+                    for stmt in _PG_SCHEMA.split(';'):
+                        stmt = stmt.strip()
+                        if not stmt:
+                            continue
+                        try:
+                            conn.execute(stmt)
+                        except Exception as e:
+                            if 'hnsw' in stmt.lower() or 'vector' in stmt.lower():
+                                log.warning(f'Schema stmt skipped (pgvector?): {e}')
+                            else:
+                                raise
+                    conn.commit()
+                log.info('PostgreSQL schema ready')
+                return
+            except Exception as e:
+                log.warning(f'DB init attempt {attempt + 1}/3 failed: {e}')
+                if attempt < 2:
+                    time.sleep(3)
+                else:
+                    log.error('PostgreSQL unreachable after 3 attempts — falling back to SQLite')
+                    _init_sqlite()
     else:
         _init_sqlite()
 
