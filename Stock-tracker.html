@@ -489,6 +489,38 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 18p
   .chat-panel{width:100%;right:-100%;border-left:none}
   .ai-fab{bottom:16px;right:16px;width:44px;height:44px;font-size:18px}
 }
+/* ── Auth Modal ── */
+.auth-overlay{position:fixed;inset:0;background:rgba(7,9,15,.92);z-index:9999;display:none;align-items:center;justify-content:center;backdrop-filter:blur(6px)}
+.auth-overlay.show{display:flex}
+.auth-card{background:var(--card);border:1px solid var(--border2);border-radius:18px;padding:36px 32px;width:100%;max-width:390px;box-shadow:0 32px 80px rgba(0,0,0,.7);animation:authIn .22s ease}
+@keyframes authIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+.auth-logo{text-align:center;margin-bottom:24px}
+.auth-logo .alg{font-size:24px;font-weight:900;letter-spacing:-.5px}.auth-logo .alg span{color:var(--accent)}
+.auth-logo p{color:var(--text3);font-size:13px;margin-top:5px}
+.auth-tabs{display:flex;gap:4px;background:var(--bg3);padding:4px;border-radius:10px;margin-bottom:22px}
+.auth-tab{flex:1;padding:8px;border:none;background:transparent;color:var(--text3);font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;transition:.15s}
+.auth-tab.on{background:var(--card2);color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.3)}
+.auth-field{margin-bottom:14px}
+.auth-field label{display:block;font-size:10px;font-weight:700;color:var(--text3);margin-bottom:5px;text-transform:uppercase;letter-spacing:.6px}
+.auth-field input{width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 14px;color:var(--text);font-size:14px;outline:none;transition:.2s;font-family:inherit}
+.auth-field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,212,170,.1)}
+.auth-submit{width:100%;padding:11px;background:var(--grad-accent);border:none;border-radius:9px;color:#fff;font-size:14px;font-weight:700;cursor:pointer;margin-top:6px;transition:.15s;font-family:inherit}
+.auth-submit:hover{opacity:.88}
+.auth-submit:disabled{opacity:.45;cursor:not-allowed}
+.auth-err{color:var(--red);font-size:12px;text-align:center;margin-top:10px;min-height:16px;line-height:1.4}
+.auth-sep{text-align:center;color:var(--text3);font-size:11px;margin:14px 0;position:relative}
+.auth-sep::before,.auth-sep::after{content:'';position:absolute;top:50%;width:40%;height:1px;background:var(--border)}
+.auth-sep::before{left:0}.auth-sep::after{right:0}
+.auth-guest{background:transparent;border:1px solid var(--border2);border-radius:8px;padding:9px;color:var(--text3);font-size:12px;cursor:pointer;width:100%;transition:.15s;font-family:inherit}
+.auth-guest:hover{border-color:var(--accent);color:var(--text2)}
+/* ── User info in header ── */
+.user-info{display:flex;align-items:center;gap:8px;margin-left:auto;flex-shrink:0}
+.user-avatar{width:28px;height:28px;border-radius:50%;background:var(--grad-accent);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#fff;flex-shrink:0}
+.user-email{font-size:11px;font-weight:600;color:var(--text3);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.btn-signout{background:transparent;border:1px solid var(--border2);border-radius:7px;padding:4px 10px;color:var(--text3);font-size:11px;font-weight:600;cursor:pointer;transition:.15s;font-family:inherit}
+.btn-signout:hover{border-color:var(--red);color:var(--red)}
+.btn-signin{background:var(--grad-accent);border:none;border-radius:8px;padding:5px 14px;color:#fff;font-size:12px;font-weight:700;cursor:pointer;transition:.15s;font-family:inherit;white-space:nowrap}
+.btn-signin:hover{opacity:.85}
 </style>
 </head>
 <body>
@@ -507,10 +539,43 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 18p
         <span class="refbtn-txt">Refresh</span>
       </button>
       <button class="theme-btn" id="theme-btn" onclick="App.toggleTheme()" title="Toggle dark/light mode">🌙</button>
+      <div class="user-info" id="user-info"></div>
       <span class="upd" id="upd">—</span>
       <button class="mob-menu-btn" id="mob-menu-btn" onclick="App.toggleSidebar()" title="Watchlist">☰</button>
     </div>
   </header>
+
+  <!-- ── Auth Modal ── -->
+  <div class="auth-overlay" id="auth-overlay">
+    <div class="auth-card">
+      <div class="auth-logo">
+        <div class="alg">Stock<span>Pulse</span></div>
+        <p>Sign in to sync your watchlist across devices</p>
+      </div>
+      <div class="auth-tabs">
+        <button class="auth-tab on" id="atab-login" onclick="Auth.switchTab('login')">Sign In</button>
+        <button class="auth-tab" id="atab-register" onclick="Auth.switchTab('register')">Create Account</button>
+      </div>
+      <div id="auth-name-wrap" style="display:none">
+        <div class="auth-field">
+          <label>Name</label>
+          <input type="text" id="auth-name" placeholder="Your name" autocomplete="name">
+        </div>
+      </div>
+      <div class="auth-field">
+        <label>Email</label>
+        <input type="email" id="auth-email" placeholder="you@example.com" autocomplete="email" onkeydown="if(event.key==='Enter')Auth.submit()">
+      </div>
+      <div class="auth-field">
+        <label>Password</label>
+        <input type="password" id="auth-password" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')Auth.submit()">
+      </div>
+      <button class="auth-submit" id="auth-submit" onclick="Auth.submit()">Sign In</button>
+      <div class="auth-err" id="auth-err"></div>
+      <div class="auth-sep">or</div>
+      <button class="auth-guest" onclick="Auth.continueAsGuest()">Continue as guest &nbsp;(watchlist saved locally only)</button>
+    </div>
+  </div>
   <div class="main">
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar()"></div>
     <div class="sidebar">
@@ -673,16 +738,145 @@ const API = (location.protocol === 'file:' || location.hostname === 'localhost' 
   : '/api';
 let _backendOk = false;
 
+/* ─── AUTH STATE ─── */
+let _authToken = localStorage.getItem('sp3_token') || '';
+let _authUser  = null;
+
+function _authHeaders(extra){
+  const h = {...(extra||{})};
+  if(_authToken) h['Authorization'] = 'Bearer ' + _authToken;
+  return h;
+}
+
 async function apiGet(path, ms=15000){
   const ctrl = new AbortController();
   const tid  = setTimeout(()=>ctrl.abort(), ms);
   try{
-    const r = await fetch(API+path, {signal:ctrl.signal});
+    const r = await fetch(API+path, {signal:ctrl.signal, headers:_authHeaders()});
     clearTimeout(tid);
     if(!r.ok) return null;
     const j = await r.json();
     return j.ok ? j.data : null;
   }catch{ clearTimeout(tid); return null; }
+}
+
+async function apiPost(path, body){
+  try{
+    const r = await fetch(API+path, {
+      method:'POST',
+      headers: _authHeaders({'Content-Type':'application/json'}),
+      body: JSON.stringify(body),
+    });
+    if(!r.ok) return null;
+    return await r.json();
+  }catch{ return null; }
+}
+
+async function apiDel(path){
+  try{
+    const r = await fetch(API+path, {method:'DELETE', headers:_authHeaders()});
+    if(!r.ok) return null;
+    return await r.json();
+  }catch{ return null; }
+}
+
+/* ─── AUTH MODAL ─── */
+const Auth = {
+  _tab: 'login',
+
+  show(){ document.getElementById('auth-overlay').classList.add('show'); },
+  hide(){ document.getElementById('auth-overlay').classList.remove('show'); },
+
+  switchTab(tab){
+    this._tab = tab;
+    document.getElementById('atab-login').classList.toggle('on', tab==='login');
+    document.getElementById('atab-register').classList.toggle('on', tab==='register');
+    document.getElementById('auth-name-wrap').style.display = tab==='register' ? 'block' : 'none';
+    document.getElementById('auth-submit').textContent = tab==='login' ? 'Sign In' : 'Create Account';
+    document.getElementById('auth-password').autocomplete = tab==='login' ? 'current-password' : 'new-password';
+    document.getElementById('auth-err').textContent = '';
+  },
+
+  async submit(){
+    const email    = document.getElementById('auth-email').value.trim();
+    const password = document.getElementById('auth-password').value;
+    const name     = (document.getElementById('auth-name')||{}).value?.trim() || '';
+    const btn      = document.getElementById('auth-submit');
+    const errEl    = document.getElementById('auth-err');
+    errEl.textContent = '';
+
+    if(!email || !password){ errEl.textContent='Email and password required.'; return; }
+    if(this._tab==='register' && password.length < 6){ errEl.textContent='Password must be at least 6 characters.'; return; }
+
+    btn.disabled = true;
+    btn.textContent = this._tab==='login' ? 'Signing in…' : 'Creating account…';
+
+    try{
+      const endpoint = this._tab==='login' ? '/auth/login' : '/auth/register';
+      const body = this._tab==='register' ? {email, password, name} : {email, password};
+      const r = await fetch(API+endpoint, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if(!j.ok){ errEl.textContent = j.error || 'Something went wrong. Try again.'; return; }
+      _authToken = j.token;
+      _authUser  = j.user;
+      localStorage.setItem('sp3_token', _authToken);
+      this.hide();
+      rUserInfo();
+      await App.loadAfterAuth();
+    }catch(e){
+      errEl.textContent = 'Network error — check your connection.';
+    }finally{
+      btn.disabled = false;
+      btn.textContent = this._tab==='login' ? 'Sign In' : 'Create Account';
+    }
+  },
+
+  async continueAsGuest(){
+    _authToken = '';
+    _authUser  = null;
+    localStorage.removeItem('sp3_token');
+    this.hide();
+    St.load();
+    rUserInfo();
+    rWatchlist();
+    App.initTimers();
+    if(St.list.length){ App.pick(St.list[0].symbol); App.refresh(); }
+  },
+
+  async logout(){
+    if(_authToken){
+      apiPost('/auth/logout', {}).catch(()=>{});
+    }
+    _authToken = '';
+    _authUser  = null;
+    localStorage.removeItem('sp3_token');
+    St.list = [];
+    St.quotes = {}; St.profiles = {}; St.fins = {}; St.news = {}; St.seen = {};
+    St.save();
+    rWatchlist();
+    rUserInfo();
+    document.getElementById('dempty').style.display='flex';
+    document.getElementById('dcont').style.display='none';
+    this.show();
+  },
+};
+
+function rUserInfo(){
+  const el = document.getElementById('user-info');
+  if(!el) return;
+  if(_authUser){
+    const initial = (_authUser.name || _authUser.email || '?')[0].toUpperCase();
+    el.innerHTML = `
+      <div class="user-avatar" title="${_authUser.email}">${initial}</div>
+      <span class="user-email">${_authUser.name || _authUser.email}</span>
+      <button class="btn-signout" onclick="Auth.logout()">Sign out</button>`;
+  } else {
+    el.innerHTML = `<button class="btn-signin" onclick="Auth.show()">Sign in</button>`;
+  }
 }
 
 async function checkBackend(){
@@ -1504,25 +1698,50 @@ function _renderDropBackend(results, dd){
 
 /* ─── APP ─── */
 const App = {
+  initTimers(){
+    if(!St.rtimer) St.rtimer = setInterval(()=>this.refresh(), 60000);
+    if(!St.ntimer) St.ntimer = setInterval(()=>this.doNews(),  300000);
+    setInterval(()=>checkBackend(), 30000);
+  },
+
   async start(){
-    // Apply saved theme before anything renders
     const savedTheme=localStorage.getItem('sp_theme');
     if(savedTheme==='light'){ document.documentElement.classList.add('light'); document.getElementById('theme-btn').textContent='☀️'; }
-    St.load();
     this.setupSearch();
     if('Notification' in window && Notification.permission==='default') Notification.requestPermission();
+    rUserInfo();
+    await checkBackend();
+    if(!_backendOk){
+      // backend down — use cached data
+      St.load(); rWatchlist(); this.initTimers();
+      return;
+    }
+    if(_authToken){
+      // verify existing token
+      try{
+        const r = await fetch(API+'/auth/me', {headers:_authHeaders()});
+        const j = await r.json();
+        if(j.ok){ _authUser = j.user; rUserInfo(); await this.loadAfterAuth(); return; }
+      }catch{}
+      // token invalid — clear and show login
+      _authToken = ''; localStorage.removeItem('sp3_token');
+    }
+    // No token — show auth modal (with guest option)
+    rWatchlist();
+    Auth.show();
+  },
+
+  async loadAfterAuth(){
+    // Load watchlist from backend for logged-in user
+    try{
+      const r = await fetch(API+'/watchlist', {headers:_authHeaders()});
+      const j = await r.json();
+      if(j.ok){ St.list = j.data || []; St.save(); }
+    }catch{}
     rWatchlist();
     this.updateStatus();
-    // Check backend first
-    await checkBackend();
-    if(St.list.length){
-      this.pick(St.list[0].symbol);
-      this.refresh();
-    }
-    St.rtimer = setInterval(()=>this.refresh(),    60000);
-    St.ntimer = setInterval(()=>this.doNews(),     300000);
-    // Re-check backend every 30s
-    setInterval(()=>checkBackend(), 30000);
+    if(St.list.length){ this.pick(St.list[0].symbol); this.refresh(); }
+    this.initTimers();
   },
 
   async refresh(){
@@ -1695,10 +1914,11 @@ const App = {
     }); St.save(); rWatchlist();
   },
 
-  async add(sym, name){
+  async add(sym, name, exch=''){
     if(St.list.find(w=>w.symbol===sym)){ Toast.show('ℹ','Already tracking',`${base(sym)} is in your watchlist.`); return; }
     St.list.push({symbol:sym, name});
     St.profiles[sym]={...St.profiles[sym]||{}, name};
+    if(_authToken) apiPost('/watchlist', {symbol:sym, name, exchange:exch});
     Toast.show('⏳','Fetching data…',`Loading live data for ${base(sym)} (${name})`);
     const q=await DS.getQuote(sym);
     if(q){ St.quotes[sym]=q; }
@@ -1711,6 +1931,7 @@ const App = {
 
   rm(sym){
     St.list=St.list.filter(w=>w.symbol!==sym);
+    if(_authToken) apiDel('/watchlist/'+encodeURIComponent(sym));
     if(St.sym===sym){
       St.sym=St.list[0]?.symbol||null;
       if(St.sym) this.pick(St.sym);

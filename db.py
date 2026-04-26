@@ -35,11 +35,12 @@ DB_PATH      = os.path.join(os.path.dirname(__file__), 'stockpulse.db')
 
 # ── Table primary keys — needed to generate ON CONFLICT upsert clauses ────────
 _TABLE_PK = {
-    'quotes':       'symbol',
-    'profiles':     'symbol',
-    'financials':   'symbol',
-    'search_cache': 'query',
-    'watchlist':    'symbol',
+    'quotes':         'symbol',
+    'profiles':       'symbol',
+    'financials':     'symbol',
+    'search_cache':   'query',
+    'user_sessions':  'token',
+    # watchlist has composite PK (user_id, symbol) — ON CONFLICT DO NOTHING is used
 }
 
 # ── SQL dialect adapter ───────────────────────────────────────────────────────
@@ -228,11 +229,29 @@ def thread_connection():
 _SQLITE_SCHEMA = """
 PRAGMA journal_mode=WAL;
 
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    email         TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    name          TEXT,
+    created_at    INTEGER DEFAULT (strftime('%s','now'))
+);
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+    token      TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER DEFAULT (strftime('%s','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions(user_id);
+
 CREATE TABLE IF NOT EXISTS watchlist (
-    symbol      TEXT PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    symbol      TEXT NOT NULL,
     name        TEXT,
     exchange    TEXT,
-    added_at    INTEGER DEFAULT (strftime('%s','now'))
+    added_at    INTEGER DEFAULT (strftime('%s','now')),
+    PRIMARY KEY (user_id, symbol)
 );
 
 CREATE TABLE IF NOT EXISTS quotes (
@@ -331,11 +350,29 @@ CREATE INDEX IF NOT EXISTS idx_embed_symbol ON embeddings(symbol, ts DESC);
 """
 
 _PG_SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id            SERIAL PRIMARY KEY,
+    email         TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    name          TEXT,
+    created_at    INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+    token      TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions(user_id);
+
 CREATE TABLE IF NOT EXISTS watchlist (
-    symbol      TEXT PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    symbol      TEXT NOT NULL,
     name        TEXT,
     exchange    TEXT,
-    added_at    INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
+    added_at    INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+    PRIMARY KEY (user_id, symbol)
 );
 
 CREATE TABLE IF NOT EXISTS quotes (
@@ -460,6 +497,28 @@ def init_db():
                             else:
                                 raise
                     conn.commit()
+
+                # Migrate watchlist to user-specific schema if needed
+                cols = conn.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name='watchlist' AND table_schema='public'
+                """).fetchall()
+                col_names = [c['column_name'] for c in cols]
+                if col_names and 'user_id' not in col_names:
+                    log.info('Migrating watchlist to user-specific schema…')
+                    conn.execute('DROP TABLE IF EXISTS watchlist CASCADE')
+                    conn.execute("""
+                        CREATE TABLE watchlist (
+                            user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                            symbol   TEXT NOT NULL,
+                            name     TEXT,
+                            exchange TEXT,
+                            added_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+                            PRIMARY KEY (user_id, symbol)
+                        )
+                    """)
+                    conn.commit()
+
                 log.info('PostgreSQL schema ready')
                 return
             except Exception as e:

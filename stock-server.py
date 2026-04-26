@@ -4,8 +4,9 @@ StockPulse Backend — Flask + yfinance + PostgreSQL (pgvector) or SQLite
 Serves Indian (NSE/BSE) and US stock data without CORS issues.
 """
 
-import os, json, time, threading, logging, re
+import os, json, time, threading, logging, re, secrets
 from datetime import datetime, timedelta
+from werkzeug.security import generate_password_hash, check_password_hash
 import requests as http_requests
 import feedparser
 import yfinance as yf
@@ -65,11 +66,27 @@ def get_embed_model():
 # get_db, close_db, init_db are imported from db.py at the top of this file.
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+SESSION_TTL = 30 * 24 * 3600  # 30 days
+
 def now_ts():
     return int(time.time())
 
 def stale(fetched_at, ttl):
     return (now_ts() - (fetched_at or 0)) > ttl
+
+def get_current_user_id():
+    auth = request.headers.get('Authorization', '')
+    if not auth.startswith('Bearer '):
+        return None
+    token = auth[7:].strip()
+    if not token:
+        return None
+    db = get_db()
+    row = db.execute(
+        'SELECT user_id FROM user_sessions WHERE token=? AND expires_at>?',
+        (token, now_ts())
+    ).fetchone()
+    return row['user_id'] if row else None
 
 def row_to_dict(row):
     return dict(row) if row else None
@@ -621,15 +638,89 @@ def api_search():
         log.warning(f'search({q}): {e}')
         return jsonify({'ok': False, 'error': str(e)}), 500
 
+# ── Auth endpoints ────────────────────────────────────────────────────────────
+@app.route('/api/auth/register', methods=['POST'])
+def auth_register():
+    body     = request.get_json(silent=True) or {}
+    email    = (body.get('email') or '').strip().lower()
+    password = body.get('password', '')
+    name     = (body.get('name') or '').strip()
+    if not email or not password:
+        return jsonify({'ok': False, 'error': 'Email and password required'}), 400
+    if len(password) < 6:
+        return jsonify({'ok': False, 'error': 'Password must be at least 6 characters'}), 400
+    db = get_db()
+    if db.execute('SELECT id FROM users WHERE email=?', (email,)).fetchone():
+        return jsonify({'ok': False, 'error': 'Email already registered'}), 409
+    pw_hash = generate_password_hash(password)
+    db.execute('INSERT INTO users (email,password_hash,name) VALUES (?,?,?)',
+               (email, pw_hash, name or email.split('@')[0]))
+    db.commit()
+    user  = db.execute('SELECT id,email,name FROM users WHERE email=?', (email,)).fetchone()
+    token = secrets.token_urlsafe(32)
+    db.execute('INSERT INTO user_sessions (token,user_id,expires_at) VALUES (?,?,?)',
+               (token, user['id'], now_ts() + SESSION_TTL))
+    db.commit()
+    return jsonify({'ok': True, 'token': token,
+                    'user': {'id': user['id'], 'email': user['email'], 'name': user['name']}})
+
+@app.route('/api/auth/login', methods=['POST'])
+def auth_login():
+    body     = request.get_json(silent=True) or {}
+    email    = (body.get('email') or '').strip().lower()
+    password = body.get('password', '')
+    if not email or not password:
+        return jsonify({'ok': False, 'error': 'Email and password required'}), 400
+    db  = get_db()
+    row = db.execute('SELECT * FROM users WHERE email=?', (email,)).fetchone()
+    if not row or not check_password_hash(row['password_hash'], password):
+        return jsonify({'ok': False, 'error': 'Invalid email or password'}), 401
+    token = secrets.token_urlsafe(32)
+    db.execute('INSERT OR REPLACE INTO user_sessions (token,user_id,expires_at) VALUES (?,?,?)',
+               (token, row['id'], now_ts() + SESSION_TTL))
+    db.commit()
+    return jsonify({'ok': True, 'token': token,
+                    'user': {'id': row['id'], 'email': row['email'], 'name': row['name']}})
+
+@app.route('/api/auth/logout', methods=['POST'])
+def auth_logout():
+    auth = request.headers.get('Authorization', '')
+    if auth.startswith('Bearer '):
+        token = auth[7:].strip()
+        db = get_db()
+        db.execute('DELETE FROM user_sessions WHERE token=?', (token,))
+        db.commit()
+    return jsonify({'ok': True})
+
+@app.route('/api/auth/me')
+def auth_me():
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'ok': False, 'error': 'Unauthorized'}), 401
+    db  = get_db()
+    row = db.execute('SELECT id,email,name FROM users WHERE id=?', (user_id,)).fetchone()
+    if not row:
+        return jsonify({'ok': False, 'error': 'User not found'}), 404
+    return jsonify({'ok': True, 'user': dict(row)})
+
 # ── Watchlist CRUD ────────────────────────────────────────────────────────────
 @app.route('/api/watchlist', methods=['GET'])
 def wl_get():
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'ok': False, 'error': 'Unauthorized'}), 401
     db   = get_db()
-    rows = rows_to_list(db.execute('SELECT * FROM watchlist ORDER BY added_at DESC').fetchall())
+    rows = rows_to_list(db.execute(
+        'SELECT symbol,name,exchange,added_at FROM watchlist WHERE user_id=? ORDER BY added_at DESC',
+        (user_id,)
+    ).fetchall())
     return jsonify({'ok': True, 'data': rows})
 
 @app.route('/api/watchlist', methods=['POST'])
 def wl_add():
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'ok': False, 'error': 'Unauthorized'}), 401
     body = request.get_json(silent=True) or {}
     sym  = body.get('symbol','').strip().upper()
     name = body.get('name', sym)
@@ -637,14 +728,18 @@ def wl_add():
     if not sym:
         return jsonify({'ok': False, 'error': 'symbol required'}), 400
     db = get_db()
-    db.execute('INSERT OR IGNORE INTO watchlist (symbol,name,exchange) VALUES (?,?,?)', (sym,name,exch))
+    db.execute('INSERT OR IGNORE INTO watchlist (user_id,symbol,name,exchange) VALUES (?,?,?,?)',
+               (user_id, sym, name, exch))
     db.commit()
     return jsonify({'ok': True})
 
 @app.route('/api/watchlist/<path:symbol>', methods=['DELETE'])
 def wl_del(symbol):
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'ok': False, 'error': 'Unauthorized'}), 401
     db = get_db()
-    db.execute('DELETE FROM watchlist WHERE symbol=?', (symbol,))
+    db.execute('DELETE FROM watchlist WHERE user_id=? AND symbol=?', (user_id, symbol))
     db.commit()
     return jsonify({'ok': True})
 
@@ -933,8 +1028,11 @@ def api_chat():
         return jsonify({'ok': False, 'error': 'question required'}), 400
 
     if not symbols:
+        user_id = get_current_user_id()
         db = get_db()
-        symbols = [r['symbol'] for r in db.execute('SELECT symbol FROM watchlist').fetchall()]
+        if user_id:
+            symbols = [r['symbol'] for r in db.execute(
+                'SELECT symbol FROM watchlist WHERE user_id=?', (user_id,)).fetchall()]
 
     context_block = _build_context(symbols, question)
 
