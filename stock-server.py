@@ -196,10 +196,11 @@ def _screener_fetch_one(sym: str) -> dict | None:
     try:
         t  = yf.Ticker(sym)
         fi = t.fast_info
-        price   = getattr(fi, 'last_price',          None)
-        mkt_cap = getattr(fi, 'market_cap',           None)
-        w52h    = getattr(fi, 'fifty_two_week_high',  None)
-        w52l    = getattr(fi, 'fifty_two_week_low',   None)
+        price   = getattr(fi, 'last_price',  None)
+        mkt_cap = getattr(fi, 'market_cap',  None)
+        # yfinance 1.3+ renamed fifty_two_week_high → year_high
+        w52h    = getattr(fi, 'year_high',   None)
+        w52l    = getattr(fi, 'year_low',    None)
 
         if not price or not mkt_cap or not w52h or w52h <= 0:
             return None
@@ -209,7 +210,7 @@ def _screener_fetch_one(sym: str) -> dict | None:
             return None
 
         decline = ((w52h - price) / w52h) * 100
-        if decline < 40:                # not fallen ≥40% from peak
+        if decline < 20:                # not fallen ≥20% from 52W peak
             return None
 
         # Qualifies on price/mktcap — now fetch fundamentals
@@ -267,7 +268,7 @@ def _run_value_picks() -> list:
 _screener_running = False
 _screener_lock    = threading.Lock()
 
-def _run_screener_bg(force: bool = False):
+def _run_screener_bg():
     """Run value-picks screener in a background thread and persist results."""
     global _screener_running
     with _screener_lock:
@@ -297,8 +298,8 @@ def _maybe_start_screener():
             row = conn.execute(
                 "SELECT fetched_at FROM screener_cache WHERE screener_id='value-picks'"
             ).fetchone()
-        if row and not stale((row.get('fetched_at') if isinstance(row, dict) else row['fetched_at']), SCREENER_TTL):
-            return  # cache is fresh — no need to run
+            if row and not stale(row['fetched_at'], SCREENER_TTL):
+                return  # cache is fresh — no need to run
     except Exception:
         pass
     threading.Thread(target=_run_screener_bg, daemon=True).start()
