@@ -263,6 +263,46 @@ def _run_value_picks() -> list:
     results.sort(key=lambda x: x['decline_pct'], reverse=True)
     return results
 
+# ── Background screener state ────────────────────────────────────────────────
+_screener_running = False
+_screener_lock    = threading.Lock()
+
+def _run_screener_bg(force: bool = False):
+    """Run value-picks screener in a background thread and persist results."""
+    global _screener_running
+    with _screener_lock:
+        if _screener_running:
+            return
+        _screener_running = True
+    try:
+        log.info('Background screener: scanning %d stocks…', len(INDIA_LARGE_CAP))
+        results = _run_value_picks()
+        with thread_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO screener_cache (screener_id, results, fetched_at) VALUES (?,?,?)",
+                ('value-picks', json.dumps(results), now_ts())
+            )
+            conn.commit()
+        log.info('Background screener: done — %d qualifying stocks', len(results))
+    except Exception as e:
+        log.error(f'Background screener failed: {e}')
+    finally:
+        with _screener_lock:
+            _screener_running = False
+
+def _maybe_start_screener():
+    """Start background screener if cache is missing or stale."""
+    try:
+        with thread_connection() as conn:
+            row = conn.execute(
+                "SELECT fetched_at FROM screener_cache WHERE screener_id='value-picks'"
+            ).fetchone()
+        if row and not stale((row.get('fetched_at') if isinstance(row, dict) else row['fetched_at']), SCREENER_TTL):
+            return  # cache is fresh — no need to run
+    except Exception:
+        pass
+    threading.Thread(target=_run_screener_bg, daemon=True).start()
+
 # ── yfinance wrappers ────────────────────────────────────────────────────────
 RANGE_MAP = {
     '1d':  ('1d',  '5m'),
@@ -897,26 +937,34 @@ def screener_value_picks():
     ).fetchone())
 
     if cache and not stale(cache['fetched_at'], SCREENER_TTL):
+        # Fresh cache — return immediately
         return jsonify({'ok': True, 'data': json.loads(cache['results']),
-                        'cached': True, 'fetched_at': cache['fetched_at']})
+                        'cached': True, 'fetched_at': cache['fetched_at'],
+                        'status': 'ready'})
 
-    # Stale or missing — run synchronously (results cached for 6h)
-    log.info('Running value-picks screener over %d stocks…', len(INDIA_LARGE_CAP))
-    results = _run_value_picks()
-    db.execute(
-        "INSERT OR REPLACE INTO screener_cache (screener_id, results, fetched_at) VALUES (?,?,?)",
-        ('value-picks', json.dumps(results), now_ts())
-    )
-    db.commit()
-    return jsonify({'ok': True, 'data': results, 'cached': False,
-                    'fetched_at': now_ts(), 'universe': len(INDIA_LARGE_CAP)})
+    # Cache missing or stale — kick off background job (non-blocking) and respond
+    if not _screener_running:
+        threading.Thread(target=_run_screener_bg, daemon=True).start()
+
+    if cache:
+        # Return stale data while the fresh scan runs in background
+        return jsonify({'ok': True, 'data': json.loads(cache['results']),
+                        'cached': True, 'fetched_at': cache['fetched_at'],
+                        'status': 'refreshing'})
+
+    # No cache at all — tell frontend to poll
+    return jsonify({'ok': True, 'data': [], 'cached': False,
+                    'status': 'loading',
+                    'message': 'Scanning stocks — usually takes 30–90 s. Refreshing automatically.'})
 
 @app.route('/api/screener/refresh', methods=['POST'])
 def screener_refresh():
     db = get_db()
     db.execute("DELETE FROM screener_cache WHERE screener_id='value-picks'")
     db.commit()
-    return jsonify({'ok': True, 'message': 'Cache cleared — next fetch will re-run screener'})
+    if not _screener_running:
+        threading.Thread(target=_run_screener_bg, daemon=True).start()
+    return jsonify({'ok': True, 'message': 'Screener re-running in background — check back in ~60 s'})
 
 # ── Historical performance metrics ───────────────────────────────────────────
 @app.route('/api/performance/<path:symbol>')
@@ -1025,10 +1073,15 @@ def favicon():
     return send_from_directory('static', 'favicon.png',
                                mimetype='image/png')
 
-# ── Health check ──────────────────────────────────────────────────────────────
+# ── Health / keep-alive ───────────────────────────────────────────────────────
 @app.route('/api/ping')
 def ping():
-    return jsonify({'ok': True, 'ts': now_ts(), 'version': '2.1.0'})
+    return jsonify({'ok': True, 'ts': now_ts(), 'version': '2.2.0'})
+
+@app.route('/api/keepalive')
+def keepalive():
+    """Lightweight endpoint for UptimeRobot / Railway cron to prevent cold starts."""
+    return jsonify({'ok': True, 'ts': now_ts()})
 
 @app.route('/api/db-status')
 def db_status():
@@ -1376,6 +1429,8 @@ def api_ai_status():
 # ── Startup (runs for both `python stock-server.py` and gunicorn) ─────────────
 init_db()
 threading.Thread(target=get_embed_model, daemon=True).start()
+# Pre-warm the screener cache so the first user doesn't wait 60+ seconds
+threading.Thread(target=_maybe_start_screener, daemon=True).start()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
