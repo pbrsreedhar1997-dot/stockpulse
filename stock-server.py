@@ -800,6 +800,20 @@ def favicon():
 def ping():
     return jsonify({'ok': True, 'ts': now_ts(), 'version': '2.1.0'})
 
+@app.route('/api/db-status')
+def db_status():
+    from db import DATABASE_URL, USE_PG
+    try:
+        from db import thread_connection
+        with thread_connection() as conn:
+            row = conn.execute('SELECT 1 AS ok').fetchone()
+        return jsonify({'ok': True, 'backend': 'postgresql' if USE_PG else 'sqlite',
+                        'url_set': bool(DATABASE_URL)})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e),
+                        'backend': 'postgresql' if USE_PG else 'sqlite',
+                        'url_set': bool(DATABASE_URL)}), 500
+
 # ── AI provider helpers ───────────────────────────────────────────────────────
 # Priority: GROQ_API_KEY (free, open-source Llama) → ANTHROPIC_API_KEY (Claude)
 
