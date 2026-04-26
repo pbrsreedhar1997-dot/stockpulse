@@ -427,31 +427,52 @@ CREATE INDEX IF NOT EXISTS idx_embed_hnsw   ON embeddings USING hnsw (vector vec
 
 
 def init_db():
-    """Create tables and indexes.  Safe to call on every startup (IF NOT EXISTS)."""
+    """Create tables and indexes. Safe to call on every startup (IF NOT EXISTS)."""
     if USE_PG:
-        with thread_connection() as conn:
-            # pgvector extension must already exist (created during setup)
-            conn.execute('CREATE EXTENSION IF NOT EXISTS vector')
-            # Execute each statement individually (executescript not available on PG)
-            for stmt in _PG_SCHEMA.split(';'):
-                stmt = stmt.strip()
-                if stmt:
-                    conn.execute(stmt)
-            conn.commit()
-        log.info('PostgreSQL schema ready')
-    else:
-        raw = sqlite3.connect(DB_PATH)
-        raw.executescript(_SQLITE_SCHEMA)
-        raw.commit()
-        # Add category column if migrating from older schema
         try:
-            raw.execute("ALTER TABLE news ADD COLUMN category TEXT DEFAULT 'gen'")
-            raw.commit()
-            log.info('Migrated news table: added category column')
-        except sqlite3.OperationalError:
-            pass
-        raw.close()
-        log.info(f'SQLite schema ready at {DB_PATH}')
+            with thread_connection() as conn:
+                # Enable pgvector — may fail if not installed on this PG instance
+                try:
+                    conn.execute('CREATE EXTENSION IF NOT EXISTS vector')
+                    conn.commit()
+                except Exception as e:
+                    log.warning(f'pgvector extension unavailable ({e}); embeddings will use SQLite fallback')
+                    _init_sqlite()
+                    return
+
+                # Create tables one statement at a time
+                for stmt in _PG_SCHEMA.split(';'):
+                    stmt = stmt.strip()
+                    if not stmt:
+                        continue
+                    try:
+                        conn.execute(stmt)
+                    except Exception as e:
+                        # HNSW index may fail on older pgvector — non-fatal
+                        if 'hnsw' in stmt.lower():
+                            log.warning(f'HNSW index skipped (pgvector too old?): {e}')
+                        else:
+                            log.warning(f'Schema stmt skipped: {e}')
+                conn.commit()
+            log.info('PostgreSQL schema ready')
+        except Exception as e:
+            log.error(f'PostgreSQL init failed ({e}); falling back to SQLite')
+            _init_sqlite()
+    else:
+        _init_sqlite()
+
+
+def _init_sqlite():
+    raw = sqlite3.connect(DB_PATH)
+    raw.executescript(_SQLITE_SCHEMA)
+    raw.commit()
+    try:
+        raw.execute("ALTER TABLE news ADD COLUMN category TEXT DEFAULT 'gen'")
+        raw.commit()
+    except sqlite3.OperationalError:
+        pass
+    raw.close()
+    log.info(f'SQLite schema ready at {DB_PATH}')
 
 
 # ── Vector storage helpers ────────────────────────────────────────────────────

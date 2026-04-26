@@ -1018,10 +1018,11 @@ def api_ai_status():
         'ready':    provider is not None,
     })
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Startup (runs for both `python stock-server.py` and gunicorn) ─────────────
+init_db()
+threading.Thread(target=get_embed_model, daemon=True).start()
+
 if __name__ == '__main__':
-    init_db()
-    threading.Thread(target=get_embed_model, daemon=True).start()
     port = int(os.environ.get('PORT', 5001))
     log.info(f'StockPulse server starting on http://0.0.0.0:{port}')
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
