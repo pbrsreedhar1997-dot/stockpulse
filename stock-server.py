@@ -47,7 +47,7 @@ _embed_model      = None
 _embed_model_lock = threading.Lock()
 
 def get_embed_model():
-    """Lazily load fastembed BGE model — ONNX, no PyTorch, ~25 MB."""
+    """Lazily load fastembed BGE model if available (optional dependency)."""
     global _embed_model
     if _embed_model is None:
         with _embed_model_lock:
@@ -57,8 +57,10 @@ def get_embed_model():
                     log.info('Loading embedding model BAAI/bge-small-en-v1.5 …')
                     _embed_model = TextEmbedding('BAAI/bge-small-en-v1.5')
                     log.info('Embedding model ready.')
+                except ImportError:
+                    log.info('fastembed not installed — RAG embeddings disabled (chat still works).')
                 except Exception as e:
-                    log.error(f'Embedding model load failed: {e}')
+                    log.warning(f'Embedding model load failed: {e}')
     return _embed_model
 
 # ── Database — delegated to db.py ────────────────────────────────────────────
