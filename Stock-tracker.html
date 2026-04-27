@@ -918,6 +918,7 @@ const Auth = {
     rUserInfo();
     rWatchlist();
     App.initTimers();
+    App.updateStatus(true);
     if(St.list.length){ App.pick(St.list[0].symbol); App.refresh(); }
   },
 
@@ -1110,6 +1111,7 @@ const St = {
   range:    '1mo',
   rtimer:   null,
   ntimer:   null,
+  _btimer:  null,
 
   load(){
     try{
@@ -1773,12 +1775,13 @@ function _renderDropBackend(results, dd){
 /* ─── APP ─── */
 const App = {
   initTimers(){
-    if(!St.rtimer) St.rtimer = setInterval(()=>this.refresh(), 60000);
-    if(!St.ntimer) St.ntimer = setInterval(()=>this.doNews(),  300000);
-    setInterval(()=>checkBackend(), 30000);
+    if(!St.rtimer)  St.rtimer  = setInterval(()=>this.refresh(), 60000);
+    if(!St.ntimer)  St.ntimer  = setInterval(()=>this.doNews(),  300000);
+    if(!St._btimer) St._btimer = setInterval(()=>checkBackend(), 30000);
   },
 
   async start(){
+    St.load(); // hydrate from localStorage immediately so pick() has cached data
     const savedTheme=localStorage.getItem('sp_theme');
     if(savedTheme==='light'){ document.documentElement.classList.add('light'); document.getElementById('theme-btn').textContent='☀️'; }
     this.setupSearch();
@@ -1787,7 +1790,7 @@ const App = {
     await checkBackend();
     if(!_backendOk){
       // backend down — use cached data
-      St.load(); rWatchlist(); this.initTimers();
+      rWatchlist(); this.initTimers(); this.updateStatus(false);
       return;
     }
     if(_authToken){
@@ -1806,6 +1809,8 @@ const App = {
   },
 
   async loadAfterAuth(){
+    // Hydrate cache first so profiles/fins/news are available while new data loads
+    St.load();
     // Load watchlist from backend for logged-in user
     try{
       const r = await fetch(API+'/watchlist', {headers:_authHeaders()});
@@ -2340,7 +2345,11 @@ const ValuePicks = {
     this._loaded = false;
     this._loading = false;
     this._showLoading('Re-running screener in background…');
-    await fetch(API+'/screener/refresh', {method:'POST', headers:_authHeaders()});
+    try{
+      await fetch(API+'/screener/refresh', {method:'POST', headers:_authHeaders()});
+    }catch(e){
+      this._showError('Could not reach server: '+e.message); return;
+    }
     // Screener now runs in background; poll until it's ready
     this._pollTimer = setTimeout(()=>this.load(true), 6000);
   },
