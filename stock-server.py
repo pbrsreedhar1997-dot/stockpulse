@@ -256,8 +256,9 @@ def _screener_fetch_one(sym: str) -> dict | None:
 
 def _run_value_picks() -> list:
     from concurrent.futures import ThreadPoolExecutor
+    # Keep workers low — Render free tier has 0.1 CPU / 512 MB RAM
     results = []
-    with ThreadPoolExecutor(max_workers=12) as ex:
+    with ThreadPoolExecutor(max_workers=4) as ex:
         for item in ex.map(_screener_fetch_one, INDIA_LARGE_CAP):
             if item:
                 results.append(item)
@@ -1053,25 +1054,27 @@ def api_performance(symbol):
     }})
 
 # ── Frontend / PWA static serving ────────────────────────────────────────────
+_ROOT = os.path.dirname(os.path.abspath(__file__))
+
 @app.route('/')
 def index():
-    return send_from_directory('.', 'Stock-tracker.html')
+    return send_from_directory(_ROOT, 'Stock-tracker.html')
 
 @app.route('/manifest.json')
 def manifest():
-    return send_from_directory('.', 'manifest.json',
+    return send_from_directory(_ROOT, 'manifest.json',
                                mimetype='application/manifest+json')
 
 @app.route('/sw.js')
 def service_worker():
-    resp = send_from_directory('.', 'sw.js',
+    resp = send_from_directory(_ROOT, 'sw.js',
                                mimetype='application/javascript')
     resp.headers['Service-Worker-Allowed'] = '/'
     return resp
 
 @app.route('/favicon.ico')
 def favicon():
-    return send_from_directory('static', 'favicon.png',
+    return send_from_directory(os.path.join(_ROOT, 'static'), 'favicon.png',
                                mimetype='image/png')
 
 # ── Health / keep-alive ───────────────────────────────────────────────────────

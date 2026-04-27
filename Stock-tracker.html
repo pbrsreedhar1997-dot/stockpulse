@@ -44,6 +44,8 @@ html.light ::-webkit-scrollbar-thumb{background:var(--border2)}
 html.light .chload{background:rgba(240,244,248,0.88)}
 html.light .toast{box-shadow:0 8px 24px rgba(0,0,0,.15)}
 body{background:var(--bg);color:var(--text);font-family:'Figtree',system-ui,sans-serif;font-size:14px;min-height:100vh;overflow-x:hidden;transition:background .25s,color .25s}
+/* Header must sit above the auth overlay so search always works */
+header{position:relative;z-index:10000}
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
@@ -2200,7 +2202,13 @@ const Chat = {
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         if (resp.status === 503) {
-          this._showSetup();
+          this._addMsg('ai',
+            '🔑 AI key not configured on the server.\n\n' +
+            'To fix:\n' +
+            '1. Go to Render dashboard → your service → Environment\n' +
+            '2. Add variable: GROQ_API_KEY = your key\n' +
+            '3. Get a free key at https://console.groq.com\n' +
+            '4. Click "Save Changes" — Render will redeploy automatically', true);
         } else {
           this._addMsg('ai', '⚠️ ' + (err.error || 'Server error'), true);
         }
@@ -2300,11 +2308,13 @@ const ValuePicks = {
   _loading: false,
 
   _pollTimer: null,
+  _pollStart: 0,
 
   async load(force=false){
     if(this._loading && !force) return;
     if(this._loaded && !force) return;
     clearTimeout(this._pollTimer);
+    if(!this._pollStart || force && !this._loaded) this._pollStart = Date.now();
     this._loading = true;
     if(!this._loaded) this._showLoading();
     try{
@@ -2313,12 +2323,18 @@ const ValuePicks = {
       if(!j.ok){ this._showError('Could not load screener data.'); return; }
 
       if(j.status === 'loading'){
-        // No cache yet — show wait message and poll every 6 seconds
-        this._showLoading('Scanning ' + (100) + '+ stocks… this takes ~60 s on first load.');
+        // No cache yet — keep polling up to 10 min (Render free tier is slow)
+        const elapsed = Math.round((Date.now() - this._pollStart)/1000);
+        if(elapsed > 600){ this._showError('Screener timed out. Click Refresh to try again.'); return; }
+        const msg = elapsed < 90
+          ? `Scanning 100+ stocks… (~${90-elapsed}s remaining)`
+          : `Still scanning… (${Math.round(elapsed/60)}m elapsed — free server is slow)`;
+        this._showLoading(msg);
         this._pollTimer = setTimeout(()=>{ this._loading=false; this.load(true); }, 6000);
         return;
       }
 
+      this._pollStart = 0;
       if(j.status === 'refreshing'){
         // Stale data returned — show it immediately and quietly re-poll
         this._pollTimer = setTimeout(()=>{ this._loading=false; this.load(true); }, 10000);
