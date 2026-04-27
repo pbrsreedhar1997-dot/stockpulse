@@ -317,18 +317,17 @@ RANGE_MAP = {
 
 def fetch_quote(symbol: str) -> dict | None:
     try:
-        t = yf.Ticker(symbol)
-        info = t.fast_info
-        fi   = t.info  # full info — slower but needed for mkt cap etc.
+        t  = yf.Ticker(symbol)
+        fi = t.fast_info  # fast_info only — all required fields present, no slow t.info HTML parse
 
-        price      = getattr(info, 'last_price', None) or fi.get('currentPrice') or fi.get('regularMarketPrice')
-        prev_close = getattr(info, 'previous_close', None) or fi.get('previousClose')
-        opn        = getattr(info, 'open', None) or fi.get('open') or fi.get('regularMarketOpen')
-        high       = getattr(info, 'day_high', None) or fi.get('dayHigh') or fi.get('regularMarketDayHigh')
-        low        = getattr(info, 'day_low', None)  or fi.get('dayLow')  or fi.get('regularMarketDayLow')
-        volume     = getattr(info, 'three_month_average_volume', None) or fi.get('volume') or fi.get('regularMarketVolume')
-        mkt_cap    = getattr(info, 'market_cap', None) or fi.get('marketCap')
-        currency   = fi.get('currency', 'INR' if '.NS' in symbol or '.BO' in symbol else 'USD')
+        price      = getattr(fi, 'last_price',               None)
+        prev_close = getattr(fi, 'previous_close',           None)
+        opn        = getattr(fi, 'open',                     None)
+        high       = getattr(fi, 'day_high',                 None)
+        low        = getattr(fi, 'day_low',                  None)
+        volume     = getattr(fi, 'three_month_average_volume', None)
+        mkt_cap    = getattr(fi, 'market_cap',               None)
+        currency   = getattr(fi, 'currency',                 None) or ('INR' if '.NS' in symbol or '.BO' in symbol else 'USD')
 
         if price is None:
             return None
@@ -362,8 +361,12 @@ def fetch_history(symbol: str, range_key: str) -> list:
             return []
         rows = []
         for ts, row in df.iterrows():
+            try:
+                ts_int = int(ts.timestamp())
+            except (ValueError, OSError):
+                continue
             rows.append({
-                'ts':     int(ts.timestamp()),
+                'ts':     ts_int,
                 'open':   round(float(row['Open']),  2),
                 'high':   round(float(row['High']),  2),
                 'low':    round(float(row['Low']),   2),
