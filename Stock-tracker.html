@@ -808,6 +808,17 @@ function setSrc(id,state){ // state: 'ok'|'err'|''
   if(el) el.className='srcpill'+(state?' '+state:'');
 }
 
+/* ─── DEFAULT WATCHLIST (shown to first-time / guest users) ─── */
+const DEFAULT_WATCHLIST = [
+  {symbol:'RELIANCE.NS',  name:'Reliance Industries',        exchange:'NSE'},
+  {symbol:'TCS.NS',       name:'Tata Consultancy Services',  exchange:'NSE'},
+  {symbol:'HDFCBANK.NS',  name:'HDFC Bank',                  exchange:'NSE'},
+  {symbol:'INFY.NS',      name:'Infosys',                    exchange:'NSE'},
+  {symbol:'WIPRO.NS',     name:'Wipro',                      exchange:'NSE'},
+  {symbol:'AAPL',         name:'Apple Inc.',                  exchange:'NASDAQ'},
+  {symbol:'MSFT',         name:'Microsoft Corporation',       exchange:'NASDAQ'},
+];
+
 /* ─── BACKEND API ─── */
 const API = (location.protocol === 'file:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')
   ? 'http://localhost:5001/api'
@@ -1125,6 +1136,8 @@ const St = {
       const s=localStorage.getItem('sp3_sn');
       if(s){ const r=JSON.parse(s); for(const k in r) this.seen[k]=new Set(r[k]); }
     }catch{}
+    // First-time visitor: seed default watchlist so the app shows something immediately
+    if(!localStorage.getItem('sp3_wl')) this.list = [...DEFAULT_WATCHLIST];
   },
   save(){
     try{
@@ -1819,6 +1832,15 @@ const App = {
       const j = await r.json();
       if(j.ok){ St.list = j.data || []; St.save(); }
     }catch{}
+    // New account with empty watchlist: seed defaults and save to backend
+    if(!St.list.length){
+      St.list = [...DEFAULT_WATCHLIST];
+      St.save();
+      // Persist defaults to backend for this user
+      for(const item of DEFAULT_WATCHLIST){
+        apiPost('/watchlist', {symbol:item.symbol, name:item.name, exchange:item.exchange}).catch(()=>{});
+      }
+    }
     rWatchlist();
     this.updateStatus();
     if(St.list.length){ this.pick(St.list[0].symbol); this.refresh(); }

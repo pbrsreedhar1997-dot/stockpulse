@@ -329,6 +329,9 @@ def fetch_quote(symbol: str) -> dict | None:
         mkt_cap    = getattr(fi, 'market_cap',               None)
         currency   = getattr(fi, 'currency',                 None) or ('INR' if '.NS' in symbol or '.BO' in symbol else 'USD')
 
+        # last_price is None outside trading hours for some feeds; fall back to prev close
+        if price is None:
+            price = prev_close
         if price is None:
             return None
 
