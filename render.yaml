@@ -8,15 +8,8 @@ services:
     healthCheckPath: /api/ping
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.6
+        value: "3.11.6"
       - key: GROQ_API_KEY
         sync: false
       - key: DATABASE_URL
-        fromDatabase:
-          name: stockpulse-db
-          property: connectionString
-
-databases:
-  - name: stockpulse-db
-    databaseName: stockpulse
-    plan: free
+        sync: false
