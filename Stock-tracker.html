@@ -1002,7 +1002,8 @@ const DS = {
   async getQuote(sym){
     const d = await apiGet('/quote/'+encodeURIComponent(sym));
     if(!d) return null;
-    setSrc('yf','ok'); setSrc('fh','ok');
+    setSrc('yf','ok');
+    const src = d._source || 'yfinance';
     return {
       c:   d.price,
       pc:  d.prev_close,
@@ -1014,7 +1015,7 @@ const DS = {
       vol: d.volume,
       mcap:d.mkt_cap,
       curr:d.currency || (isIN(sym)?'INR':'USD'),
-      _src:'Backend/yfinance',
+      _src:'Backend/' + src,
     };
   },
 

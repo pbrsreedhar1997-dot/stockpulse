@@ -315,71 +315,212 @@ RANGE_MAP = {
     '5y':  ('5y',  '1mo'),
 }
 
-def fetch_quote(symbol: str) -> dict | None:
+_YF_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Accept': 'application/json',
+}
+
+def _quote_from_yf(symbol: str) -> dict | None:
+    """Source 1 — yfinance fast_info (lightweight JSON, ~100 ms)."""
     try:
-        t  = yf.Ticker(symbol)
-        fi = t.fast_info  # fast_info only — all required fields present, no slow t.info HTML parse
-
-        price      = getattr(fi, 'last_price',               None)
-        prev_close = getattr(fi, 'previous_close',           None)
-        opn        = getattr(fi, 'open',                     None)
-        high       = getattr(fi, 'day_high',                 None)
-        low        = getattr(fi, 'day_low',                  None)
-        volume     = getattr(fi, 'three_month_average_volume', None)
-        mkt_cap    = getattr(fi, 'market_cap',               None)
-        currency   = getattr(fi, 'currency',                 None) or ('INR' if '.NS' in symbol or '.BO' in symbol else 'USD')
-
-        # last_price is None outside trading hours for some feeds; fall back to prev close
-        if price is None:
-            price = prev_close
-        if price is None:
-            return None
-
+        fi = yf.Ticker(symbol).fast_info
+        price      = getattr(fi, 'last_price',                None)
+        prev_close = getattr(fi, 'previous_close',            None)
+        if price is None: price = prev_close   # market closed fallback
+        if price is None: return None
+        opn     = getattr(fi, 'open',                     None)
+        high    = getattr(fi, 'day_high',                 None)
+        low     = getattr(fi, 'day_low',                  None)
+        volume  = getattr(fi, 'three_month_average_volume', None)
+        mkt_cap = getattr(fi, 'market_cap',               None)
+        currency = getattr(fi, 'currency', None) or ('INR' if '.NS' in symbol or '.BO' in symbol else 'USD')
         change     = round(price - prev_close, 2) if prev_close else 0
         change_pct = round((change / prev_close) * 100, 2) if prev_close else 0
-
         return {
-            'symbol':     symbol,
-            'price':      round(float(price), 2),
-            'open':       round(float(opn), 2) if opn else None,
-            'high':       round(float(high), 2) if high else None,
-            'low':        round(float(low), 2)  if low  else None,
+            'symbol': symbol, 'price': round(float(price), 2),
+            'open':   round(float(opn), 2) if opn else None,
+            'high':   round(float(high), 2) if high else None,
+            'low':    round(float(low), 2)  if low  else None,
             'prev_close': round(float(prev_close), 2) if prev_close else None,
-            'change':     change,
-            'change_pct': change_pct,
-            'volume':     int(volume) if volume else None,
-            'mkt_cap':    float(mkt_cap) if mkt_cap else None,
-            'currency':   currency,
+            'change': change, 'change_pct': change_pct,
+            'volume': int(volume) if volume else None,
+            'mkt_cap': float(mkt_cap) if mkt_cap else None,
+            'currency': currency, '_source': 'yfinance',
         }
     except Exception as e:
-        log.warning(f'fetch_quote({symbol}): {e}')
+        log.debug(f'_quote_from_yf({symbol}): {e}')
         return None
 
+
+def _quote_from_yf_direct(symbol: str) -> dict | None:
+    """Source 2 — Yahoo Finance chart API via direct HTTP (bypasses yfinance library issues)."""
+    try:
+        url = f'https://query2.finance.yahoo.com/v8/finance/chart/{symbol}'
+        r   = http_requests.get(url, params={'interval': '1d', 'range': '5d'},
+                                headers=_YF_HEADERS, timeout=12)
+        if r.status_code != 200:
+            return None
+        data   = r.json()
+        result = (data.get('chart') or {}).get('result') or []
+        if not result:
+            return None
+        meta   = result[0].get('meta', {})
+        price  = meta.get('regularMarketPrice') or meta.get('previousClose')
+        if not price:
+            return None
+        prev_close = meta.get('chartPreviousClose') or meta.get('previousClose')
+        currency   = meta.get('currency', 'INR' if '.NS' in symbol or '.BO' in symbol else 'USD')
+        change     = round(price - prev_close, 2) if prev_close else 0
+        change_pct = round((change / prev_close) * 100, 2) if prev_close else 0
+        return {
+            'symbol': symbol, 'price': round(float(price), 2),
+            'open':   round(float(meta.get('regularMarketOpen', price)), 2),
+            'high':   round(float(meta.get('regularMarketDayHigh', price)), 2),
+            'low':    round(float(meta.get('regularMarketDayLow', price)), 2),
+            'prev_close': round(float(prev_close), 2) if prev_close else None,
+            'change': change, 'change_pct': change_pct,
+            'volume': meta.get('regularMarketVolume'),
+            'mkt_cap': meta.get('marketCap'),
+            'currency': currency, '_source': 'yahoo-direct',
+        }
+    except Exception as e:
+        log.debug(f'_quote_from_yf_direct({symbol}): {e}')
+        return None
+
+
+def _stooq_symbol(symbol: str) -> str:
+    """Map a Yahoo Finance symbol to its Stooq equivalent."""
+    s = symbol.upper()
+    if s.endswith('.NS') or s.endswith('.BO'):
+        return s.lower()          # stooq accepts reliance.ns directly
+    if '.' not in s:
+        return s.lower() + '.us'  # US stocks need .us suffix on stooq
+    return s.lower()
+
+
+def _quote_from_stooq(symbol: str) -> dict | None:
+    """Source 3 — Stooq.com CSV API (independent data provider)."""
+    try:
+        import io, csv
+        sq = _stooq_symbol(symbol)
+        r  = http_requests.get(f'https://stooq.com/q/d/l/?s={sq}&i=d',
+                               headers=_YF_HEADERS, timeout=12)
+        if r.status_code != 200 or 'No data' in r.text or not r.text.strip():
+            return None
+        rows = list(csv.DictReader(io.StringIO(r.text)))
+        if len(rows) < 1:
+            return None
+        last = rows[-1]
+        prev = rows[-2] if len(rows) >= 2 else last
+        price  = float(last.get('Close') or 0)
+        if not price:
+            return None
+        prev_close = float(prev.get('Close') or price)
+        opn  = float(last.get('Open')   or price)
+        high = float(last.get('High')   or price)
+        low  = float(last.get('Low')    or price)
+        vol  = int(float(last.get('Volume') or 0)) or None
+        currency = 'INR' if '.NS' in symbol or '.BO' in symbol else 'USD'
+        change     = round(price - prev_close, 2)
+        change_pct = round((change / prev_close) * 100, 2) if prev_close else 0
+        return {
+            'symbol': symbol, 'price': round(price, 2),
+            'open': round(opn, 2), 'high': round(high, 2), 'low': round(low, 2),
+            'prev_close': round(prev_close, 2),
+            'change': change, 'change_pct': change_pct,
+            'volume': vol, 'mkt_cap': None, 'currency': currency,
+            '_source': 'stooq',
+        }
+    except Exception as e:
+        log.debug(f'_quote_from_stooq({symbol}): {e}')
+        return None
+
+
+def fetch_quote(symbol: str) -> dict | None:
+    """Try three sources in order; return first successful result."""
+    for fn in (_quote_from_yf, _quote_from_yf_direct, _quote_from_stooq):
+        try:
+            data = fn(symbol)
+            if data:
+                if fn is not _quote_from_yf:
+                    log.info(f'fetch_quote({symbol}): used fallback {data.get("_source")}')
+                return data
+        except Exception as e:
+            log.debug(f'fetch_quote {fn.__name__} error: {e}')
+    log.warning(f'fetch_quote({symbol}): all sources failed')
+    return None
+
+def _history_from_stooq(symbol: str, range_key: str) -> list:
+    """Stooq fallback for price history — returns daily OHLCV rows."""
+    try:
+        import io, csv
+        from datetime import date, timedelta
+        days = {'1d': 2, '5d': 7, '1mo': 35, '3mo': 95, '1y': 370, '5y': 1830}
+        n    = days.get(range_key, 35)
+        end  = date.today()
+        beg  = end - timedelta(days=n)
+        sq   = _stooq_symbol(symbol)
+        url  = (f'https://stooq.com/q/d/l/?s={sq}'
+                f'&d1={beg.strftime("%Y%m%d")}&d2={end.strftime("%Y%m%d")}&i=d')
+        r    = http_requests.get(url, headers=_YF_HEADERS, timeout=12)
+        if r.status_code != 200 or 'No data' in r.text:
+            return []
+        rows = []
+        for rec in csv.DictReader(io.StringIO(r.text)):
+            try:
+                import calendar
+                dt = rec.get('Date', '')
+                if not dt:
+                    continue
+                y, m, d2 = int(dt[:4]), int(dt[5:7]), int(dt[8:10])
+                ts = int(calendar.timegm((y, m, d2, 0, 0, 0, 0, 0, 0)))
+                rows.append({
+                    'ts':     ts,
+                    'open':   round(float(rec['Open']),   2),
+                    'high':   round(float(rec['High']),   2),
+                    'low':    round(float(rec['Low']),    2),
+                    'close':  round(float(rec['Close']),  2),
+                    'volume': int(float(rec.get('Volume') or 0)),
+                })
+            except Exception:
+                continue
+        return rows
+    except Exception as e:
+        log.debug(f'_history_from_stooq({symbol}): {e}')
+        return []
+
+
 def fetch_history(symbol: str, range_key: str) -> list:
+    """Source 1: yfinance; fallback: Stooq CSV."""
     period, interval = RANGE_MAP.get(range_key, ('1mo', '1d'))
     try:
         t  = yf.Ticker(symbol)
         df = t.history(period=period, interval=interval, auto_adjust=True)
-        if df.empty:
-            return []
-        rows = []
-        for ts, row in df.iterrows():
-            try:
-                ts_int = int(ts.timestamp())
-            except (ValueError, OSError):
-                continue
-            rows.append({
-                'ts':     ts_int,
-                'open':   round(float(row['Open']),  2),
-                'high':   round(float(row['High']),  2),
-                'low':    round(float(row['Low']),   2),
-                'close':  round(float(row['Close']), 2),
-                'volume': int(row['Volume']) if row['Volume'] else 0,
-            })
-        return rows
+        if not df.empty:
+            rows = []
+            for ts, row in df.iterrows():
+                try:
+                    ts_int = int(ts.timestamp())
+                except (ValueError, OSError):
+                    continue
+                rows.append({
+                    'ts':     ts_int,
+                    'open':   round(float(row['Open']),  2),
+                    'high':   round(float(row['High']),  2),
+                    'low':    round(float(row['Low']),   2),
+                    'close':  round(float(row['Close']), 2),
+                    'volume': int(row['Volume']) if row['Volume'] else 0,
+                })
+            if rows:
+                return rows
     except Exception as e:
-        log.warning(f'fetch_history({symbol},{range_key}): {e}')
-        return []
+        log.warning(f'fetch_history yfinance ({symbol},{range_key}): {e}')
+
+    # Fallback: Stooq
+    rows = _history_from_stooq(symbol, range_key)
+    if rows:
+        log.info(f'fetch_history({symbol},{range_key}): used stooq fallback')
+    return rows
 
 def fetch_profile(symbol: str) -> dict | None:
     try:
@@ -769,27 +910,50 @@ def api_search():
     if row and not stale(row['fetched_at'], 3600):
         return jsonify({'ok': True, 'data': json.loads(row['results'])})
 
+    # Source 1: yfinance Search API
+    mapped = []
     try:
         results = yf.Search(q, max_results=10).quotes
-        mapped  = []
         for r in results:
-            sym = r.get('symbol','')
-            mapped.append({
-                'symbol':   sym,
-                'name':     r.get('longname') or r.get('shortname', sym),
-                'exchange': r.get('exchange',''),
-                'type':     r.get('quoteType',''),
-            })
+            sym = r.get('symbol', '')
+            if sym:
+                mapped.append({
+                    'symbol':   sym,
+                    'name':     r.get('longname') or r.get('shortname', sym),
+                    'exchange': r.get('exchange', ''),
+                    'type':     r.get('quoteType', ''),
+                })
+    except Exception as e:
+        log.warning(f'search yfinance({q}): {e}')
 
+    # Source 2: Yahoo Finance search API (direct HTTP fallback)
+    if not mapped:
+        try:
+            url = 'https://query2.finance.yahoo.com/v1/finance/search'
+            r2  = http_requests.get(url, params={'q': q, 'quotesCount': 10, 'newsCount': 0},
+                                    headers=_YF_HEADERS, timeout=10)
+            if r2.status_code == 200:
+                for r in (r2.json().get('quotes') or []):
+                    sym = r.get('symbol', '')
+                    if sym:
+                        mapped.append({
+                            'symbol':   sym,
+                            'name':     r.get('longname') or r.get('shortname', sym),
+                            'exchange': r.get('exchange', ''),
+                            'type':     r.get('quoteType', ''),
+                        })
+        except Exception as e:
+            log.warning(f'search yf-direct({q}): {e}')
+
+    if mapped:
         db.execute("""
             INSERT OR REPLACE INTO search_cache (query,results,fetched_at)
             VALUES (?,?,?)
         """, (q.lower(), json.dumps(mapped), now_ts()))
         db.commit()
         return jsonify({'ok': True, 'data': mapped})
-    except Exception as e:
-        log.warning(f'search({q}): {e}')
-        return jsonify({'ok': False, 'error': str(e)}), 500
+
+    return jsonify({'ok': False, 'error': 'No results found'}), 404
 
 # ── Auth endpoints ────────────────────────────────────────────────────────────
 @app.route('/api/auth/register', methods=['POST'])
