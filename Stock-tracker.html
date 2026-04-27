@@ -967,12 +967,16 @@ function rUserInfo(){
   }
 }
 
+let _prevBackendOk = null; // null = never checked
+
 async function checkBackend(){
   const isLocal = location.protocol === 'file:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-  // Retry up to 3 times — Railway cold-start can take several seconds
   for(let attempt = 0; attempt < 3; attempt++){
     try{
-      const r = await fetch(API+'/ping', {signal: AbortSignal.timeout(10000)});
+      const ctrl = new AbortController();
+      const tid  = setTimeout(()=>ctrl.abort(), 10000);
+      const r = await fetch(API+'/ping', {signal: ctrl.signal});
+      clearTimeout(tid);
       const j = await r.json();
       _backendOk = !!(j?.ok);
       if(_backendOk) break;
@@ -983,16 +987,28 @@ async function checkBackend(){
   }
   const el = document.getElementById('backend-status');
   if(el){
-    el.className = 'backend-pill '+ (_backendOk ? 'ok' : 'err');
-    el.title     = _backendOk ? 'Backend connected' : 'Backend offline';
+    el.className   = 'backend-pill '+ (_backendOk ? 'ok' : 'err');
+    el.title       = _backendOk ? 'Backend connected' : 'Backend offline — retrying…';
     el.textContent = _backendOk ? '● Backend' : '○ Backend offline';
   }
-  if(!_backendOk){
-    const msg = isLocal
-      ? 'Start stock-server.py to get live data. Run: python3 stock-server.py'
-      : 'Server is starting up — please wait a moment and refresh.';
-    Toast.show('⚠️','Backend Offline', msg, 8000);
+  // Backend just recovered from offline — reload live data
+  if(_backendOk && _prevBackendOk === false){
+    App.updateStatus(true);
+    App.refresh();
+    if(_authToken){
+      fetch(API+'/auth/me',{headers:_authHeaders()}).then(r=>r.json()).then(j=>{
+        if(j.ok){ _authUser=j.user; rUserInfo(); App.loadAfterAuth(); }
+      }).catch(()=>{});
+    }
+    Toast.show('✅','Backend Online','Live prices are now loading.',4000);
   }
+  if(!_backendOk && _prevBackendOk !== false){
+    const msg = isLocal
+      ? 'Start stock-server.py to get live data.'
+      : 'Render server is waking up (takes 30-60s). Data will load automatically.';
+    Toast.show('⚠️','Backend Offline', msg, 10000);
+  }
+  _prevBackendOk = _backendOk;
   return _backendOk;
 }
 
@@ -1797,31 +1813,38 @@ const App = {
   },
 
   async start(){
-    St.load(); // hydrate from localStorage immediately so pick() has cached data
+    St.load(); // hydrate from localStorage immediately
     const savedTheme=localStorage.getItem('sp_theme');
     if(savedTheme==='light'){ document.documentElement.classList.add('light'); document.getElementById('theme-btn').textContent='☀️'; }
     this.setupSearch();
     if('Notification' in window && Notification.permission==='default') Notification.requestPermission();
     rUserInfo();
+
+    // Show content IMMEDIATELY — don't block on backend check
+    rWatchlist();
+    if(St.list.length) this.pick(St.list[0].symbol);
+    this.updateStatus(null); // "Connecting…"
+    this.initTimers();
+
+    // Check backend — may take 30-60s on Render cold start
     await checkBackend();
     if(!_backendOk){
-      // backend down — use cached data
-      rWatchlist(); this.initTimers(); this.updateStatus(false);
+      this.updateStatus(false);
       return;
     }
+
+    // Backend is up — authenticate or load as guest
     if(_authToken){
-      // verify existing token
       try{
         const r = await fetch(API+'/auth/me', {headers:_authHeaders()});
         const j = await r.json();
         if(j.ok){ _authUser = j.user; rUserInfo(); await this.loadAfterAuth(); return; }
       }catch{}
-      // token invalid — clear and show login
       _authToken = ''; localStorage.removeItem('sp3_token');
     }
-    // No token — show auth modal (with guest option)
-    rWatchlist();
-    Auth.show();
+    // Guest mode — fetch live prices now that backend is confirmed up
+    this.updateStatus(true);
+    this.refresh();
   },
 
   async loadAfterAuth(){
@@ -2085,7 +2108,7 @@ const App = {
     const dot=document.getElementById('sdot'), txt=document.getElementById('stxt');
     const mkt=document.getElementById('mkt');
     dot.className='sdot'+(ok===false?' off':'');
-    txt.textContent=ok==null?'Connecting…':ok?'Live · Multi-source':'Refreshing…';
+    txt.textContent=ok==null?'Connecting…':ok?'Live · Multi-source':'Backend offline';
     // Market status
     const now=new Date();
     const ist=new Date(now.getTime()+5.5*3600000);
@@ -2260,10 +2283,15 @@ const Chat = {
               aiMsgEl = this._addMsg('ai', aiText, false, true);
             } else {
               const bubble = aiMsgEl.querySelector('.cmsg-bubble');
-              if (bubble) bubble.textContent = aiText;
+              if (bubble) bubble.textContent = aiText; // plain during stream
             }
             this._scrollBottom();
           } else if (evt.type === 'done') {
+            // Re-render final text with markdown
+            if (aiMsgEl) {
+              const bubble = aiMsgEl.querySelector('.cmsg-bubble');
+              if (bubble) bubble.innerHTML = this._md(aiText);
+            }
             break;
           } else if (evt.type === 'error') {
             if (!aiMsgEl) this._addMsg('ai', '⚠️ ' + (evt.message || 'Error'), true);
@@ -2289,8 +2317,9 @@ const Chat = {
     const el   = document.createElement('div');
     el.className = `cmsg ${role}`;
     const t = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    const content = (role === 'ai' && !isErr) ? this._md(text) : this._esc(text);
     el.innerHTML =
-      `<div class="cmsg-bubble${isErr ? ' chat-err' : ''}">${this._esc(text)}</div>` +
+      `<div class="cmsg-bubble${isErr ? ' chat-err' : ''}">${content}</div>` +
       `<span class="cmsg-time">${role === 'user' ? 'You' : 'AI'} · ${t}</span>`;
     msgs.appendChild(el);
     this._scrollBottom();
@@ -2317,6 +2346,20 @@ const Chat = {
     return String(s)
       .replace(/&/g,'&amp;').replace(/</g,'&lt;')
       .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  },
+
+  _md(text) {
+    // Escape HTML first, then apply markdown transforms (safe innerHTML)
+    return this._esc(text)
+      .replace(/\*\*\*(.+?)\*\*\*/g,  '<strong><em>$1</em></strong>')
+      .replace(/\*\*(.+?)\*\*/g,       '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g,           '<em>$1</em>')
+      .replace(/`([^`]+)`/g,           '<code style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:3px;font-size:.88em">$1</code>')
+      .replace(/^#{1,3} (.+)$/gm,      '<strong style="font-size:1.02em;display:block;margin-top:6px">$1</strong>')
+      .replace(/^[-*•]\s+(.+)$/gm,     '&bull; $1')
+      .replace(/^(\d+)\.\s+(.+)$/gm,   '<span style="color:var(--accent)">$1.</span> $2')
+      .replace(/\n\n/g,                '<br><br>')
+      .replace(/\n/g,                  '<br>');
   },
 };
 
