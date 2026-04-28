@@ -1,0 +1,209 @@
+@if (!symbol()) {
+  <div class="detail-empty">
+    <div class="empty-icon">📊</div>
+    <div class="empty-title">Select a stock from the watchlist</div>
+    <div class="empty-sub">Search and add stocks to your watchlist to get started</div>
+  </div>
+} @else {
+  <div class="detail-wrap">
+    <!-- Quote Header -->
+    <div class="quote-header">
+      @if (profile()) {
+        <div class="qh-left">
+          <div class="qh-sym">{{symbol().replace('.NS','').replace('.BO','')}}</div>
+          <div class="qh-name">{{profile()?.name}}</div>
+          <div class="qh-tags">
+            @if (profile()?.exchange) { <span class="tag">{{profile()?.exchange}}</span> }
+            @if (profile()?.sector)   { <span class="tag">{{profile()?.sector}}</span> }
+          </div>
+        </div>
+      } @else {
+        <div class="qh-left">
+          <div class="qh-sym">{{symbol()}}</div>
+        </div>
+      }
+      <div class="qh-right">
+        @if (quote()) {
+          <div class="qh-price">{{currency}}{{fmt(quote()?.price)}}</div>
+          <div class="qh-chg" [class.up]="(quote()?.change_pct ?? 0) >= 0" [class.dn]="(quote()?.change_pct ?? 0) < 0">
+            {{(quote()?.change_pct ?? 0) >= 0 ? '+' : ''}}{{fmt(quote()?.change_pct)}}%
+            ({{currency}}{{fmt(quote()?.change)}})
+          </div>
+        } @else {
+          <div class="qh-loading">Loading…</div>
+        }
+      </div>
+    </div>
+
+    <!-- Quick Stats Bar -->
+    @if (quote()) {
+      <div class="qstats">
+        <div class="qs-item"><span class="qs-lbl">Open</span><span class="qs-val">{{currency}}{{fmt(quote()?.open)}}</span></div>
+        <div class="qs-item"><span class="qs-lbl">High</span><span class="qs-val up">{{currency}}{{fmt(quote()?.high)}}</span></div>
+        <div class="qs-item"><span class="qs-lbl">Low</span><span class="qs-val dn">{{currency}}{{fmt(quote()?.low)}}</span></div>
+        <div class="qs-item"><span class="qs-lbl">Prev Close</span><span class="qs-val">{{currency}}{{fmt(quote()?.prev_close)}}</span></div>
+        <div class="qs-item"><span class="qs-lbl">Volume</span><span class="qs-val">{{fmtBig(quote()?.volume)}}</span></div>
+        <div class="qs-item"><span class="qs-lbl">Mkt Cap</span><span class="qs-val">{{currency}}{{fmtBig(quote()?.mkt_cap)}}</span></div>
+      </div>
+    }
+
+    <!-- Chart -->
+    <div class="chart-card">
+      <app-chart
+        [points]="history()"
+        [activeRange]="range()"
+        [loading]="loadingChart()"
+        [color]="chartColor"
+        (rangeChange)="onRangeChange($event)"
+      />
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab-btn" [class.active]="tab()==='overview'"    (click)="switchTab('overview')">Overview</button>
+      <button class="tab-btn" [class.active]="tab()==='news'"        (click)="switchTab('news')">News</button>
+      <button class="tab-btn" [class.active]="tab()==='financials'"  (click)="switchTab('financials')">Financials</button>
+      <button class="tab-btn" [class.active]="tab()==='performance'" (click)="switchTab('performance')">Performance</button>
+    </div>
+
+    <!-- Overview Tab -->
+    @if (tab() === 'overview') {
+      <div class="tab-content">
+        @if (profile()?.description) {
+          <div class="section">
+            <div class="section-title">About</div>
+            <p class="about-text">{{profile()?.description}}</p>
+          </div>
+        }
+        @if (fins()) {
+          <div class="section">
+            <div class="section-title">Key Metrics</div>
+            <div class="metrics-grid">
+              <div class="metric"><span class="m-lbl">P/E Ratio</span><span class="m-val">{{fmt(fins()?.pe_ratio, 2)}}</span></div>
+              <div class="metric"><span class="m-lbl">EPS</span><span class="m-val">{{currency}}{{fmt(fins()?.eps, 2)}}</span></div>
+              <div class="metric"><span class="m-lbl">Beta</span><span class="m-val">{{fmt(fins()?.beta, 2)}}</span></div>
+              <div class="metric"><span class="m-lbl">Div Yield</span><span class="m-val">{{fins()?.dividend_yield ? (fins()!.dividend_yield! * 100).toFixed(2) + '%' : '—'}}</span></div>
+              <div class="metric"><span class="m-lbl">52W High</span><span class="m-val up">{{currency}}{{fmt(fins()?.week52_high)}}</span></div>
+              <div class="metric"><span class="m-lbl">52W Low</span><span class="m-val dn">{{currency}}{{fmt(fins()?.week52_low)}}</span></div>
+            </div>
+          </div>
+        }
+        @if (profile()?.website || profile()?.employees || profile()?.country) {
+          <div class="section">
+            <div class="section-title">Company Info</div>
+            <div class="info-list">
+              @if (profile()?.country)   { <div class="info-row"><span>Country</span><span>{{profile()?.country}}</span></div> }
+              @if (profile()?.employees) { <div class="info-row"><span>Employees</span><span>{{(profile()?.employees || 0).toLocaleString()}}</span></div> }
+              @if (profile()?.website)   { <div class="info-row"><span>Website</span><a [href]="profile()?.website" target="_blank" rel="noopener">{{profile()?.website}}</a></div> }
+            </div>
+          </div>
+        }
+      </div>
+    }
+
+    <!-- News Tab -->
+    @if (tab() === 'news') {
+      <div class="tab-content">
+        @if (loadingNews()) {
+          <div class="loading-state"><div class="spin"></div><span>Loading news…</span></div>
+        } @else if (news().length === 0) {
+          <div class="empty-state">No news found for {{symbol()}}</div>
+        } @else {
+          <div class="news-list">
+            @for (a of news(); track a.url || a.title) {
+              <a class="news-card" [href]="a.url || '#'" target="_blank" rel="noopener">
+                <div class="news-meta">
+                  <span class="news-src">{{a.source}}</span>
+                  <span class="news-time">{{fmtTime(a.published)}}</span>
+                  @if (a.relevance === 'high') { <span class="news-badge direct">Direct</span> }
+                </div>
+                <div class="news-title">{{a.title}}</div>
+                @if (a.summary) { <div class="news-summary">{{a.summary}}</div> }
+              </a>
+            }
+          </div>
+        }
+      </div>
+    }
+
+    <!-- Financials Tab -->
+    @if (tab() === 'financials') {
+      <div class="tab-content">
+        @if (loadingFins()) {
+          <div class="loading-state"><div class="spin"></div><span>Loading financials…</span></div>
+        } @else if (!fins()) {
+          <div class="empty-state">No financial data available</div>
+        } @else {
+          <div class="section">
+            <div class="section-title">Financial Overview</div>
+            <div class="metrics-grid">
+              <div class="metric"><span class="m-lbl">Revenue (TTM)</span><span class="m-val">{{currency}}{{fmtBig(fins()?.revenue_ttm)}}</span></div>
+              <div class="metric"><span class="m-lbl">Net Income (TTM)</span><span class="m-val">{{currency}}{{fmtBig(fins()?.net_income_ttm)}}</span></div>
+              <div class="metric"><span class="m-lbl">Gross Margin</span><span class="m-val">{{fins()?.gross_margin ? (fins()!.gross_margin! * 100).toFixed(1) + '%' : '—'}}</span></div>
+              <div class="metric"><span class="m-lbl">P/E Ratio</span><span class="m-val">{{fmt(fins()?.pe_ratio, 2)}}</span></div>
+              <div class="metric"><span class="m-lbl">EPS</span><span class="m-val">{{currency}}{{fmt(fins()?.eps, 2)}}</span></div>
+              <div class="metric"><span class="m-lbl">Avg Volume</span><span class="m-val">{{fmtBig(fins()?.avg_volume)}}</span></div>
+            </div>
+          </div>
+          <div class="section">
+            <div class="section-title">52-Week Range</div>
+            @let low52  = fins()?.week52_low  ?? 0;
+            @let high52 = fins()?.week52_high ?? 0;
+            @let cur    = quote()?.price ?? 0;
+            @let pct    = high52 > low52 ? ((cur - low52) / (high52 - low52) * 100) : 50;
+            <div class="range52">
+              <span class="r52-low dn">{{currency}}{{fmt(fins()?.week52_low)}}</span>
+              <div class="r52-track"><div class="r52-fill" [style.width.%]="pct"><div class="r52-dot"></div></div></div>
+              <span class="r52-high up">{{currency}}{{fmt(fins()?.week52_high)}}</span>
+            </div>
+          </div>
+        }
+      </div>
+    }
+
+    <!-- Performance Tab -->
+    @if (tab() === 'performance') {
+      <div class="tab-content">
+        @if (loadingAI()) {
+          <div class="loading-state"><div class="spin"></div><span>Generating AI summary…</span></div>
+        } @else if (aiSummary()) {
+          <div class="section">
+            <div class="section-title">AI Analysis</div>
+            <div class="ai-summary">{{aiSummary()}}</div>
+          </div>
+        }
+        @if (loadingPerf()) {
+          <div class="loading-state"><div class="spin"></div><span>Loading performance…</span></div>
+        } @else if (!perf()) {
+          <div class="empty-state">No performance data available</div>
+        } @else {
+          <div class="section">
+            <div class="section-title">CAGR</div>
+            <div class="metrics-grid">
+              <div class="metric"><span class="m-lbl">1Y</span><span class="m-val" [class.up]="(perf()?.cagr_1y ?? 0) >= 0" [class.dn]="(perf()?.cagr_1y ?? 0) < 0">{{perf()?.cagr_1y != null ? (perf()!.cagr_1y! >= 0 ? '+' : '') + perf()!.cagr_1y!.toFixed(1) + '%' : '—'}}</span></div>
+              <div class="metric"><span class="m-lbl">3Y</span><span class="m-val" [class.up]="(perf()?.cagr_3y ?? 0) >= 0" [class.dn]="(perf()?.cagr_3y ?? 0) < 0">{{perf()?.cagr_3y != null ? (perf()!.cagr_3y! >= 0 ? '+' : '') + perf()!.cagr_3y!.toFixed(1) + '%' : '—'}}</span></div>
+              <div class="metric"><span class="m-lbl">5Y</span><span class="m-val" [class.up]="(perf()?.cagr_5y ?? 0) >= 0" [class.dn]="(perf()?.cagr_5y ?? 0) < 0">{{perf()?.cagr_5y != null ? (perf()!.cagr_5y! >= 0 ? '+' : '') + perf()!.cagr_5y!.toFixed(1) + '%' : '—'}}</span></div>
+              @if (perf()?.max_drawdown != null) { <div class="metric"><span class="m-lbl">Max Drawdown</span><span class="m-val dn">{{perf()!.max_drawdown!.toFixed(1)}}%</span></div> }
+            </div>
+          </div>
+          @if (annualReturnEntries().length) {
+            <div class="section">
+              <div class="section-title">Annual Returns</div>
+              <div class="annual-returns">
+                @for (e of annualReturnEntries(); track e.year) {
+                  <div class="ar-row">
+                    <span class="ar-year">{{e.year}}</span>
+                    <div class="ar-bar-wrap">
+                      <div class="ar-bar" [class.up]="e.ret >= 0" [class.dn]="e.ret < 0" [style.width.%]="Math.abs(e.ret) / maxAbsReturn() * 100"></div>
+                    </div>
+                    <span class="ar-val" [class.up]="e.ret >= 0" [class.dn]="e.ret < 0">{{e.ret >= 0 ? '+' : ''}}{{e.ret.toFixed(1)}}%</span>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+        }
+      </div>
+    }
+  </div>
+}

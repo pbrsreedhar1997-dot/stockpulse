@@ -1,0 +1,61 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap');
+
+/* ── CSS Variables ─────────────────────────────────── */
+:root, [data-theme="dark"] {
+  --bg:       #0d1117;
+  --sidebar:  #111720;
+  --card:     #161c27;
+  --hover:    #1c2333;
+  --border:   #21293a;
+  --text:     #e6edf3;
+  --text2:    #8b9ab3;
+  --text3:    #4e5d73;
+  --accent:   #00d4aa;
+  --green:    #3fb950;
+  --red:      #f85149;
+  --amber:    #f0a832;
+  --chart-grid: rgba(255,255,255,0.04);
+  --chart-tick: #64748b;
+}
+
+[data-theme="light"] {
+  --bg:       #f4f6f9;
+  --sidebar:  #ffffff;
+  --card:     #ffffff;
+  --hover:    #f0f4f8;
+  --border:   #e2e8f0;
+  --text:     #0f172a;
+  --text2:    #475569;
+  --text3:    #94a3b8;
+  --accent:   #0ea887;
+  --green:    #16a34a;
+  --red:      #dc2626;
+  --amber:    #d97706;
+  --chart-grid: rgba(0,0,0,0.06);
+  --chart-tick: #94a3b8;
+}
+
+/* ── Reset ───────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Scrollbars ──────────────────────────────────────── */
+::-webkit-scrollbar       { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text3); }
+
+/* ── Utility ─────────────────────────────────────────── */
+.up  { color: var(--green) !important; }
+.dn  { color: var(--red)   !important; }
+button { font-family: inherit; }
+a { color: inherit; }

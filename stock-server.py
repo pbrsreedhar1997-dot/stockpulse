@@ -1223,29 +1223,52 @@ def api_performance(symbol):
         'data_points':    len(rows),
     }})
 
-# ── Frontend / PWA static serving ────────────────────────────────────────────
-_ROOT = os.path.dirname(os.path.abspath(__file__))
+# ── Frontend (Angular) static serving ────────────────────────────────────────
+_ROOT      = os.path.dirname(os.path.abspath(__file__))
+_DIST      = os.path.join(_ROOT, 'static', 'dist', 'browser')
+_DIST_ROOT = os.path.join(_ROOT, 'static', 'dist')
+
+def _angular_index():
+    """Serve Angular's index.html from the build output."""
+    for candidate in (_DIST, _DIST_ROOT):
+        idx = os.path.join(candidate, 'index.html')
+        if os.path.exists(idx):
+            return send_from_directory(candidate, 'index.html')
+    # Fallback: legacy single-file HTML during development
+    legacy = os.path.join(_ROOT, 'Stock-tracker.html')
+    if os.path.exists(legacy):
+        return send_from_directory(_ROOT, 'Stock-tracker.html')
+    return jsonify({'error': 'Frontend not built yet. Run: cd client && npm run build'}), 404
 
 @app.route('/')
 def index():
-    return send_from_directory(_ROOT, 'Stock-tracker.html')
+    return _angular_index()
 
 @app.route('/manifest.json')
 def manifest():
     return send_from_directory(_ROOT, 'manifest.json',
                                mimetype='application/manifest+json')
 
-@app.route('/sw.js')
-def service_worker():
-    resp = send_from_directory(_ROOT, 'sw.js',
-                               mimetype='application/javascript')
-    resp.headers['Service-Worker-Allowed'] = '/'
-    return resp
-
 @app.route('/favicon.ico')
 def favicon():
-    return send_from_directory(os.path.join(_ROOT, 'static'), 'favicon.png',
-                               mimetype='image/png')
+    for candidate in (_DIST, _DIST_ROOT, os.path.join(_ROOT, 'static')):
+        ico = os.path.join(candidate, 'favicon.ico')
+        if os.path.exists(ico):
+            return send_from_directory(candidate, 'favicon.ico')
+    return '', 204
+
+# Serve all Angular static assets (JS/CSS chunks, fonts, etc.)
+@app.route('/<path:filename>')
+def angular_static(filename):
+    # Don't intercept API routes
+    if filename.startswith('api/'):
+        from flask import abort; abort(404)
+    for candidate in (_DIST, _DIST_ROOT):
+        fpath = os.path.join(candidate, filename)
+        if os.path.exists(fpath) and os.path.isfile(fpath):
+            return send_from_directory(candidate, filename)
+    # For deep Angular routes (e.g. /screener) serve index.html (SPA fallback)
+    return _angular_index()
 
 # ── Health / keep-alive ───────────────────────────────────────────────────────
 @app.route('/api/ping')

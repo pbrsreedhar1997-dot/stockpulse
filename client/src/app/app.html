@@ -1,0 +1,60 @@
+<div class="shell" [attr.data-theme]="theme()">
+  <!-- Sidebar -->
+  <app-sidebar
+    [selected]="selectedSym()"
+    (selectSym)="selectedSym.set($event); view.set('stocks')"
+    (openAuth)="showAuth.set(true)"
+  />
+
+  <!-- Main area -->
+  <div class="main">
+    <!-- Top nav -->
+    <div class="topnav">
+      <div class="tnav-left">
+        <button class="tnav-btn" [class.active]="view()==='stocks'"   (click)="view.set('stocks')">📊 Stocks</button>
+        <button class="tnav-btn" [class.active]="view()==='screener'" (click)="view.set('screener')">💎 Value Picks</button>
+        <button class="tnav-btn" [class.active]="view()==='chat'"     (click)="view.set('chat')">🤖 AI Chat</button>
+      </div>
+      <div class="tnav-right">
+        <!-- Backend status -->
+        <div class="be-pill" [class.ok]="backendOk()===true" [class.err]="backendOk()===false">
+          {{backendOk() === null ? '⟳ Connecting…' : backendOk() ? '● Live' : '✕ Offline'}}
+        </div>
+        <!-- Theme toggle -->
+        <button class="icon-btn" (click)="toggleTheme()" [title]="theme() === 'dark' ? 'Light mode' : 'Dark mode'">
+          {{theme() === 'dark' ? '☀️' : '🌙'}}
+        </button>
+        <!-- User -->
+        @if (auth.isLoggedIn()) {
+          <div class="user-chip">
+            <span>{{auth.user()?.name || auth.user()?.email}}</span>
+            <button (click)="logout()">Sign out</button>
+          </div>
+        } @else {
+          <button class="signin-btn" (click)="showAuth.set(true)">Sign in</button>
+        }
+      </div>
+    </div>
+
+    <!-- Content -->
+    <div class="content">
+      @if (view() === 'stocks') {
+        <app-stock-detail [symbol]="selectedSym()" />
+      }
+      @if (view() === 'screener') {
+        <app-screener />
+      }
+      @if (view() === 'chat') {
+        <app-chat />
+      }
+    </div>
+  </div>
+</div>
+
+<!-- Auth Modal -->
+@if (showAuth()) {
+  <app-auth-modal
+    (close)="showAuth.set(false)"
+    (success)="onAuthSuccess()"
+  />
+}

@@ -1,0 +1,79 @@
+.shell {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Top nav */
+.topnav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  height: 52px;
+  border-bottom: 1px solid var(--border);
+  background: var(--sidebar);
+  flex-shrink: 0;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.tnav-left, .tnav-right { display: flex; align-items: center; gap: 6px; }
+.tnav-btn {
+  padding: 6px 14px; border-radius: 8px; border: none; background: transparent;
+  color: var(--text3); font-size: 12px; font-weight: 600; cursor: pointer; transition: all .15s;
+  &:hover  { color: var(--text); background: var(--hover); }
+  &.active { color: var(--text); background: var(--hover); border-bottom: 2px solid var(--accent); border-radius: 8px 8px 0 0; }
+}
+
+.be-pill {
+  padding: 4px 10px; border-radius: 20px; font-size: 10px; font-weight: 700;
+  background: var(--card); border: 1px solid var(--border); color: var(--text3);
+  &.ok  { background: rgba(0,212,170,.12); border-color: rgba(0,212,170,.3); color: var(--green); }
+  &.err { background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.3); color: var(--red); }
+}
+
+.icon-btn {
+  width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--card); cursor: pointer; font-size: 15px; display: flex;
+  align-items: center; justify-content: center;
+  &:hover { background: var(--hover); }
+}
+
+.signin-btn {
+  padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--card);
+  color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer;
+  &:hover { border-color: var(--accent); color: var(--accent); }
+}
+
+.user-chip {
+  display: flex; align-items: center; gap: 8px; background: var(--card); border: 1px solid var(--border);
+  border-radius: 20px; padding: 4px 12px;
+  span { font-size: 12px; font-weight: 600; color: var(--text); }
+  button { background: none; border: none; color: var(--text3); font-size: 11px; cursor: pointer; padding: 0; &:hover { color: var(--red); } }
+}
+
+/* Content */
+.content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+app-stock-detail, app-screener, app-chat { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+/* Mobile */
+@media (max-width: 768px) {
+  app-sidebar { display: none; }
+  .topnav { height: auto; padding: 8px 12px; flex-wrap: wrap; }
+}

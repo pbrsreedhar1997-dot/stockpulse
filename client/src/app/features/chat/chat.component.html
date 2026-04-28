@@ -1,0 +1,56 @@
+<div class="chat-wrap">
+  <div class="chat-head">
+    <div class="chat-head-left">
+      <span class="chat-icon">🤖</span>
+      <div>
+        <div class="chat-title">AI Assistant</div>
+        <div class="chat-sub">Powered by Groq · Llama 3.3</div>
+      </div>
+    </div>
+    <button class="chat-clear" (click)="clear()" title="Clear chat">🗑</button>
+  </div>
+
+  <div class="chat-msgs" #msgs>
+    @if (messages().length === 0) {
+      <div class="chat-empty">
+        <div class="ce-icon">💬</div>
+        <div class="ce-title">Ask anything about your stocks</div>
+        <div class="ce-quick">
+          <button class="quick-btn" (click)="quickAsk('Give me a market overview for my watchlist')">Market overview</button>
+          <button class="quick-btn" (click)="quickAsk('Which stock in my watchlist is the best value right now?')">Best value pick</button>
+          <button class="quick-btn" (click)="quickAsk('What are the risks in my watchlist?')">Risk analysis</button>
+          <button class="quick-btn" (click)="quickAsk('Summarize recent news for my watchlist')">News summary</button>
+        </div>
+      </div>
+    }
+    @for (msg of messages(); track $index) {
+      <div class="cmsg" [class.user]="msg.role === 'user'" [class.ai]="msg.role === 'ai'">
+        @if (msg.role === 'ai') { <div class="cmsg-avatar">🤖</div> }
+        <div class="cmsg-body">
+          <div class="cmsg-bubble" [class.streaming]="msg.streaming">
+            @if (msg.streaming && !msg.text) {
+              <div class="typing"><span></span><span></span><span></span></div>
+            } @else {
+              {{msg.text}}
+            }
+          </div>
+          <span class="cmsg-time">{{msg.role === 'user' ? 'You' : 'AI'}} · {{msg.time}}</span>
+        </div>
+      </div>
+    }
+  </div>
+
+  <div class="chat-input-wrap">
+    <textarea
+      class="chat-input"
+      [(ngModel)]="question"
+      (keydown)="onKey($event)"
+      placeholder="Ask about stocks, market trends, your portfolio…"
+      rows="1"
+      [disabled]="streaming()"
+    ></textarea>
+    <button class="chat-send" (click)="send()" [disabled]="streaming() || !question.trim()">
+      @if (streaming()) { <div class="send-spin"></div> } @else { ➤ }
+    </button>
+  </div>
+</div>

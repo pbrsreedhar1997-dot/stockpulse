@@ -1,0 +1,68 @@
+<div class="sidebar">
+  <!-- Header -->
+  <div class="sb-header">
+    <div class="sb-logo">
+      <span class="sb-logo-icon">📈</span>
+      <span class="sb-logo-text">StockPulse</span>
+    </div>
+    <button class="sb-auth-btn" (click)="openAuth.emit()">
+      <span class="sb-auth-icon">👤</span>
+    </button>
+  </div>
+
+  <!-- Search -->
+  <div class="sb-search-wrap">
+    <div class="sb-search">
+      <span class="sb-search-icon">🔍</span>
+      <input
+        type="text"
+        placeholder="Search stocks…"
+        [(ngModel)]="searchQuery"
+        (input)="onSearchInput()"
+        (keydown.escape)="showSearch.set(false); searchQuery=''"
+      >
+    </div>
+    @if (showSearch()) {
+      <div class="sb-results">
+        @if (searching()) {
+          <div class="sb-result-loading">Searching…</div>
+        }
+        @for (r of searchResults(); track r.symbol) {
+          <div class="sb-result-item" (click)="addFromSearch(r)">
+            <span class="sb-result-sym">{{r.symbol}}</span>
+            <span class="sb-result-name">{{r.name}}</span>
+          </div>
+        }
+        @if (!searching() && searchResults().length === 0) {
+          <div class="sb-result-loading">No results</div>
+        }
+      </div>
+    }
+  </div>
+
+  <!-- Watchlist -->
+  <div class="sb-list-header">Watchlist <span class="sb-count">{{wl.items().length}}</span></div>
+  <div class="sb-list">
+    @for (item of wl.items(); track item.symbol) {
+      @let q = getQuote(item.symbol);
+      <div
+        class="sb-item"
+        [class.active]="selected() === item.symbol"
+        (click)="selectSym.emit(item.symbol)"
+      >
+        <div class="sb-item-left">
+          <div class="sb-item-sym">{{item.symbol.replace('.NS','').replace('.BO','')}}</div>
+          <div class="sb-item-name">{{item.name}}</div>
+        </div>
+        <div class="sb-item-right">
+          <div class="sb-item-price" [class.up]="isUp(q)" [class.dn]="!isUp(q)">{{fmtPrice(q)}}</div>
+          <div class="sb-item-chg" [class.up]="isUp(q)" [class.dn]="!isUp(q)">{{fmtChg(q)}}</div>
+        </div>
+        <button class="sb-remove" (click)="remove(item.symbol, $event)" title="Remove">✕</button>
+      </div>
+    }
+    @if (wl.items().length === 0) {
+      <div class="sb-empty">Search for a stock above to add to watchlist</div>
+    }
+  </div>
+</div>
