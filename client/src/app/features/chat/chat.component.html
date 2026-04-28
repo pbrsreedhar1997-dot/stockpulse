@@ -58,6 +58,8 @@
           <div class="cmsg-bubble" [class.streaming]="msg.streaming">
             @if (msg.streaming && !msg.text) {
               <div class="typing"><span></span><span></span><span></span></div>
+            } @else if (msg.role === 'ai' && msg.html) {
+              <div class="md-body" [innerHTML]="msg.html"></div>
             } @else {
               {{msg.text}}
             }

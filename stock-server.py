@@ -1654,34 +1654,95 @@ def db_status():
 # Priority: GROQ_API_KEY (free, open-source Llama) → ANTHROPIC_API_KEY (Claude)
 
 SYSTEM_PROMPT = """\
-You are StockPulse AI — a professional stock analyst using the Stock Analysis skill framework.
+You are StockPulse AI — an expert financial analyst with deep knowledge of equity markets, fundamental analysis, technical analysis, and macroeconomic indicators.
 
-## YOUR ANALYSIS FRAMEWORK (from stock-analysis skill v1.0)
+## KNOWLEDGE BASE
+You have access to a RAG knowledge base containing:
+- Real-time and historical OHLCV price data with computed technical indicators
+- Fundamental financials (revenue, margins, EPS, P/E, debt ratios, ROE)
+- Company profiles (sector, industry, business description)
+- Financial news articles from Reuters, Yahoo Finance, Benzinga, Motley Fool and other sources
+- News sentiment scores weighted by recency (exponential decay: weight = e^(-days_old/7))
 
-### Valuation benchmarks
-- P/E: <15 undervalued · 15-25 fair · >25 expensive
-- P/B: <1 potential value · 1-3 normal · >3 growth priced in
-- EV/EBITDA: <10 attractive · >15 expensive
-- PEG: <1 undervalued relative to growth
+## ANALYSIS FRAMEWORK
 
-### Profitability benchmarks
-- Gross Margin: >40% = strong pricing power
-- Net Margin: >10% = healthy · >20% = excellent
-- ROE: >15% = good capital efficiency · >25% = exceptional
+### 1. FUNDAMENTAL ANALYSIS
+Benchmarks to apply when data is available:
+- P/E: <15 Attractive · 15–25 Fair · >25 Expensive
+- P/B: <1 Attractive · 1–3 Normal · >3 Growth Premium
+- Gross Margin: >40% Strong · 20–40% Fair · <20% Weak
+- Net Margin: >20% Excellent · 10–20% Good · <10% Fair
+- ROE: >25% Exceptional · 15–25% Good · <15% Fair
+- Beta: <0.8 Defensive · 0.8–1.2 Moderate · >1.5 High Volatility
+- Revenue growth QoQ and YoY trends, free cash flow yield, debt-to-equity
 
-### Financial health
-- Debt/Equity: <1 safe for most industries
-- Beta: <1 defensive · >1.5 high volatility
+### 2. TECHNICAL ANALYSIS
+Interpret the computed indicators provided in the context:
+- Price vs 50-day and 200-day moving averages (golden cross / death cross signals)
+- RSI(14): >70 Overbought · 30–70 Neutral · <30 Oversold
+- Price position relative to 52-week high/low
+- Short-term momentum: 1-day, 7-day, 30-day, 1-year price changes
+- Support/resistance levels based on 52W range and MA levels
+
+### 3. NEWS SENTIMENT ANALYSIS
+- Retrieve and assess articles from the last 30 days
+- Extract key themes: earnings beats/misses, product launches, regulatory risk, M&A, leadership changes
+- Use the sentiment score (0–100) provided: >65 Positive · 40–65 Neutral · <40 Negative
+- Weight recent articles more heavily; flag stale news (>7 days)
+
+### 4. PERFORMANCE PREDICTION
+- Based on the retrieved fundamental + technical + sentiment signals, provide:
+  - 30-day outlook: **BULLISH** / **BEARISH** / **NEUTRAL**
+  - AI Confidence Score (0–100%)
+  - Top 3 bullish catalysts
+  - Top 3 bearish risks
+  - Price target range: Bear / Base / Bull case (derive from P/E expansion or contraction)
+
+### 5. ALERT TRIGGERS (mention if relevant)
+- Price near 52W high (within 5%) — potential resistance
+- Price near 52W low (within 5%) — potential support/value zone
+- RSI >70 or <30 — overbought/oversold warning
+- Sentiment score drop >15 pts — negative news momentum
+
+## OUTPUT FORMAT (use rich Markdown, not JSON)
+For single-stock analysis queries respond with:
+
+**[STANCE: BULLISH/BEARISH/NEUTRAL]** | Confidence: X%
+*One-line executive summary*
+
+**Fundamental Snapshot**
+| Metric | Value | Assessment |
+|--------|-------|------------|
+| P/E | ... | Attractive/Fair/Expensive |
+...
+
+**Technical Signals**
+- Price vs 50-day MA: ...
+- RSI(14): X — [Overbought/Neutral/Oversold]
+- Momentum (30d): +X%
+- 52W position: X% below high
+
+**News Sentiment** — Score: X/100 [Positive/Neutral/Negative]
+- Key themes: ...
+- Notable: [Article] (Xd ago)
+
+**30-Day Outlook**
+- Bullish catalysts: ...
+- Bearish risks: ...
+- Price targets: Bear $X · Base $X · Bull $X
+
+**Disclaimer**: This is AI-generated analysis for informational purposes only. Not financial advice.
 
 ## RESPONSE RULES
-1. **Always lead with a 2-line Executive Summary** — overall stance (Bullish/Neutral/Bearish) + one key reason.
-2. **Key Metrics table** — only metrics available in the context, with a one-word assessment (Attractive/Fair/Expensive/Strong/Weak).
-3. **Three focused sections max**: Valuation · Catalysts/Positives · Risks. Bullet points, 2-3 per section.
-4. **Cite news sources** with age in days when relevant.
-5. **Never fabricate numbers** — if a metric is missing, skip it.
-6. **Length**: 150-250 words for single-stock queries; 250-350 for comparisons. No padding.
-7. **Indian stocks**: use ₹ and Indian notation (Cr, L). US stocks: use $.
-8. For general questions (macro, sector, news) answer conversationally — no forced template.
+1. For conversational/macro questions, drop the template and answer naturally (2-4 sentences).
+2. **Never fabricate numbers** — only cite metrics explicitly provided in the context block.
+3. Flag data staleness: warn if price data is >24h old, news >7 days old.
+4. **Indian stocks**: use ₹ and Indian notation (Cr, L). US stocks: use $.
+5. For comparisons across multiple stocks, use a side-by-side table.
+6. Always provide the contrarian view — even for strong BUY signals, state the key bear case.
+7. Disclose when retrieved context is sparse or contradictory.
+8. For small-cap stocks (<$2B mkt cap), note lower liquidity and data quality.
+9. Max length: 350 words for single stock · 500 for comparisons · 150 for conversational.
 """
 
 # Groq free models (open-source, no credit card needed)
@@ -1734,8 +1795,81 @@ def _assess(value, thresholds):
             return label
     return thresholds[-1][1]
 
+_SENTIMENT_POS = {
+    'beat','surge','rally','record','strong','growth','profit','gain','launch','deal',
+    'upgrade','buy','expand','innovation','partnership','revenue','raised','guidance',
+    'outperform','acquisition','dividend','buyback','approval','milestone',
+}
+_SENTIMENT_NEG = {
+    'miss','fall','drop','loss','warning','cut','risk','fraud','lawsuit','downgrade',
+    'sell','layoff','decline','probe','investigation','recall','default','bankruptcy',
+    'disappointing','concern','headwind','slowdown','tariff','fine','penalty',
+}
+
+def _news_sentiment_score(articles: list) -> int:
+    """Return 0-100 sentiment score using keyword matching + recency weighting."""
+    import math
+    weighted_sum = 0.0
+    weight_total = 0.0
+    for art in articles:
+        text  = (art.get('title','') + ' ' + art.get('summary','')).lower()
+        words = set(text.split())
+        pos   = len(words & _SENTIMENT_POS)
+        neg   = len(words & _SENTIMENT_NEG)
+        # Article-level score: 0.5 baseline, +0.1 per pos word, -0.1 per neg word, clamped
+        score = max(0.0, min(1.0, 0.5 + 0.1 * pos - 0.1 * neg))
+        age_d = (now_ts() - (art.get('published') or now_ts())) / 86400
+        w     = math.exp(-age_d / 7)
+        weighted_sum += score * w
+        weight_total += w
+    if weight_total == 0:
+        return 50
+    return round((weighted_sum / weight_total) * 100)
+
+def _compute_technicals(closes: list, current_price: float | None) -> dict:
+    """Compute RSI-14, 50-day MA, 200-day MA from a list of closes (oldest first)."""
+    result = {}
+    if not closes:
+        return result
+    n = len(closes)
+    price = current_price or closes[-1]
+
+    # Moving averages
+    if n >= 50:
+        result['ma50']  = round(sum(closes[-50:]) / 50, 2)
+    if n >= 200:
+        result['ma200'] = round(sum(closes[-200:]) / 200, 2)
+
+    # RSI-14
+    if n >= 15:
+        deltas = [closes[i] - closes[i-1] for i in range(max(1, n-14), n)]
+        gains  = [max(0.0, d) for d in deltas]
+        losses = [abs(min(0.0, d)) for d in deltas]
+        ag, al = sum(gains)/14, sum(losses)/14
+        if al == 0:
+            result['rsi14'] = 100.0
+        else:
+            rs = ag / al
+            result['rsi14'] = round(100 - 100 / (1 + rs), 1)
+
+    # Price changes
+    def pct(old, new):
+        return round((new - old) / old * 100, 2) if old else None
+
+    if n >= 2:   result['chg_1d']  = pct(closes[-2], closes[-1])
+    if n >= 7:   result['chg_7d']  = pct(closes[-7],  closes[-1])
+    if n >= 21:  result['chg_1mo'] = pct(closes[-21], closes[-1])
+    if n >= 252: result['chg_1y']  = pct(closes[-252], closes[-1])
+
+    if result.get('ma50'):
+        result['vs_ma50'] = round((price - result['ma50']) / result['ma50'] * 100, 2)
+    if result.get('ma200'):
+        result['vs_ma200'] = round((price - result['ma200']) / result['ma200'] * 100, 2)
+
+    return result
+
 def _build_context(symbols, question):
-    """Build structured context using stock-analysis skill framework."""
+    """Build full analyst context: fundamentals + technicals + sentiment + RAG chunks."""
     parts = []
 
     with thread_connection() as conn:
@@ -1744,32 +1878,76 @@ def _build_context(symbols, question):
             f_row  = conn.execute('SELECT * FROM financials WHERE symbol=?', (sym,)).fetchone()
             p_row  = conn.execute('SELECT name,sector,industry,description FROM profiles WHERE symbol=?', (sym,)).fetchone()
             n_rows = conn.execute(
-                'SELECT title,source,published,category FROM news '
-                'WHERE symbol=? ORDER BY published DESC LIMIT 8', (sym,)).fetchall()
+                'SELECT title,source,published,category,summary FROM news '
+                'WHERE symbol=? ORDER BY published DESC LIMIT 12', (sym,)).fetchall()
+            # Fetch up to 1-year of daily closes for technicals
+            h_rows = conn.execute(
+                'SELECT close FROM history WHERE symbol=? AND range_key=? '
+                'ORDER BY ts', (sym, '1y')).fetchall()
+            # Fall back to 3mo if 1y not available
+            if len(h_rows) < 10:
+                h_rows = conn.execute(
+                    'SELECT close FROM history WHERE symbol=? AND range_key=? '
+                    'ORDER BY ts', (sym, '3mo')).fetchall()
 
             if not (q_row or f_row or n_rows):
                 continue
 
-            cur = (q_row['currency'] if q_row else None) or 'USD'
+            cur       = (q_row['currency'] if q_row else None) or 'USD'
             sym_label = (p_row['name'] if p_row else None) or sym
             sector    = (p_row['sector'] if p_row else None) or ''
+            price     = q_row['price'] if q_row else None
 
             parts.append(f'### {sym} — {sym_label}')
             if sector:
                 ind = (p_row['industry'] if p_row else '') or ''
                 parts.append(f'Sector: {sector}' + (f' | {ind}' if ind else ''))
 
+            # ── Data staleness warning ────────────────────────────────────────
+            if q_row and q_row.get('fetched_at'):
+                age_h = (now_ts() - q_row['fetched_at']) / 3600
+                if age_h > 24:
+                    parts.append(f'⚠️ Price data is {age_h:.0f}h old — may be stale')
+
             # ── Price snapshot ────────────────────────────────────────────────
             if q_row:
                 chg  = q_row['change_pct'] or 0
                 sign = '+' if chg >= 0 else ''
                 mktcap = _fmt_large(q_row['mkt_cap'], cur)
-                price_line = f'Price: {cur} {q_row["price"]} ({sign}{chg:.2f}%)'
+                price_line = f'Price: {cur} {q_row["price"]} ({sign}{chg:.2f}% today)'
                 if mktcap: price_line += f' | Mkt Cap: {mktcap}'
                 if q_row['volume']: price_line += f' | Volume: {q_row["volume"]:,}'
                 parts.append(price_line)
 
-            # ── Key metrics table (skill framework) ───────────────────────────
+            # ── Technical indicators ──────────────────────────────────────────
+            closes = [r['close'] for r in h_rows if r['close']]
+            tech   = _compute_technicals(closes, price)
+            if tech:
+                t_parts = []
+                if 'ma50' in tech:
+                    sign = '▲' if tech.get('vs_ma50', 0) >= 0 else '▼'
+                    t_parts.append(f'50-day MA: {tech["ma50"]} ({sign}{abs(tech["vs_ma50"]):.1f}%)')
+                if 'ma200' in tech:
+                    sign = '▲' if tech.get('vs_ma200', 0) >= 0 else '▼'
+                    t_parts.append(f'200-day MA: {tech["ma200"]} ({sign}{abs(tech["vs_ma200"]):.1f}%)')
+                if 'rsi14' in tech:
+                    rsi = tech['rsi14']
+                    rsi_label = 'Overbought' if rsi > 70 else ('Oversold' if rsi < 30 else 'Neutral')
+                    t_parts.append(f'RSI(14): {rsi} [{rsi_label}]')
+                mom_parts = []
+                for k, label in [('chg_1d','1d'),('chg_7d','7d'),('chg_1mo','30d'),('chg_1y','1y')]:
+                    if k in tech:
+                        sign = '+' if tech[k] >= 0 else ''
+                        mom_parts.append(f'{label}: {sign}{tech[k]}%')
+                if mom_parts:
+                    t_parts.append('Momentum: ' + ' · '.join(mom_parts))
+                # MA crossover signal
+                if 'ma50' in tech and 'ma200' in tech:
+                    signal = 'GOLDEN CROSS (bullish)' if tech['ma50'] > tech['ma200'] else 'DEATH CROSS (bearish)'
+                    t_parts.append(f'MA Signal: {signal}')
+                parts.append('Technicals: ' + ' | '.join(t_parts))
+
+            # ── Key metrics (fundamentals) ────────────────────────────────────
             if f_row:
                 metrics = []
                 pe = f_row['pe_ratio']
@@ -1797,38 +1975,60 @@ def _build_context(symbols, question):
                 eps = f_row['eps']
                 if eps: metrics.append(f'EPS {cur} {eps:.2f}')
                 rev = f_row['revenue_ttm']
+                rq  = f_row.get('revenue_q')
+                rq_prev = f_row.get('revenue_q_prev')
                 if rev: metrics.append(f'Revenue TTM {_fmt_large(rev, cur)}')
+                if rq and rq_prev and rq_prev:
+                    qoq = round((rq - rq_prev) / abs(rq_prev) * 100, 1)
+                    sign = '+' if qoq >= 0 else ''
+                    metrics.append(f'Revenue QoQ {sign}{qoq}%')
+                ni = f_row.get('net_income_ttm')
+                if ni: metrics.append(f'Net Income TTM {_fmt_large(ni, cur)}')
                 beta = f_row['beta']
                 if beta:
                     label = _assess(abs(beta), [(0.8,'Defensive'),(1.2,'Moderate'),(1.5,'Volatile'),(999,'High Volatility')])
                     metrics.append(f'Beta {beta:.2f} [{label}]')
                 w52h = f_row['week52_high']
                 w52l = f_row['week52_low']
-                if w52h and w52l: metrics.append(f'52W Range {w52l:.2f}–{w52h:.2f}')
+                if w52h and w52l:
+                    metrics.append(f'52W Range {w52l:.2f}–{w52h:.2f}')
+                    if price and w52h:
+                        pct_off = round((w52h - price) / w52h * 100, 1)
+                        near = ' ⚠️ Near 52W low' if price and w52l and (price - w52l) / w52l < 0.05 else ''
+                        near_high = ' ⚠️ Near 52W high' if pct_off < 5 else ''
+                        if near or near_high:
+                            metrics.append(f'{near}{near_high}'.strip())
                 dy = f_row['dividend_yield']
                 if dy: metrics.append(f'Div Yield {dy*100:.2f}%')
                 if metrics:
-                    parts.append('Metrics: ' + ' | '.join(metrics))
+                    parts.append('Fundamentals: ' + ' | '.join(metrics))
 
-            # ── Recent news (categorised) ─────────────────────────────────────
+            # ── News with sentiment score ─────────────────────────────────────
             if n_rows:
+                n_dicts = [dict(r) for r in n_rows]
+                sent_score = _news_sentiment_score(n_dicts)
+                sent_label = 'Positive' if sent_score > 65 else ('Negative' if sent_score < 40 else 'Neutral')
+                parts.append(f'News Sentiment: {sent_score}/100 [{sent_label}]')
                 parts.append('Recent News:')
-                for n in n_rows:
-                    age_d = (now_ts() - (n['published'] or 0)) // 86400
-                    cat   = n['category'] or 'gen'
+                for n in n_dicts:
+                    age_d = (now_ts() - (n.get('published') or 0)) // 86400
+                    cat   = n.get('category') or 'gen'
+                    stale = ' ⚠️ stale' if age_d > 7 else ''
                     tag   = {'contract':'[Contract]','results':'[Results]',
                              'acq':'[M&A]','earn':'[Earnings]','part':'[Deal]'}.get(cat, '')
-                    parts.append(f'  {tag} [{n["source"]}] {n["title"]} ({age_d}d ago)')
+                    parts.append(f'  {tag} [{n.get("source","")}] {n.get("title","")} ({age_d}d ago){stale}')
             parts.append('')
 
-    # ── RAG: top relevant chunks ───────────────────────────────────────────────
-    chunks = retrieve_top_chunks(symbols, question, top_k=4)
+    # ── RAG: top semantically relevant chunks ─────────────────────────────────
+    chunks = retrieve_top_chunks(symbols, question, top_k=6)
     if chunks:
-        parts.append('--- RELEVANT CONTEXT ---')
+        parts.append('--- RETRIEVED CONTEXT (RAG) ---')
         for i, c in enumerate(chunks, 1):
-            age = f' ({(now_ts()-c["ts"])//86400}d ago)' if c.get('ts') else ''
-            parts.append(f'[{i}] {c["symbol"]} ({c["source"]}){age}: {c["content"][:300]}')
-        parts.append('--- END ---')
+            age  = f' ({(now_ts()-c["ts"])//86400}d ago)' if c.get('ts') else ''
+            score = f' [relevance: {c.get("score",0):.2f}]' if c.get('score') else ''
+            parts.append(f'[{i}] {c["symbol"]} | source: {c["source"]}{age}{score}')
+            parts.append(f'    {c["content"][:350]}')
+        parts.append('--- END RETRIEVED CONTEXT ---')
 
     if not parts:
         return 'No data loaded yet. Add stocks to your watchlist and wait for data to fetch.'
@@ -1872,7 +2072,7 @@ def api_chat():
             stream = client.chat.completions.create(
                 model=GROQ_MODEL,
                 messages=[{'role': 'system', 'content': SYSTEM_PROMPT}] + messages,
-                max_tokens=1024,
+                max_tokens=2048,
                 stream=True,
             )
             for chunk in stream:
@@ -1888,7 +2088,7 @@ def api_chat():
         try:
             client = anthropic.Anthropic(api_key=api_key)
             with client.messages.stream(
-                model='claude-haiku-4-5-20251001', max_tokens=1024,
+                model='claude-haiku-4-5-20251001', max_tokens=2048,
                 system=SYSTEM_PROMPT, messages=messages,
             ) as stream:
                 for text in stream.text_stream:

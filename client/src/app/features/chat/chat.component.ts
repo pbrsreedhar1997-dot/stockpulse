@@ -1,11 +1,65 @@
-import { Component, inject, signal, ElementRef, viewChild, AfterViewChecked, OnInit } from '@angular/core';
+import { Component, inject, signal, ElementRef, viewChild, AfterViewChecked, OnInit, SecurityContext } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { DomSanitizer } from '@angular/platform-browser';
 import { ChatService, ChatMessage } from '../../core/services/chat.service';
 import { WatchlistService } from '../../core/services/watchlist.service';
 import { ApiService } from '../../core/services/api.service';
 
-interface UIMessage { role: 'user' | 'ai'; text: string; time: string; streaming?: boolean; }
+interface UIMessage { role: 'user' | 'ai'; text: string; html?: string; time: string; streaming?: boolean; }
+
+/** Lightweight markdown → safe HTML. Handles headings, bold, italic, tables, lists, code, hr. */
+function mdToHtml(md: string): string {
+  let s = md
+    // Escape HTML first to prevent injection
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  // Block-level: headings
+  s = s.replace(/^### (.+)$/gm, '<h4>$1</h4>');
+  s = s.replace(/^## (.+)$/gm, '<h3>$1</h3>');
+  s = s.replace(/^# (.+)$/gm, '<h2>$1</h2>');
+
+  // Horizontal rule
+  s = s.replace(/^---+$/gm, '<hr>');
+
+  // Tables — parse entire table blocks
+  s = s.replace(/((?:^\|.+\|\n?)+)/gm, (block) => {
+    const rows = block.trim().split('\n').filter(r => r.trim());
+    if (rows.length < 2) return block;
+    const isSep = (r: string) => /^\|[\s\-|:]+\|$/.test(r.trim());
+    let html = '<table>';
+    let headerDone = false;
+    for (const row of rows) {
+      if (isSep(row)) { html += '</thead><tbody>'; headerDone = true; continue; }
+      const cells = row.split('|').slice(1, -1).map(c => c.trim());
+      const tag = !headerDone ? 'th' : 'td';
+      html += '<tr>' + cells.map(c => `<${tag}>${c}</${tag}>`).join('') + '</tr>';
+      if (!headerDone && !isSep(rows[rows.indexOf(row) + 1] || '')) { html += '<tbody>'; headerDone = true; }
+    }
+    html += '</tbody></table>';
+    return html;
+  });
+
+  // Unordered lists — group consecutive - lines
+  s = s.replace(/((?:^[-*] .+\n?)+)/gm, (block) => {
+    const items = block.trim().split('\n').map(l => l.replace(/^[-*] /, '').trim());
+    return '<ul>' + items.map(i => `<li>${i}</li>`).join('') + '</ul>';
+  });
+
+  // Inline: bold+italic, bold, italic, inline code
+  s = s.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // Line breaks: double newline → paragraph break; single newline in non-block → <br>
+  s = s.replace(/\n\n+/g, '</p><p>');
+  s = s.replace(/\n(?!<\/?(h[2-4]|ul|ol|li|table|thead|tbody|tr|th|td|hr|p))/g, '<br>');
+
+  return '<p>' + s + '</p>';
+}
 
 @Component({
   selector: 'app-chat',
@@ -15,9 +69,10 @@ interface UIMessage { role: 'user' | 'ai'; text: string; time: string; streaming
   styleUrl: './chat.component.scss'
 })
 export class ChatComponent implements AfterViewChecked, OnInit {
-  private chatSvc = inject(ChatService);
-  private wl      = inject(WatchlistService);
-  private api     = inject(ApiService);
+  private chatSvc   = inject(ChatService);
+  private wl        = inject(WatchlistService);
+  private api       = inject(ApiService);
+  private sanitizer = inject(DomSanitizer);
 
   messages     = signal<UIMessage[]>([]);
   history      = signal<ChatMessage[]>([]);
@@ -51,7 +106,6 @@ export class ChatComponent implements AfterViewChecked, OnInit {
     this.showRagMsg(`Indexing ${symbols.length} stocks… this takes ~30s`, true);
     this.api.post<{ ok: boolean; message: string }>('/rag/train', { symbols }).subscribe(r => {
       if (r?.ok) {
-        // Poll status after 35s to confirm completion
         setTimeout(() => {
           this.fetchRagStatus();
           this.ragTraining.set(false);
@@ -82,6 +136,11 @@ export class ChatComponent implements AfterViewChecked, OnInit {
 
   get time() { return new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }); }
 
+  private renderMarkdown(text: string): string {
+    const raw = mdToHtml(text);
+    return this.sanitizer.sanitize(SecurityContext.HTML, raw) ?? text;
+  }
+
   send() {
     const q = this.question.trim();
     if (!q || this.streaming()) return;
@@ -96,26 +155,28 @@ export class ChatComponent implements AfterViewChecked, OnInit {
     let aiText = '';
     let aiIdx = -1;
 
-    this.messages.update(m => { aiIdx = m.length; return [...m, { role: 'ai', text: '', time: this.time, streaming: true }]; });
+    this.messages.update(m => { aiIdx = m.length; return [...m, { role: 'ai', text: '', html: '', time: this.time, streaming: true }]; });
 
     this.chatSvc.stream(q, symbols, this.history()).subscribe({
       next: evt => {
         if (evt.type === 'delta') {
           aiText += evt.text;
-          this.messages.update(m => m.map((msg, i) => i === aiIdx ? { ...msg, text: aiText } : msg));
+          const html = this.renderMarkdown(aiText);
+          this.messages.update(m => m.map((msg, i) => i === aiIdx ? { ...msg, text: aiText, html } : msg));
           this.shouldScroll = true;
         } else if (evt.type === 'done') {
-          this.messages.update(m => m.map((msg, i) => i === aiIdx ? { ...msg, streaming: false } : msg));
+          const html = this.renderMarkdown(aiText);
+          this.messages.update(m => m.map((msg, i) => i === aiIdx ? { ...msg, text: aiText, html, streaming: false } : msg));
           this.history.update(h => [...h, { role: 'assistant', content: aiText }]);
           this.streaming.set(false);
         } else if (evt.type === 'error') {
-          this.messages.update(m => m.map((msg, i) => i === aiIdx ? { ...msg, text: '⚠️ ' + evt.message, streaming: false } : msg));
+          this.messages.update(m => m.map((msg, i) => i === aiIdx ? { ...msg, text: '⚠️ ' + evt.message, html: '', streaming: false } : msg));
           this.streaming.set(false);
         }
       },
       error: err => {
         const msg = err.status === 503 ? '🔑 AI key not configured. Add GROQ_API_KEY to your server environment.' : '⚠️ Could not reach backend.';
-        this.messages.update(m => m.map((msg2, i) => i === aiIdx ? { ...msg2, text: msg, streaming: false } : msg2));
+        this.messages.update(m => m.map((msg2, i) => i === aiIdx ? { ...msg2, text: msg, html: '', streaming: false } : msg2));
         this.streaming.set(false);
       }
     });
