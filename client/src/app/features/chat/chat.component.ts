@@ -1,8 +1,9 @@
-import { Component, inject, signal, ElementRef, viewChild, AfterViewChecked } from '@angular/core';
+import { Component, inject, signal, ElementRef, viewChild, AfterViewChecked, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ChatService, ChatMessage } from '../../core/services/chat.service';
 import { WatchlistService } from '../../core/services/watchlist.service';
+import { ApiService } from '../../core/services/api.service';
 
 interface UIMessage { role: 'user' | 'ai'; text: string; time: string; streaming?: boolean; }
 
@@ -13,17 +14,63 @@ interface UIMessage { role: 'user' | 'ai'; text: string; time: string; streaming
   templateUrl: './chat.component.html',
   styleUrl: './chat.component.scss'
 })
-export class ChatComponent implements AfterViewChecked {
+export class ChatComponent implements AfterViewChecked, OnInit {
   private chatSvc = inject(ChatService);
   private wl      = inject(WatchlistService);
+  private api     = inject(ApiService);
 
-  messages  = signal<UIMessage[]>([]);
-  history   = signal<ChatMessage[]>([]);
-  question  = '';
-  streaming = signal(false);
-  messagesEl = viewChild<ElementRef<HTMLDivElement>>('msgs');
+  messages     = signal<UIMessage[]>([]);
+  history      = signal<ChatMessage[]>([]);
+  question     = '';
+  streaming    = signal(false);
+  ragTraining  = signal(false);
+  ragStatus    = signal('');
+  ragStatusMsg = signal('');
+  ragStatusOk  = signal(true);
+  messagesEl   = viewChild<ElementRef<HTMLDivElement>>('msgs');
 
   private shouldScroll = false;
+
+  ngOnInit() { this.fetchRagStatus(); }
+
+  fetchRagStatus() {
+    this.api.getRaw<{ ok: boolean; total_chunks: number; symbols: Record<string, any> }>('/rag/status')
+      .subscribe(r => {
+        if (r?.ok) {
+          const count = r.total_chunks;
+          const syms  = Object.keys(r.symbols || {}).length;
+          this.ragStatus.set(`${count} chunks · ${syms} symbols indexed`);
+        }
+      });
+  }
+
+  trainRag() {
+    const symbols = this.wl.items().map(i => i.symbol);
+    if (!symbols.length) { this.showRagMsg('Add stocks to your watchlist first', false); return; }
+    this.ragTraining.set(true);
+    this.showRagMsg(`Indexing ${symbols.length} stocks… this takes ~30s`, true);
+    this.api.post<{ ok: boolean; message: string }>('/rag/train', { symbols }).subscribe(r => {
+      if (r?.ok) {
+        // Poll status after 35s to confirm completion
+        setTimeout(() => {
+          this.fetchRagStatus();
+          this.ragTraining.set(false);
+          this.showRagMsg('✅ Training complete — AI now has richer context for your stocks', true);
+        }, 35000);
+      } else {
+        this.ragTraining.set(false);
+        this.showRagMsg('Training failed — is the backend running?', false);
+      }
+    });
+  }
+
+  private showRagMsg(msg: string, ok: boolean) {
+    this.ragStatusMsg.set(msg);
+    this.ragStatusOk.set(ok);
+    if (ok && !msg.startsWith('Indexing')) {
+      setTimeout(() => this.ragStatusMsg.set(''), 6000);
+    }
+  }
 
   ngAfterViewChecked() {
     if (this.shouldScroll) {

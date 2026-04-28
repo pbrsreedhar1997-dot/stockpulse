@@ -2,13 +2,27 @@
 
 .chat-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 20px; border-bottom: 1px solid var(--border);
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
 }
 .chat-head-left { display: flex; align-items: center; gap: 12px; }
+.chat-head-actions { display: flex; align-items: center; gap: 6px; }
 .chat-icon { font-size: 24px; }
 .chat-title { font-size: 15px; font-weight: 700; color: var(--text); }
 .chat-sub   { font-size: 11px; color: var(--text3); }
 .chat-clear { background: none; border: none; font-size: 16px; cursor: pointer; color: var(--text3); padding: 6px; border-radius: 6px; &:hover { background: var(--hover); } }
+.rag-btn {
+  display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--card); color: var(--text);
+  font-size: 12px; font-weight: 600; cursor: pointer; transition: all .15s;
+  &:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  &.training { border-color: var(--amber); color: var(--amber); opacity: .8; cursor: not-allowed; }
+  &:disabled { cursor: not-allowed; opacity: .6; }
+}
+.rag-status-bar {
+  padding: 8px 16px; font-size: 12px; font-weight: 500; border-bottom: 1px solid var(--border);
+  &.ok  { background: rgba(0,212,170,.08); color: var(--green); }
+  &.err { background: rgba(239,68,68,.08); color: var(--red); }
+}
 
 .chat-msgs { flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; scroll-behavior: smooth; }
 
@@ -17,6 +31,7 @@
   flex: 1; gap: 12px; padding: 32px 20px;
   .ce-icon  { font-size: 40px; }
   .ce-title { font-size: 15px; font-weight: 600; color: var(--text2); }
+  .ce-hint  { font-size: 12px; color: var(--text3); strong { color: var(--accent); } }
 }
 .ce-quick { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 8px; }
 .quick-btn {

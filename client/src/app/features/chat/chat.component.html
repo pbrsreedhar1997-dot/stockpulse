@@ -4,22 +4,50 @@
       <span class="chat-icon">🤖</span>
       <div>
         <div class="chat-title">AI Assistant</div>
-        <div class="chat-sub">Powered by Groq · Llama 3.3</div>
+        <div class="chat-sub">Powered by Groq · Llama 3.3 · RAG</div>
       </div>
     </div>
-    <button class="chat-clear" (click)="clear()" title="Clear chat">🗑</button>
+    <div class="chat-head-actions">
+      <!-- RAG Train button -->
+      <button
+        class="rag-btn"
+        [class.training]="ragTraining()"
+        [disabled]="ragTraining()"
+        (click)="trainRag()"
+        [title]="ragStatus() || 'Train AI on your watchlist data for better answers'"
+      >
+        @if (ragTraining()) {
+          <div class="send-spin"></div> Training…
+        } @else {
+          🧠 Train AI
+        }
+      </button>
+      <button class="chat-clear" (click)="clear()" title="Clear chat">🗑</button>
+    </div>
   </div>
+
+  <!-- RAG status bar -->
+  @if (ragStatusMsg()) {
+    <div class="rag-status-bar" [class.ok]="ragStatusOk()" [class.err]="!ragStatusOk()">
+      {{ragStatusMsg()}}
+    </div>
+  }
 
   <div class="chat-msgs" #msgs>
     @if (messages().length === 0) {
       <div class="chat-empty">
         <div class="ce-icon">💬</div>
         <div class="ce-title">Ask anything about your stocks</div>
+        <div class="ce-hint">
+          Click <strong>🧠 Train AI</strong> to index your watchlist for smarter answers
+        </div>
         <div class="ce-quick">
           <button class="quick-btn" (click)="quickAsk('Give me a market overview for my watchlist')">Market overview</button>
           <button class="quick-btn" (click)="quickAsk('Which stock in my watchlist is the best value right now?')">Best value pick</button>
           <button class="quick-btn" (click)="quickAsk('What are the risks in my watchlist?')">Risk analysis</button>
           <button class="quick-btn" (click)="quickAsk('Summarize recent news for my watchlist')">News summary</button>
+          <button class="quick-btn" (click)="quickAsk('Compare the growth outlook for my stocks')">Growth outlook</button>
+          <button class="quick-btn" (click)="quickAsk('Which stocks have fallen most from their 52-week high?')">52W drawdown</button>
         </div>
       </div>
     }

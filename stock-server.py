@@ -4,7 +4,7 @@ StockPulse Backend — Flask + yfinance + PostgreSQL (pgvector) or SQLite
 Serves Indian (NSE/BSE) and US stock data without CORS issues.
 """
 
-import os, json, time, threading, logging, re, secrets
+import os, json, time, threading, logging, re, secrets, concurrent.futures
 from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
 import requests as http_requests
@@ -115,48 +115,279 @@ def store_embedding(conn, symbol: str, content: str, source: str,
         return
     store_embedding_vec(conn, symbol, content, vec, source, article_url, ts or now_ts())
 
-def retrieve_top_chunks(symbols: list, query: str, top_k: int = 5) -> list:
-    """Embed query string and return top-k similar chunks via db layer."""
+RAG_SCORE_THRESHOLD = 0.30  # minimum cosine similarity to include a chunk in context
+
+def retrieve_top_chunks(symbols: list, query: str, top_k: int = 6) -> list:
+    """Embed query and return top-k chunks scoring above RAG_SCORE_THRESHOLD."""
     q_vec = _embed_vec(query)
     if q_vec is None or not symbols:
         return []
-    return db_retrieve_top_chunks(symbols, q_vec, top_k)
+    chunks = db_retrieve_top_chunks(symbols, q_vec, top_k * 3)  # over-fetch, then threshold
+    scored = [c for c in chunks if c.get('score', 1.0) >= RAG_SCORE_THRESHOLD]
+    return scored[:top_k]
+
+# ── Chunking helpers ──────────────────────────────────────────────────────────
+
+def _chunk_text(text: str, window: int = 150, overlap: int = 30) -> list[str]:
+    """Split text into overlapping word-window chunks."""
+    words = text.split()
+    if len(words) <= window:
+        return [text]
+    chunks, i = [], 0
+    while i < len(words):
+        chunks.append(' '.join(words[i:i + window]))
+        i += window - overlap
+    return chunks
 
 # ── Background embedding workers ─────────────────────────────────────────────
 
 def _embed_articles_bg(symbol: str, articles: list):
+    """Embed news articles with rich context per chunk."""
     try:
         with thread_connection() as conn:
             for a in articles:
-                store_embedding(conn, symbol,
-                    f"{a['title']}\n\n{a.get('summary', '')}",
-                    source=a.get('source', 'news'),
-                    article_url=a.get('url', ''),
-                    ts=a.get('published'))
+                title   = a.get('title', '')
+                summary = a.get('summary', '')
+                source  = a.get('source', 'news')
+                url     = a.get('url', '')
+                ts      = a.get('published')
+                cat     = a.get('category', 'gen')
+                cat_tag = {'contract': 'Contract/deal', 'results': 'Earnings results',
+                           'earn': 'Earnings', 'acq': 'Acquisition/M&A',
+                           'part': 'Partnership'}.get(cat, 'News')
+                # Chunk 1: headline + summary with category context
+                body = f"[{cat_tag}] {title}"
+                if summary:
+                    body += f"\n{summary}"
+                store_embedding(conn, symbol, body, source=source,
+                                article_url=url, ts=ts)
+                # Chunk 2: if summary is long, embed it separately for better recall
+                if summary and len(summary.split()) > 60:
+                    for chunk in _chunk_text(summary, window=120, overlap=20):
+                        store_embedding(conn, symbol, f"{title} — {chunk}",
+                                        source=source, article_url=url, ts=ts)
     except Exception as e:
         log.warning(f'_embed_articles_bg({symbol}): {e}')
 
 def _embed_profile_bg(symbol: str, profile: dict):
+    """Embed company profile as multiple overlapping description chunks."""
     try:
         with thread_connection() as conn:
-            store_embedding(conn, symbol,
-                f"{profile.get('name','')} — {profile.get('sector','')} / {profile.get('industry','')}\n"
-                f"{profile.get('description','')}",
-                source='profile', article_url=f'profile:{symbol}')
+            name    = profile.get('name', symbol)
+            sector  = profile.get('sector', '')
+            ind     = profile.get('industry', '')
+            country = profile.get('country', '')
+            emp     = profile.get('employees')
+            website = profile.get('website', '')
+            desc    = profile.get('description', '')
+
+            # Chunk 1: identity overview
+            overview = f"{name} ({symbol}) is a {sector} company"
+            if ind:     overview += f" in the {ind} industry"
+            if country: overview += f", based in {country}"
+            if emp:     overview += f", with approximately {emp:,} employees"
+            if website: overview += f". Website: {website}"
+            store_embedding(conn, symbol, overview,
+                            source='profile', article_url=f'profile:overview:{symbol}')
+
+            # Chunk 2+: overlapping windows of the business description
+            if desc:
+                for i, chunk in enumerate(_chunk_text(desc, window=150, overlap=30)):
+                    store_embedding(conn, symbol,
+                                    f"{name} — {chunk}",
+                                    source='profile',
+                                    article_url=f'profile:desc:{symbol}:{i}')
     except Exception as e:
         log.warning(f'_embed_profile_bg({symbol}): {e}')
 
 def _embed_financials_bg(symbol: str, data: dict):
+    """Embed financials as separate human-readable narrative chunks."""
     try:
         with thread_connection() as conn:
-            store_embedding(conn, symbol,
-                f"Financials for {symbol}: P/E {data.get('pe_ratio')}, "
-                f"Revenue TTM {data.get('revenue_ttm')}, Net Income TTM {data.get('net_income_ttm')}, "
-                f"Gross Margin {data.get('gross_margin')}, EPS {data.get('eps')}, "
-                f"52W High {data.get('week52_high')}, 52W Low {data.get('week52_low')}",
-                source='financials', article_url=f'financials:{symbol}')
+            cur = data.get('currency', 'USD')
+            sym_label = symbol
+
+            def _fmtn(v, unit=''):
+                if v is None: return 'N/A'
+                if abs(v) >= 1e12: return f'{v/1e12:.2f}T {unit}'.strip()
+                if abs(v) >= 1e9:  return f'{v/1e9:.2f}B {unit}'.strip()
+                if abs(v) >= 1e7:  return f'{v/1e7:.2f}Cr {unit}'.strip()
+                return f'{v:,.2f} {unit}'.strip()
+
+            pe   = data.get('pe_ratio')
+            eps  = data.get('eps')
+            gm   = data.get('gross_margin')
+            rev  = data.get('revenue_ttm')
+            ni   = data.get('net_income_ttm')
+            beta = data.get('beta')
+            dy   = data.get('dividend_yield')
+            w52h = data.get('week52_high')
+            w52l = data.get('week52_low')
+            mc   = data.get('market_cap')
+            revq = data.get('revenue_q')
+            revp = data.get('revenue_q_prev')
+
+            # Chunk 1: Valuation
+            val_parts = [f"{sym_label} valuation metrics:"]
+            if pe:  val_parts.append(f"P/E ratio is {pe:.1f} ({'cheap' if pe < 15 else 'fair' if pe < 25 else 'expensive'} by historical standards).")
+            if eps: val_parts.append(f"Earnings per share (EPS) is {cur} {eps:.2f}.")
+            if mc:  val_parts.append(f"Market capitalisation is {_fmtn(mc)} {cur}.")
+            store_embedding(conn, symbol, ' '.join(val_parts),
+                            source='financials', article_url=f'fin:valuation:{symbol}')
+
+            # Chunk 2: Revenue & Profitability
+            prof_parts = [f"{sym_label} revenue and profitability:"]
+            if rev: prof_parts.append(f"Trailing twelve-month revenue is {_fmtn(rev)} {cur}.")
+            if ni:  prof_parts.append(f"Net income (TTM) is {_fmtn(ni)} {cur}.")
+            if gm:  prof_parts.append(f"Gross margin is {gm*100:.1f}% ({'strong' if gm > 0.4 else 'moderate' if gm > 0.2 else 'thin'}).")
+            if revq and revp and revp:
+                yoy = (revq - revp) / abs(revp) * 100
+                prof_parts.append(f"Latest quarter revenue {'grew' if yoy >= 0 else 'fell'} {abs(yoy):.1f}% quarter-over-quarter.")
+            if len(prof_parts) > 1:
+                store_embedding(conn, symbol, ' '.join(prof_parts),
+                                source='financials', article_url=f'fin:profitability:{symbol}')
+
+            # Chunk 3: Risk & Dividend
+            risk_parts = [f"{sym_label} risk and dividend profile:"]
+            if beta: risk_parts.append(f"Beta is {beta:.2f} ({'defensive' if beta < 0.8 else 'market-correlated' if beta < 1.2 else 'volatile'}).")
+            if dy:   risk_parts.append(f"Dividend yield is {dy*100:.2f}%.")
+            if w52h and w52l:
+                spread = ((w52h - w52l) / w52l * 100) if w52l else 0
+                risk_parts.append(f"52-week price range: {w52l:.2f}–{w52h:.2f} {cur} ({spread:.0f}% spread).")
+            if len(risk_parts) > 1:
+                store_embedding(conn, symbol, ' '.join(risk_parts),
+                                source='financials', article_url=f'fin:risk:{symbol}')
     except Exception as e:
         log.warning(f'_embed_financials_bg({symbol}): {e}')
+
+def _embed_price_history_bg(symbol: str, name: str = ''):
+    """Embed a price-performance narrative derived from cached history."""
+    try:
+        with thread_connection() as conn:
+            label = name or symbol
+            narratives = []
+            for rng, label_str in [('1mo', '1 month'), ('3mo', '3 months'), ('1y', '1 year')]:
+                rows = conn.execute(
+                    'SELECT close, ts FROM history WHERE symbol=? AND range_key=? '
+                    'ORDER BY ts ASC', (symbol, rng)
+                ).fetchall()
+                if len(rows) < 2:
+                    continue
+                start_p = rows[0]['close']
+                end_p   = rows[-1]['close']
+                if not start_p or start_p == 0:
+                    continue
+                chg_pct = (end_p - start_p) / start_p * 100
+                direction = 'gained' if chg_pct >= 0 else 'lost'
+                highs = [r['close'] for r in rows]
+                period_high = max(highs)
+                period_low  = min(highs)
+                narrative = (
+                    f"{label} ({symbol}) {direction} {abs(chg_pct):.1f}% over the past {label_str}, "
+                    f"moving from {start_p:.2f} to {end_p:.2f}. "
+                    f"Period high: {period_high:.2f}, period low: {period_low:.2f}."
+                )
+                narratives.append((narrative, rng))
+
+            for text, rng in narratives:
+                store_embedding(conn, symbol, text,
+                                source='price_history',
+                                article_url=f'history:{symbol}:{rng}')
+    except Exception as e:
+        log.warning(f'_embed_price_history_bg({symbol}): {e}')
+
+def _rag_ingest_symbol(symbol: str):
+    """Full RAG ingestion for one symbol. Uses thread_connection (safe outside Flask requests).
+    Fetches live data when the DB cache is cold."""
+    try:
+        with thread_connection() as conn:
+            # ── Profile ───────────────────────────────────────────────────────
+            p = row_to_dict(conn.execute('SELECT * FROM profiles WHERE symbol=?', (symbol,)).fetchone())
+            if not p or not p.get('description'):
+                p = fetch_profile(symbol)
+                if p and p.get('description'):
+                    conn.execute("""
+                        INSERT OR REPLACE INTO profiles
+                            (symbol,name,sector,industry,exchange,currency,website,description,
+                             employees,country,logo_url,fetched_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                    """, (symbol, p.get('name'), p.get('sector'), p.get('industry'),
+                          p.get('exchange'), p.get('currency'), p.get('website'),
+                          p.get('description'), p.get('employees'), p.get('country'),
+                          p.get('logo_url'), now_ts()))
+                    conn.commit()
+            if p and p.get('description'):
+                _embed_profile_bg(symbol, p)
+
+            # ── Financials ────────────────────────────────────────────────────
+            f = row_to_dict(conn.execute('SELECT * FROM financials WHERE symbol=?', (symbol,)).fetchone())
+            if not f:
+                f = fetch_financials(symbol)
+                if f:
+                    conn.execute("""
+                        INSERT OR REPLACE INTO financials
+                            (symbol,market_cap,revenue_ttm,revenue_q,revenue_q_prev,
+                             net_income_ttm,gross_margin,pe_ratio,eps,dividend_yield,
+                             beta,week52_high,week52_low,avg_volume,fetched_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """, (symbol, f.get('market_cap'), f.get('revenue_ttm'), f.get('revenue_q'),
+                          f.get('revenue_q_prev'), f.get('net_income_ttm'), f.get('gross_margin'),
+                          f.get('pe_ratio'), f.get('eps'), f.get('dividend_yield'),
+                          f.get('beta'), f.get('week52_high'), f.get('week52_low'),
+                          f.get('avg_volume'), now_ts()))
+                    conn.commit()
+            if f:
+                _embed_financials_bg(symbol, f)
+
+            # ── News ──────────────────────────────────────────────────────────
+            news = rows_to_list(conn.execute(
+                'SELECT title,source,url,published,summary,category FROM news '
+                'WHERE symbol=? ORDER BY published DESC LIMIT 30', (symbol,)
+            ).fetchall())
+            if not news:
+                name_for_news = (p.get('name') if p else None) or symbol
+                rss  = fetch_news(symbol, name_for_news)
+                fh   = fetch_finnhub_news(symbol)
+                yf_n = fetch_yf_news(symbol) if not (rss or fh) else []
+                all_ = {a['url']: a for a in (rss + fh + yf_n) if a.get('url')}.values()
+                news = sorted(all_, key=lambda x: x['published'], reverse=True)[:30]
+                if news:
+                    conn.executemany("""
+                        INSERT OR IGNORE INTO news
+                            (symbol,source,title,url,published,summary,relevance,category,fetched_at)
+                        VALUES (?,?,?,?,?,?,?,?,?)
+                    """, [(symbol, a['source'], a['title'], a['url'], a['published'],
+                           a.get('summary'), a.get('relevance','medium'), a.get('category','gen'),
+                           now_ts()) for a in news])
+                    conn.commit()
+            if news:
+                _embed_articles_bg(symbol, list(news))
+
+            # ── Price history narrative ────────────────────────────────────────
+            for rng in ('1mo', '3mo', '1y'):
+                cached = conn.execute(
+                    'SELECT COUNT(*) as n FROM history WHERE symbol=? AND range_key=?',
+                    (symbol, rng)
+                ).fetchone()['n']
+                if not cached:
+                    pts = fetch_history(symbol, rng)  # returns list of dicts
+                    if pts:
+                        rows_hist = [(symbol, rng, p['ts'],
+                                      p.get('open'), p.get('high'), p.get('low'),
+                                      p.get('close'), p.get('volume')) for p in pts]
+                        conn.executemany("""
+                            INSERT OR IGNORE INTO history
+                                (symbol,range_key,ts,open,high,low,close,volume)
+                            VALUES (?,?,?,?,?,?,?,?)
+                        """, rows_hist)
+                        conn.commit()
+
+            name = (p.get('name') if p else None) or symbol
+            _embed_price_history_bg(symbol, name)
+
+        log.info(f'RAG ingestion complete for {symbol}')
+    except Exception as e:
+        log.warning(f'_rag_ingest_symbol({symbol}): {e}')
 
 # ── India large-cap screener universe (Nifty 100 + select large caps) ────────
 INDIA_LARGE_CAP = [
@@ -748,6 +979,40 @@ def fetch_finnhub_news(symbol: str) -> list:
         log.warning(f'Finnhub news ({symbol}): {e}')
         return []
 
+def fetch_yf_news(symbol: str) -> list:
+    """yfinance built-in news — no API key needed, works for US symbols."""
+    try:
+        items = yf.Ticker(symbol).news or []
+        result = []
+        for it in items[:20]:
+            content = it.get('content', {})
+            title   = content.get('title', '') or it.get('title', '')
+            if not title:
+                continue
+            pub_raw  = content.get('pubDate', '') or it.get('providerPublishTime', '')
+            try:
+                import email.utils
+                ts = int(email.utils.parsedate_to_datetime(pub_raw).timestamp()) if isinstance(pub_raw, str) else int(pub_raw)
+            except Exception:
+                ts = now_ts()
+            summary  = content.get('summary', '') or it.get('summary', '')
+            provider = content.get('provider', {}).get('displayName', '') or it.get('publisher', 'Yahoo Finance')
+            url      = (content.get('canonicalUrl', {}) or {}).get('url', '') or it.get('link', '')
+            art = {
+                'source':    provider or 'Yahoo Finance',
+                'title':     title,
+                'url':       url,
+                'published': ts,
+                'summary':   str(summary)[:400],
+                'relevance': 'high',
+            }
+            art['category'] = _categorize_news(art)
+            result.append(art)
+        return result
+    except Exception as e:
+        log.warning(f'yf_news ({symbol}): {e}')
+        return []
+
 # ── API Routes ───────────────────────────────────────────────────────────────
 
 @app.route('/api/quote/<path:symbol>')
@@ -1137,6 +1402,97 @@ def screener_refresh():
     if not _screener_running:
         threading.Thread(target=_run_screener_bg, daemon=True).start()
     return jsonify({'ok': True, 'message': 'Screener re-running in background — check back in ~60 s'})
+
+# ── RAG management endpoints ──────────────────────────────────────────────────
+
+@app.route('/api/rag/status')
+def rag_status():
+    """Return chunk counts per symbol and total, with model info."""
+    if not get_embed_model():
+        return jsonify({'ok': False, 'error': 'Embedding model not available (install fastembed)'}), 503
+    db = get_db()
+    rows = rows_to_list(db.execute(
+        'SELECT symbol, source, COUNT(*) as cnt FROM embeddings GROUP BY symbol, source ORDER BY symbol, source'
+    ).fetchall())
+    total = db.execute('SELECT COUNT(*) as n FROM embeddings').fetchone()['n']
+    by_symbol: dict = {}
+    for r in rows:
+        sym = r['symbol']
+        if sym not in by_symbol:
+            by_symbol[sym] = {'total': 0, 'by_source': {}}
+        by_symbol[sym]['by_source'][r['source']] = r['cnt']
+        by_symbol[sym]['total'] += r['cnt']
+    return jsonify({
+        'ok': True,
+        'total_chunks': total,
+        'model': 'BAAI/bge-small-en-v1.5 (384-dim)',
+        'score_threshold': RAG_SCORE_THRESHOLD,
+        'symbols': by_symbol,
+    })
+
+@app.route('/api/rag/train', methods=['POST'])
+def rag_train():
+    """Bulk-ingest RAG data for given symbols (or user's watchlist).
+    Body: { "symbols": ["AAPL","RELIANCE.NS"] }  — omit to use watchlist.
+    """
+    if not get_embed_model():
+        return jsonify({'ok': False, 'error': 'Embedding model not available (install fastembed)'}), 503
+
+    body    = request.get_json(silent=True) or {}
+    symbols = body.get('symbols', [])
+
+    if not symbols:
+        user_id = get_current_user_id()
+        db = get_db()
+        if user_id:
+            symbols = [r['symbol'] for r in db.execute(
+                'SELECT symbol FROM watchlist WHERE user_id=?', (user_id,)).fetchall()]
+        if not symbols:
+            return jsonify({'ok': False, 'error': 'No symbols provided and no watchlist found'}), 400
+
+    symbols = list({s.upper() if not s.endswith('.NS') and not s.endswith('.BO') else s
+                    for s in symbols})[:20]  # cap at 20 to avoid abuse
+
+    def _run():
+        log.info(f'RAG training started for {len(symbols)} symbols: {symbols}')
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+            futures = {ex.submit(_rag_ingest_symbol, sym): sym for sym in symbols}
+            for fut in concurrent.futures.as_completed(futures):
+                sym = futures[fut]
+                try:
+                    fut.result()
+                except Exception as e:
+                    log.warning(f'RAG train error for {sym}: {e}')
+        log.info(f'RAG training complete for {len(symbols)} symbols')
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({
+        'ok': True,
+        'message': f'RAG ingestion started for {len(symbols)} symbols. '
+                   f'Check /api/rag/status in ~30s.',
+        'symbols': symbols,
+    })
+
+@app.route('/api/rag/clear', methods=['POST'])
+def rag_clear():
+    """Clear RAG embeddings for given symbols (or all if admin).
+    Body: { "symbols": ["AAPL"] }  — omit to clear everything (admin only, requires auth).
+    """
+    body    = request.get_json(silent=True) or {}
+    symbols = body.get('symbols', [])
+    db = get_db()
+    if symbols:
+        for sym in symbols[:20]:
+            db.execute('DELETE FROM embeddings WHERE symbol=?', (sym,))
+        db.commit()
+        return jsonify({'ok': True, 'cleared': symbols})
+    # Clear all — require auth
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'ok': False, 'error': 'Auth required to clear all embeddings'}), 401
+    db.execute('DELETE FROM embeddings')
+    db.commit()
+    return jsonify({'ok': True, 'message': 'All embeddings cleared'})
 
 # ── Historical performance metrics ───────────────────────────────────────────
 @app.route('/api/performance/<path:symbol>')
