@@ -2,6 +2,8 @@ import { Component, inject, signal, ElementRef, viewChild, AfterViewChecked, OnI
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DomSanitizer } from '@angular/platform-browser';
+import { HttpClient, HttpHeaders } from '@angular/common/http';
+import { catchError, of } from 'rxjs';
 import { ChatService, ChatMessage } from '../../core/services/chat.service';
 import { WatchlistService } from '../../core/services/watchlist.service';
 import { ApiService } from '../../core/services/api.service';
@@ -72,6 +74,7 @@ export class ChatComponent implements AfterViewChecked, OnInit {
   private chatSvc   = inject(ChatService);
   private wl        = inject(WatchlistService);
   private api       = inject(ApiService);
+  private http      = inject(HttpClient);
   private sanitizer = inject(DomSanitizer);
 
   messages     = signal<UIMessage[]>([]);
@@ -104,7 +107,12 @@ export class ChatComponent implements AfterViewChecked, OnInit {
     if (!symbols.length) { this.showRagMsg('Add stocks to your watchlist first', false); return; }
     this.ragTraining.set(true);
     this.showRagMsg(`Indexing ${symbols.length} stocks… this takes ~30s`, true);
-    this.api.post<{ ok: boolean; message: string }>('/rag/train', { symbols }).subscribe(r => {
+    this.http.post<{ ok: boolean; message: string; error?: string }>(
+      `${this.api.base}/rag/train`,
+      { symbols },
+      { headers: new HttpHeaders({ 'Content-Type': 'application/json' }) }
+    ).pipe(catchError(err => of({ ok: false, message: '', error: err?.error?.error || err?.message || 'Network error' })))
+    .subscribe(r => {
       if (r?.ok) {
         setTimeout(() => {
           this.fetchRagStatus();
@@ -113,7 +121,8 @@ export class ChatComponent implements AfterViewChecked, OnInit {
         }, 35000);
       } else {
         this.ragTraining.set(false);
-        this.showRagMsg('Training failed — is the backend running?', false);
+        const reason = r?.error || 'Unknown error — check backend logs';
+        this.showRagMsg(`Training failed: ${reason}`, false);
       }
     });
   }
