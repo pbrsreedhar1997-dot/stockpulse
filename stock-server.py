@@ -2448,8 +2448,22 @@ def api_ai_status():
 
 # ── Startup (runs for both `python stock-server.py` and gunicorn) ─────────────
 init_db()
-threading.Thread(target=get_embed_model, daemon=True).start()
-# Pre-warm the screener cache so the first user doesn't wait 60+ seconds
+# NOTE: do NOT load the embedding model here.
+# When gunicorn forks workers from the master, forked workers inherit any locked
+# threading.Locks from the master.  If the model-load thread holds _embed_model_lock
+# at fork-time, the worker's copy of the lock is permanently stuck — every
+# get_embed_model() call in the worker deadlocks and health-checks time out.
+# Instead, model loading is triggered via gunicorn's post_fork hook (gunicorn.conf.py)
+# so it runs inside each worker process after the fork, with a clean lock state.
+#
+# For `python stock-server.py` (local dev), kick off model loading in a background
+# thread so the dev server is ready quickly.
+if __name__ == '__main__':
+    threading.Thread(target=get_embed_model, daemon=True).start()
+
+# Pre-warm the screener cache so the first user doesn't wait 60+ seconds.
+# This runs in master and in each forked worker, but _maybe_start_screener guards
+# against running twice via the DB cache check.
 threading.Thread(target=_maybe_start_screener, daemon=True).start()
 
 if __name__ == '__main__':
