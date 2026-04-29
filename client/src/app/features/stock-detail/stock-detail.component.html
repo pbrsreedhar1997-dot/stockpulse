@@ -15,6 +15,8 @@
           <div class="qh-tags">
             @if (profile()?.exchange) { <span class="tag">{{profile()?.exchange}}</span> }
             @if (profile()?.sector)   { <span class="tag">{{profile()?.sector}}</span> }
+            @if (near52High()) { <span class="tag badge-high">🔥 Near 52W High</span> }
+            @if (near52Low())  { <span class="tag badge-low">📉 Near 52W Low</span> }
           </div>
         </div>
       } @else {
@@ -24,7 +26,11 @@
       }
       <div class="qh-right">
         @if (quote()) {
-          <div class="qh-price">{{currency}}{{fmt(quote()?.price)}}</div>
+          <div class="qh-price"
+               [class.flash-up]="priceFlash() === 'up'"
+               [class.flash-dn]="priceFlash() === 'dn'">
+            {{currency}}{{fmt(quote()?.price)}}
+          </div>
           <div class="qh-chg" [class.up]="(quote()?.change_pct ?? 0) >= 0" [class.dn]="(quote()?.change_pct ?? 0) < 0">
             {{(quote()?.change_pct ?? 0) >= 0 ? '+' : ''}}{{fmt(quote()?.change_pct)}}%
             ({{currency}}{{fmt(quote()?.change)}})
@@ -72,7 +78,10 @@
         @if (profile()?.description) {
           <div class="section">
             <div class="section-title">About</div>
-            <p class="about-text">{{profile()?.description}}</p>
+            <p class="about-text" [class.expanded]="showFullDesc()">{{profile()?.description}}</p>
+            <button class="show-more-btn" (click)="showFullDesc.set(!showFullDesc())">
+              {{showFullDesc() ? 'Show less ▲' : 'Show more ▼'}}
+            </button>
           </div>
         }
         @if (fins()) {
@@ -82,11 +91,13 @@
               <div class="metric"><span class="m-lbl">P/E Ratio</span><span class="m-val">{{fmt(fins()?.pe_ratio, 2)}}</span></div>
               <div class="metric"><span class="m-lbl">EPS</span><span class="m-val">{{currency}}{{fmt(fins()?.eps, 2)}}</span></div>
               <div class="metric"><span class="m-lbl">Beta</span><span class="m-val">{{fmt(fins()?.beta, 2)}}</span></div>
-              <div class="metric"><span class="m-lbl">Div Yield</span><span class="m-val">{{fins()?.dividend_yield ? (fins()!.dividend_yield! * 100).toFixed(2) + '%' : '—'}}</span></div>
+              <div class="metric"><span class="m-lbl">Div Yield</span><span class="m-val">{{fmtPct(fins()?.dividend_yield)}}</span></div>
               <div class="metric"><span class="m-lbl">52W High</span><span class="m-val up">{{currency}}{{fmt(fins()?.week52_high)}}</span></div>
               <div class="metric"><span class="m-lbl">52W Low</span><span class="m-val dn">{{currency}}{{fmt(fins()?.week52_low)}}</span></div>
             </div>
           </div>
+        } @else if (loadingFins()) {
+          <div class="loading-state"><div class="spin"></div><span>Loading metrics…</span></div>
         }
         @if (profile()?.website || profile()?.employees || profile()?.country) {
           <div class="section">
@@ -109,19 +120,31 @@
         } @else if (news().length === 0) {
           <div class="empty-state">No news found for {{symbol()}}</div>
         } @else {
-          <div class="news-list">
-            @for (a of news(); track a.url || a.title) {
-              <a class="news-card" [href]="a.url || '#'" target="_blank" rel="noopener">
-                <div class="news-meta">
-                  <span class="news-src">{{a.source}}</span>
-                  <span class="news-time">{{fmtTime(a.published)}}</span>
-                  @if (a.relevance === 'high') { <span class="news-badge direct">Direct</span> }
-                </div>
-                <div class="news-title">{{a.title}}</div>
-                @if (a.summary) { <div class="news-summary">{{a.summary}}</div> }
-              </a>
+          <div class="news-cats">
+            @for (c of newsCategories(); track c) {
+              <button class="cat-chip" [class.active]="newsCategory() === c" (click)="newsCategory.set(c)">
+                {{c === 'all' ? 'All' : c === 'gen' ? 'General' : (c | titlecase)}}
+              </button>
             }
           </div>
+          @if (filteredNews.length === 0) {
+            <div class="empty-state">No {{newsCategory()}} news available</div>
+          } @else {
+            <div class="news-list">
+              @for (a of filteredNews; track a.url || a.title) {
+                <a class="news-card" [href]="a.url || '#'" target="_blank" rel="noopener">
+                  <div class="news-meta">
+                    <span class="news-src">{{a.source}}</span>
+                    <span class="news-time">{{fmtTime(a.published)}}</span>
+                    @if (a.relevance === 'high') { <span class="news-badge direct">Direct</span> }
+                    @if (a.category && a.category !== 'gen') { <span class="news-badge cat">{{a.category | titlecase}}</span> }
+                  </div>
+                  <div class="news-title">{{a.title}}</div>
+                  @if (a.summary) { <div class="news-summary">{{a.summary}}</div> }
+                </a>
+              }
+            </div>
+          }
         }
       </div>
     }
@@ -139,7 +162,7 @@
             <div class="metrics-grid">
               <div class="metric"><span class="m-lbl">Revenue (TTM)</span><span class="m-val">{{currency}}{{fmtBig(fins()?.revenue_ttm)}}</span></div>
               <div class="metric"><span class="m-lbl">Net Income (TTM)</span><span class="m-val">{{currency}}{{fmtBig(fins()?.net_income_ttm)}}</span></div>
-              <div class="metric"><span class="m-lbl">Gross Margin</span><span class="m-val">{{fins()?.gross_margin ? (fins()!.gross_margin! * 100).toFixed(1) + '%' : '—'}}</span></div>
+              <div class="metric"><span class="m-lbl">Gross Margin</span><span class="m-val">{{fmtPct(fins()?.gross_margin)}}</span></div>
               <div class="metric"><span class="m-lbl">P/E Ratio</span><span class="m-val">{{fmt(fins()?.pe_ratio, 2)}}</span></div>
               <div class="metric"><span class="m-lbl">EPS</span><span class="m-val">{{currency}}{{fmt(fins()?.eps, 2)}}</span></div>
               <div class="metric"><span class="m-lbl">Avg Volume</span><span class="m-val">{{fmtBig(fins()?.avg_volume)}}</span></div>
@@ -166,10 +189,10 @@
       <div class="tab-content">
         @if (loadingAI()) {
           <div class="loading-state"><div class="spin"></div><span>Generating AI summary…</span></div>
-        } @else if (aiSummary()) {
+        } @else if (aiHtml()) {
           <div class="section">
             <div class="section-title">AI Analysis</div>
-            <div class="ai-summary">{{aiSummary()}}</div>
+            <div class="ai-summary md-body" [innerHTML]="aiHtml()"></div>
           </div>
         }
         @if (loadingPerf()) {

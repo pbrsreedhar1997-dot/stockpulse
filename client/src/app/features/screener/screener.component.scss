@@ -23,17 +23,27 @@
   thead tr { border-bottom: 1px solid var(--border); }
   th {
     padding: 8px 10px; text-align: left; color: var(--text3); font-size: 10px; text-transform: uppercase;
-    letter-spacing: .5px; cursor: pointer; white-space: nowrap;
+    letter-spacing: .5px; cursor: pointer; white-space: nowrap; user-select: none;
     &:hover { color: var(--text); }
-    .sorted { color: var(--accent); }
+    &.th-action { cursor: default; }
   }
   td { padding: 10px 10px; border-bottom: 1px solid rgba(255,255,255,.03); vertical-align: middle; }
   tbody tr:hover td { background: var(--hover); }
   .num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .td-action { text-align: center; }
 }
+.scr-row { cursor: pointer; }
+.sort-arrow { opacity: 0; font-size: 9px; margin-left: 3px; color: var(--accent); &.vis { opacity: 1; } }
 .scr-sym { font-weight: 800; color: var(--accent); }
 .scr-name { font-weight: 600; color: var(--text); }
 .scr-sec  { font-size: 10px; color: var(--text3); margin-top: 2px; }
+.wl-btn {
+  width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--border); background: var(--card);
+  color: var(--text3); font-size: 14px; font-weight: 700; cursor: pointer; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center; transition: all .15s;
+  &:hover:not(.added) { background: var(--accent); color: #000; border-color: var(--accent); }
+  &.added { background: rgba(0,212,170,.12); color: var(--green); border-color: rgba(0,212,170,.3); cursor: default; }
+}
 .up { color: var(--green); } .dn { color: var(--red); }
 .spin { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; flex-shrink: 0; }
 @keyframes spin { to { transform: rotate(360deg); } }

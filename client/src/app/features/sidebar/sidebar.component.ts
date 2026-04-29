@@ -76,7 +76,7 @@ export class SidebarComponent implements OnInit, OnDestroy {
   }
 
   fmtChg(q: Quote | undefined): string {
-    if (q?.change_pct == null) return '';
+    if (q?.change_pct == null) return '—';
     return (q.change_pct >= 0 ? '+' : '') + q.change_pct.toFixed(2) + '%';
   }
 

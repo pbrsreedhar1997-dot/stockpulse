@@ -1,6 +1,5 @@
-import { Component, OnInit, signal, inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, signal, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { provideHttpClient } from '@angular/common/http';
 import { SidebarComponent } from './features/sidebar/sidebar.component';
 import { StockDetailComponent } from './features/stock-detail/stock-detail.component';
 import { ChatComponent } from './features/chat/chat.component';
@@ -20,7 +19,7 @@ type View = 'stocks' | 'chat' | 'screener';
   templateUrl: './app.html',
   styleUrl: './app.scss'
 })
-export class App implements OnInit {
+export class App implements OnInit, OnDestroy {
   private wl     = inject(WatchlistService);
   private stocks = inject(StockService);
   protected auth = inject(AuthService);
@@ -30,9 +29,13 @@ export class App implements OnInit {
   selectedSym = signal('');
   showAuth    = signal(false);
   backendOk   = signal<boolean | null>(null);
+  showMobile  = signal(false);
   theme       = signal<'dark' | 'light'>(
-    (localStorage.getItem('sp_theme') as 'dark' | 'light') || 'dark'
+    (localStorage.getItem('sp_theme') as 'dark' | 'light') ||
+    (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
   );
+
+  private intervals: ReturnType<typeof setInterval>[] = [];
 
   ngOnInit() {
     this.applyTheme(this.theme());
@@ -49,8 +52,11 @@ export class App implements OnInit {
     }
 
     this.refreshQuotes();
-    setInterval(() => this.refreshQuotes(), 60000);
+    this.intervals.push(setInterval(() => this.refreshQuotes(), 60000));
+    this.intervals.push(setInterval(() => this.checkBackend(), 30000));
   }
+
+  ngOnDestroy() { this.intervals.forEach(id => clearInterval(id)); }
 
   private checkBackend() {
     this.api.getRaw<{ ok: boolean }>('/ping').subscribe(r => {
@@ -59,7 +65,6 @@ export class App implements OnInit {
       this.backendOk.set(ok);
       if (ok && prev === false) this.refreshQuotes();
     });
-    setInterval(() => this.checkBackend(), 30000);
   }
 
   refreshQuotes() {
@@ -79,6 +84,17 @@ export class App implements OnInit {
   }
 
   onAuthSuccess() { this.syncWatchlist(); }
+
+  selectStock(sym: string) {
+    this.selectedSym.set(sym);
+    this.view.set('stocks');
+    this.showMobile.set(false);
+  }
+
+  switchView(v: View) {
+    this.view.set(v);
+    this.showMobile.set(false);
+  }
 
   toggleTheme() {
     const t = this.theme() === 'dark' ? 'light' : 'dark';

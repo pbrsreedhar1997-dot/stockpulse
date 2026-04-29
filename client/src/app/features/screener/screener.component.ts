@@ -1,6 +1,7 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, signal, output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ScreenerService } from '../../core/services/screener.service';
+import { WatchlistService } from '../../core/services/watchlist.service';
 import { ScreenerPick } from '../../core/models/stock.model';
 
 @Component({
@@ -10,8 +11,11 @@ import { ScreenerPick } from '../../core/models/stock.model';
   templateUrl: './screener.component.html',
   styleUrl: './screener.component.scss'
 })
-export class ScreenerComponent implements OnInit {
+export class ScreenerComponent implements OnInit, OnDestroy {
   private svc = inject(ScreenerService);
+  private wl  = inject(WatchlistService);
+
+  selectSym = output<string>();
 
   picks       = signal<ScreenerPick[]>([]);
   status      = signal<'loading' | 'ready' | 'refreshing' | 'error'>('loading');
@@ -22,6 +26,7 @@ export class ScreenerComponent implements OnInit {
   private pollTimer?: ReturnType<typeof setTimeout>;
 
   ngOnInit() { this.load(true); }
+  ngOnDestroy() { clearTimeout(this.pollTimer); }
 
   load(force = false) {
     this.svc.getValuePicks().subscribe(r => {
@@ -68,6 +73,22 @@ export class ScreenerComponent implements OnInit {
     });
   }
 
+  isInWatchlist(symbol: string): boolean {
+    return this.wl.items().some(i => i.symbol === symbol);
+  }
+
+  addToWatchlist(p: ScreenerPick, e: Event) {
+    e.stopPropagation();
+    if (this.isInWatchlist(p.symbol)) return;
+    const item = { symbol: p.symbol, name: p.name, exchange: 'NSE' };
+    this.wl.add(item);
+    this.wl.addToServer(item).subscribe();
+  }
+
+  openStock(sym: string) {
+    this.selectSym.emit(sym);
+  }
+
   fmt(n: number | null | undefined, dec = 1): string {
     if (n == null) return '—';
     return n.toLocaleString('en-IN', { maximumFractionDigits: dec });
@@ -78,6 +99,4 @@ export class ScreenerComponent implements OnInit {
     if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K Cr';
     return n.toFixed(1) + ' Cr';
   }
-
-  ngOnDestroy() { clearTimeout(this.pollTimer); }
 }

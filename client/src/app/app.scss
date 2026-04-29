@@ -1,10 +1,28 @@
+/* Theme transition */
+*, *::before, *::after { transition: background-color .2s ease, border-color .2s ease, color .15s ease; }
+/* But NOT transforms / opacity / box-shadow — too laggy */
+button, a { transition: background-color .15s, color .15s, border-color .15s, opacity .15s !important; }
+
 .shell {
   display: flex;
   height: 100vh;
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
+  position: relative;
 }
+
+/* Sidebar wrapper — handles mobile slide-in */
+.sidebar-wrap {
+  flex-shrink: 0;
+  z-index: 200;
+}
+
+.mobile-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 199;
+  animation: fadeIn .15s ease;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
 .main {
   flex: 1;
@@ -24,20 +42,28 @@
   border-bottom: 1px solid var(--border);
   background: var(--sidebar);
   flex-shrink: 0;
-  gap: 12px;
-  flex-wrap: wrap;
+  gap: 8px;
 }
 .tnav-left, .tnav-right { display: flex; align-items: center; gap: 6px; }
 .tnav-btn {
-  padding: 6px 14px; border-radius: 8px; border: none; background: transparent;
-  color: var(--text3); font-size: 12px; font-weight: 600; cursor: pointer; transition: all .15s;
+  padding: 6px 12px; border-radius: 8px; border: none; background: transparent;
+  color: var(--text3); font-size: 12px; font-weight: 600; cursor: pointer;
   &:hover  { color: var(--text); background: var(--hover); }
   &.active { color: var(--text); background: var(--hover); border-bottom: 2px solid var(--accent); border-radius: 8px 8px 0 0; }
+}
+
+/* Hamburger — visible only on mobile */
+.hamburger {
+  display: none; flex-direction: column; justify-content: center; gap: 4px;
+  width: 32px; height: 32px; background: none; border: none; cursor: pointer; padding: 6px;
+  span { display: block; height: 2px; background: var(--text2); border-radius: 2px; }
+  &:hover span { background: var(--text); }
 }
 
 .be-pill {
   padding: 4px 10px; border-radius: 20px; font-size: 10px; font-weight: 700;
   background: var(--card); border: 1px solid var(--border); color: var(--text3);
+  white-space: nowrap;
   &.ok  { background: rgba(0,212,170,.12); border-color: rgba(0,212,170,.3); color: var(--green); }
   &.err { background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.3); color: var(--red); }
 }
@@ -58,8 +84,8 @@
 .user-chip {
   display: flex; align-items: center; gap: 8px; background: var(--card); border: 1px solid var(--border);
   border-radius: 20px; padding: 4px 12px;
-  span { font-size: 12px; font-weight: 600; color: var(--text); }
-  button { background: none; border: none; color: var(--text3); font-size: 11px; cursor: pointer; padding: 0; &:hover { color: var(--red); } }
+  span { font-size: 12px; font-weight: 600; color: var(--text); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  button { background: none; border: none; color: var(--text3); font-size: 11px; cursor: pointer; padding: 0; white-space: nowrap; &:hover { color: var(--red); } }
 }
 
 /* Content */
@@ -69,11 +95,22 @@
   display: flex;
   flex-direction: column;
 }
-
 app-stock-detail, app-screener, app-chat { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 
-/* Mobile */
+/* ── Mobile ───────────────────────────────────────────────────── */
 @media (max-width: 768px) {
-  app-sidebar { display: none; }
-  .topnav { height: auto; padding: 8px 12px; flex-wrap: wrap; }
+  .hamburger { display: flex; }
+
+  .sidebar-wrap {
+    position: fixed; left: 0; top: 0; height: 100vh;
+    transform: translateX(-100%);
+    transition: transform .25s cubic-bezier(.4,0,.2,1);
+    &.mobile-open { transform: translateX(0); }
+  }
+
+  .tnav-btn { font-size: 11px; padding: 5px 8px; }
+
+  .be-pill { display: none; }
+
+  .user-chip span { display: none; }
 }

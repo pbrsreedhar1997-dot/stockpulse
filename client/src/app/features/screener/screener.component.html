@@ -35,21 +35,36 @@
       <table class="scr-table">
         <thead>
           <tr>
-            <th (click)="sort('symbol')">Symbol</th>
-            <th (click)="sort('name')">Company</th>
-            <th (click)="sort('price')">Price</th>
-            <th (click)="sort('pe_ratio')">P/E</th>
-            <th (click)="sort('decline_pct')">
-              <span [class.sorted]="sortKey()==='decline_pct'">↓ from 52W High</span>
+            <th (click)="sort('symbol')">
+              Symbol <span class="sort-arrow" [class.vis]="sortKey()==='symbol'">{{sortDir() === 1 ? '▲' : '▼'}}</span>
             </th>
-            <th (click)="sort('gross_margin')">Gross Margin</th>
-            <th (click)="sort('mkt_cap_cr')">Mkt Cap</th>
-            <th (click)="sort('beta')">Beta</th>
+            <th (click)="sort('name')">
+              Company <span class="sort-arrow" [class.vis]="sortKey()==='name'">{{sortDir() === 1 ? '▲' : '▼'}}</span>
+            </th>
+            <th (click)="sort('price')">
+              Price <span class="sort-arrow" [class.vis]="sortKey()==='price'">{{sortDir() === 1 ? '▲' : '▼'}}</span>
+            </th>
+            <th (click)="sort('pe_ratio')">
+              P/E <span class="sort-arrow" [class.vis]="sortKey()==='pe_ratio'">{{sortDir() === 1 ? '▲' : '▼'}}</span>
+            </th>
+            <th (click)="sort('decline_pct')">
+              ↓ 52W High <span class="sort-arrow" [class.vis]="sortKey()==='decline_pct'">{{sortDir() === 1 ? '▲' : '▼'}}</span>
+            </th>
+            <th (click)="sort('gross_margin')">
+              Gross Margin <span class="sort-arrow" [class.vis]="sortKey()==='gross_margin'">{{sortDir() === 1 ? '▲' : '▼'}}</span>
+            </th>
+            <th (click)="sort('mkt_cap_cr')">
+              Mkt Cap <span class="sort-arrow" [class.vis]="sortKey()==='mkt_cap_cr'">{{sortDir() === 1 ? '▲' : '▼'}}</span>
+            </th>
+            <th (click)="sort('beta')">
+              Beta <span class="sort-arrow" [class.vis]="sortKey()==='beta'">{{sortDir() === 1 ? '▲' : '▼'}}</span>
+            </th>
+            <th class="th-action">Watch</th>
           </tr>
         </thead>
         <tbody>
           @for (p of filtered; track p.symbol) {
-            <tr>
+            <tr (click)="openStock(p.symbol)" class="scr-row">
               <td><span class="scr-sym">{{p.symbol.replace('.NS','').replace('.BO','')}}</span></td>
               <td>
                 <div class="scr-name">{{p.name}}</div>
@@ -61,6 +76,15 @@
               <td class="num">{{fmt(p.gross_margin)}}%</td>
               <td class="num">{{fmtCr(p.mkt_cap_cr)}}</td>
               <td class="num" [class.up]="p.beta < 1" [class.dn]="p.beta > 1.5">{{fmt(p.beta, 2)}}</td>
+              <td class="td-action">
+                <button
+                  class="wl-btn"
+                  [class.added]="isInWatchlist(p.symbol)"
+                  (click)="addToWatchlist(p, $event)"
+                  [title]="isInWatchlist(p.symbol) ? 'In watchlist' : 'Add to watchlist'">
+                  {{isInWatchlist(p.symbol) ? '✓' : '+'}}
+                </button>
+              </td>
             </tr>
           }
         </tbody>

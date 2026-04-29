@@ -1,5 +1,6 @@
-import { Component, OnInit, OnDestroy, inject, signal, input, effect } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, signal, input, effect, SecurityContext } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { DomSanitizer } from '@angular/platform-browser';
 import { StockService } from '../../core/services/stock.service';
 import { WatchlistService } from '../../core/services/watchlist.service';
 import { Quote, Profile, Financials, NewsArticle, HistoryPoint, PerformanceData } from '../../core/models/stock.model';
@@ -9,6 +10,23 @@ import { takeUntil } from 'rxjs/operators';
 
 type Tab = 'overview' | 'news' | 'financials' | 'performance';
 
+/** Minimal markdown → safe HTML for AI summary display */
+function simpleMd(md: string): string {
+  let s = md.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  s = s.replace(/^### (.+)$/gm,'<h4>$1</h4>');
+  s = s.replace(/^## (.+)$/gm,'<h3>$1</h3>');
+  s = s.replace(/^---+$/gm,'<hr>');
+  s = s.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+  s = s.replace(/\*(.+?)\*/g,'<em>$1</em>');
+  s = s.replace(/`([^`]+)`/g,'<code>$1</code>');
+  s = s.replace(/((?:^[-*] .+\n?)+)/gm, b => {
+    const items = b.trim().split('\n').map(l => l.replace(/^[-*] /,'').trim());
+    return '<ul>' + items.map(i => `<li>${i}</li>`).join('') + '</ul>';
+  });
+  s = s.replace(/\n\n+/g,'</p><p>').replace(/\n(?!<)/g,'<br>');
+  return '<p>' + s + '</p>';
+}
+
 @Component({
   selector: 'app-stock-detail',
   standalone: true,
@@ -17,28 +35,37 @@ type Tab = 'overview' | 'news' | 'financials' | 'performance';
   styleUrl: './stock-detail.component.scss'
 })
 export class StockDetailComponent implements OnInit, OnDestroy {
-  stocks = inject(StockService);
-  wl     = inject(WatchlistService);
+  stocks    = inject(StockService);
+  wl        = inject(WatchlistService);
+  sanitizer = inject(DomSanitizer);
 
   symbol = input<string>('');
 
-  tab         = signal<Tab>('overview');
-  quote       = signal<Quote | null>(null);
-  profile     = signal<Profile | null>(null);
-  fins        = signal<Financials | null>(null);
-  news        = signal<NewsArticle[]>([]);
-  history     = signal<HistoryPoint[]>([]);
-  perf        = signal<PerformanceData | null>(null);
-  aiSummary   = signal<string>('');
-  range       = signal('1mo');
-  loadingChart= signal(false);
-  loadingNews = signal(false);
-  loadingFins = signal(false);
-  loadingPerf = signal(false);
-  loadingAI   = signal(false);
+  tab          = signal<Tab>('overview');
+  quote        = signal<Quote | null>(null);
+  profile      = signal<Profile | null>(null);
+  fins         = signal<Financials | null>(null);
+  news         = signal<NewsArticle[]>([]);
+  history      = signal<HistoryPoint[]>([]);
+  perf         = signal<PerformanceData | null>(null);
+  aiSummary    = signal<string>('');
+  aiHtml       = signal<string>('');
+  range        = signal('1mo');
+  loadingChart = signal(false);
+  loadingNews  = signal(false);
+  loadingFins  = signal(false);
+  loadingPerf  = signal(false);
+  loadingAI    = signal(false);
+  showFullDesc = signal(false);
+  newsCategory = signal('all');
+  priceFlash   = signal<'up'|'dn'|''>('');
 
+  private finsLoaded = false;
+  private perfLoaded = false;
   protected readonly Math = Math;
   private destroy$ = new Subject<void>();
+  private lastPrice: number | null = null;
+  private flashTimer?: ReturnType<typeof setTimeout>;
 
   constructor() {
     effect(() => {
@@ -48,16 +75,35 @@ export class StockDetailComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit() {}
-  ngOnDestroy() { this.destroy$.next(); this.destroy$.complete(); }
+  ngOnDestroy() { this.destroy$.next(); this.destroy$.complete(); clearTimeout(this.flashTimer); }
 
   load(sym: string) {
     this.quote.set(null); this.profile.set(null); this.fins.set(null);
-    this.news.set([]); this.history.set([]); this.perf.set(null); this.aiSummary.set('');
+    this.news.set([]); this.history.set([]); this.perf.set(null);
+    this.aiSummary.set(''); this.aiHtml.set('');
+    this.finsLoaded = false; this.perfLoaded = false;
+    this.showFullDesc.set(false); this.newsCategory.set('all');
+    this.lastPrice = null;
 
-    this.stocks.getQuote(sym).pipe(takeUntil(this.destroy$)).subscribe(q => this.quote.set(q));
+    this.stocks.getQuote(sym).pipe(takeUntil(this.destroy$)).subscribe(q => {
+      this.animatePrice(q?.price ?? null);
+      this.quote.set(q);
+    });
     this.stocks.getProfile(sym).pipe(takeUntil(this.destroy$)).subscribe(p => this.profile.set(p));
     this.loadHistory(sym, this.range());
     this.loadNews(sym);
+    // Pre-fetch financials so Overview key metrics load immediately
+    this.loadFins(sym);
+  }
+
+  private animatePrice(newPrice: number | null) {
+    if (this.lastPrice == null || newPrice == null) { this.lastPrice = newPrice; return; }
+    if (newPrice === this.lastPrice) return;
+    const dir: 'up'|'dn' = newPrice > this.lastPrice ? 'up' : 'dn';
+    this.lastPrice = newPrice;
+    this.priceFlash.set(dir);
+    clearTimeout(this.flashTimer);
+    this.flashTimer = setTimeout(() => this.priceFlash.set(''), 800);
   }
 
   loadHistory(sym: string, rng: string) {
@@ -74,14 +120,16 @@ export class StockDetailComponent implements OnInit, OnDestroy {
   }
 
   loadFins(sym: string) {
-    if (this.fins()) return;
+    if (this.finsLoaded) return;
+    this.finsLoaded = true;
     this.loadingFins.set(true);
     this.stocks.getFinancials(sym).pipe(takeUntil(this.destroy$))
       .subscribe(f => { this.fins.set(f); this.loadingFins.set(false); });
   }
 
   loadPerf(sym: string) {
-    if (this.perf()) return;
+    if (this.perfLoaded) return;
+    this.perfLoaded = true;
     this.loadingPerf.set(true);
     this.stocks.getPerformance(sym).pipe(takeUntil(this.destroy$))
       .subscribe(p => { this.perf.set(p); this.loadingPerf.set(false); });
@@ -91,7 +139,12 @@ export class StockDetailComponent implements OnInit, OnDestroy {
     if (this.aiSummary()) return;
     this.loadingAI.set(true);
     this.stocks.getAiSummary(sym).pipe(takeUntil(this.destroy$))
-      .subscribe(r => { this.aiSummary.set(r?.summary || ''); this.loadingAI.set(false); });
+      .subscribe(r => {
+        const txt = r?.summary || '';
+        this.aiSummary.set(txt);
+        this.aiHtml.set(this.sanitizer.sanitize(SecurityContext.HTML, simpleMd(txt)) ?? txt);
+        this.loadingAI.set(false);
+      });
   }
 
   switchTab(t: Tab) {
@@ -109,9 +162,35 @@ export class StockDetailComponent implements OnInit, OnDestroy {
   get currency(): string { return this.quote()?.currency === 'INR' ? '₹' : '$'; }
   get chartColor(): string { return (this.quote()?.change_pct ?? 0) >= 0 ? '#00d4aa' : '#ef4444'; }
 
+  get filteredNews(): NewsArticle[] {
+    const cat = this.newsCategory();
+    if (cat === 'all') return this.news();
+    return this.news().filter(a => (a.category || 'gen') === cat);
+  }
+
+  newsCategories(): string[] {
+    const cats = new Set(this.news().map(a => a.category || 'gen'));
+    return ['all', ...cats];
+  }
+
+  near52High(): boolean {
+    const f = this.fins(); const q = this.quote();
+    if (!f?.week52_high || !q?.price) return false;
+    return (f.week52_high - q.price) / f.week52_high < 0.05;
+  }
+  near52Low(): boolean {
+    const f = this.fins(); const q = this.quote();
+    if (!f?.week52_low || !q?.price) return false;
+    return (q.price - f.week52_low) / f.week52_low < 0.05;
+  }
+
   fmt(n: number | null | undefined, dec = 2): string {
     if (n == null) return '—';
     return n.toLocaleString('en-IN', { maximumFractionDigits: dec });
+  }
+  fmtPct(n: number | null | undefined): string {
+    if (n == null) return '—';
+    return (n * 100).toFixed(2) + '%';
   }
   fmtBig(n: number | null | undefined): string {
     if (n == null) return '—';
@@ -123,30 +202,24 @@ export class StockDetailComponent implements OnInit, OnDestroy {
   }
   fmtTime(ts: number | undefined): string {
     if (!ts) return '';
-    const d = new Date(ts * 1000);
     const now = Date.now() / 1000;
     const diff = now - ts;
     if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
     if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-    return d.toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
+    return new Date(ts * 1000).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
   }
 
   annualReturnEntries(): { year: string; ret: number }[] {
     const p = this.perf();
     if (!p?.annual_returns) return [];
     return Object.entries(p.annual_returns)
-      .map(([year, ret]) => ({ year, ret }))
+      .map(([year, ret]) => ({ year, ret: ret as number }))
       .sort((a, b) => b.year.localeCompare(a.year))
       .slice(0, 8);
   }
 
   maxAbsReturn(): number {
     const entries = this.annualReturnEntries();
-    return entries.length ? Math.max(...entries.map(e => Math.abs(e.ret))) : 1;
-  }
-
-  newsCategories(): string[] {
-    const cats = new Set(this.news().map(a => a.category || 'gen'));
-    return ['all', ...cats];
+    return entries.length ? Math.max(...entries.map(e => Math.abs(e.ret)), 1) : 1;
   }
 }
