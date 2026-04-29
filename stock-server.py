@@ -10,6 +10,11 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import requests as http_requests
 import feedparser
 import yfinance as yf
+# Direct yfinance cache to /tmp so Render's read-only overlay FS doesn't cause errors
+try:
+    yf.set_tz_cache_location('/tmp/yfinance-tz-cache')
+except Exception:
+    pass
 import numpy as np
 import groq as groq_sdk
 import anthropic
@@ -713,7 +718,7 @@ def _run_value_picks() -> list:
     from concurrent.futures import ThreadPoolExecutor
     # Keep workers low — Render free tier has 0.1 CPU / 512 MB RAM
     results = []
-    with ThreadPoolExecutor(max_workers=4) as ex:
+    with ThreadPoolExecutor(max_workers=2) as ex:
         for item in ex.map(_screener_fetch_one, INDIA_LARGE_CAP):
             if item:
                 results.append(item)
@@ -1061,27 +1066,18 @@ def fetch_financials(symbol: str) -> dict | None:
 
 # ── RSS news ─────────────────────────────────────────────────────────────────
 RSS_FEEDS = [
-    # ── Core Indian market feeds ─────────────────────────────────────────────
+    # ── Core Indian market feeds (verified working) ──────────────────────────
     ('Economic Times',    'https://economictimes.indiatimes.com/markets/stocks/news/rssfeeds/2143429.cms'),
-    ('Moneycontrol',      'https://www.moneycontrol.com/rss/MCtopnews.xml'),
-    ('Business Standard', 'https://www.business-standard.com/rss/markets-106.rss'),
     ('LiveMint',          'https://www.livemint.com/rss/markets'),
-    ('CNBC TV18',         'https://www.cnbctv18.com/commonfeeds/v1/eng/rss/market.xml'),
-    # ── Earnings & quarterly results ─────────────────────────────────────────
-    ('Financial Express', 'https://www.financialexpress.com/market/feed/'),
     ('Hindu BusinessLine','https://www.thehindubusinessline.com/markets/feeder/default.rss'),
+    # ── Earnings & sector feeds (ET) ─────────────────────────────────────────
     ('ET Earnings',       'https://economictimes.indiatimes.com/markets/earnings/rssfeeds/2143522.cms'),
-    # ── Contracts, orders, sector news ───────────────────────────────────────
     ('ET Industry',       'https://economictimes.indiatimes.com/industry/rssfeeds/13352306.cms'),
     ('ET Technology',     'https://economictimes.indiatimes.com/tech/rssfeeds/13357270.cms'),
     ('ET Auto',           'https://economictimes.indiatimes.com/industry/auto/rssfeeds/19430249.cms'),
-    ('PIB India',         'https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3'),
-    ('BQ Prime',          'https://www.bqprime.com/feeds/rss.xml'),
-    ('Business Today',    'https://www.businesstoday.in/rss/story.xml'),
-    # ── Wire services & global coverage ──────────────────────────────────────
-    ('Reuters India',     'https://feeds.reuters.com/reuters/INbusinessNews'),
-    ('Reuters Business',  'https://feeds.reuters.com/reuters/businessNews'),
+    # ── Exchange filings ─────────────────────────────────────────────────────
     ('BSE Corporate',     'https://www.bseindia.com/xml-data/corpfiling/AttachLive/rss.xml'),
+    ('PIB India',         'https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3'),
 ]
 
 # ── Contract & quarterly-results keyword sets ────────────────────────────────

@@ -149,7 +149,7 @@ def _get_pg_pool():
                 if 'connect_timeout' not in dsn:
                     dsn += '&connect_timeout=10'
                 _pg_pool = psycopg2.pool.ThreadedConnectionPool(
-                    minconn=1, maxconn=10, dsn=dsn
+                    minconn=2, maxconn=20, dsn=dsn
                 )
                 log.info('PostgreSQL pool ready')
     return _pg_pool
