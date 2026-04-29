@@ -554,6 +554,40 @@ def _rag_ingest_symbol(symbol: str):
         # ── Earnings history (runs in separate thread_connection inside) ────────
         _embed_earnings_history_bg(symbol, name)
 
+        # ── Google News (per-stock targeted RSS) ─────────────────────────────
+        try:
+            name_for_gn = (p.get('name') if p else None) or symbol
+            gn_articles = fetch_google_news(symbol, name_for_gn)
+            if gn_articles:
+                with thread_connection() as conn2:
+                    conn2.executemany("""
+                        INSERT OR IGNORE INTO news
+                            (symbol,source,title,url,published,summary,relevance,category,fetched_at)
+                        VALUES (?,?,?,?,?,?,?,?,?)
+                    """, [(symbol, a['source'], a['title'], a['url'], a['published'],
+                           a.get('summary'), a.get('relevance', 'medium'), a.get('category', 'gen'),
+                           now_ts()) for a in gn_articles])
+                    conn2.commit()
+                _embed_articles_bg(symbol, gn_articles)
+        except Exception as e:
+            log.debug(f'_rag_ingest_symbol google_news({symbol}): {e}')
+
+        # ── Corporate actions (dividends, splits, earnings surprises) ─────────
+        try:
+            actions = fetch_corporate_actions(symbol)
+            if actions:
+                _embed_corporate_actions_bg(symbol, name, actions)
+        except Exception as e:
+            log.debug(f'_rag_ingest_symbol corporate_actions({symbol}): {e}')
+
+        # ── Alpha Vantage fundamentals (optional — only when key is set) ─────
+        try:
+            av = fetch_alpha_vantage_fundamentals(symbol)
+            if av:
+                _embed_alpha_vantage_bg(symbol, name, av)
+        except Exception as e:
+            log.debug(f'_rag_ingest_symbol alpha_vantage({symbol}): {e}')
+
         log.info(f'RAG ingestion complete for {symbol}')
     except Exception as e:
         log.warning(f'_rag_ingest_symbol({symbol}): {e}')
@@ -859,9 +893,35 @@ def _quote_from_stooq(symbol: str) -> dict | None:
         return None
 
 
+def _quote_from_twelve_data(symbol: str) -> dict | None:
+    """Twelve Data quote adapter — wraps fetch_twelve_data_quote into quote format."""
+    raw = fetch_twelve_data_quote(symbol)
+    if not raw:
+        return None
+    try:
+        price  = float(raw.get('close') or 0)
+        prev   = float(raw.get('previous_close') or price)
+        change = round(price - prev, 2)
+        chg_pct = round((change / prev) * 100, 2) if prev else 0.0
+        return {
+            'symbol':       symbol,
+            'price':        price,
+            'change':       change,
+            'change_pct':   chg_pct,
+            'volume':       int(float(raw.get('volume') or 0)),
+            'open':         float(raw.get('open') or price),
+            'high':         float(raw.get('high') or price),
+            'low':          float(raw.get('low') or price),
+            'prev_close':   prev,
+            '_source':      'twelve_data',
+        }
+    except Exception:
+        return None
+
+
 def fetch_quote(symbol: str) -> dict | None:
-    """Try three sources in order; return first successful result."""
-    for fn in (_quote_from_yf, _quote_from_yf_direct, _quote_from_stooq):
+    """Try four sources in order; return first successful result."""
+    for fn in (_quote_from_yf, _quote_from_yf_direct, _quote_from_twelve_data, _quote_from_stooq):
         try:
             data = fn(symbol)
             if data:
@@ -1204,6 +1264,349 @@ def fetch_yf_news(symbol: str) -> list:
     except Exception as e:
         log.warning(f'yf_news ({symbol}): {e}')
         return []
+
+# ── Google News RSS — per-stock targeted search (no API key) ─────────────────
+_GNEWS_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Accept-Language': 'en-IN,en;q=0.9',
+}
+
+def fetch_google_news(symbol: str, name: str, days: int = 30) -> list:
+    """
+    Fetch Google News RSS for a specific stock.
+    Uses two queries: ticker symbol + company name (abbreviated).
+    No API key required.
+    """
+    ticker, keywords = _extract_keywords(symbol, name)
+    # Build a focused query: e.g. "RELIANCE NSE stock"
+    short_name = ' '.join(keywords[:2])
+    queries = [
+        f'{ticker} NSE stock',
+        f'{short_name} share price results',
+    ]
+    seen: set = set()
+    articles  = []
+    cutoff    = now_ts() - days * 86400
+
+    for q in queries:
+        try:
+            url  = f'https://news.google.com/rss/search?q={http_requests.utils.quote(q)}&hl=en-IN&gl=IN&ceid=IN:en'
+            r    = http_requests.get(url, headers=_GNEWS_HEADERS, timeout=12)
+            r.raise_for_status()
+            feed = feedparser.parse(r.content)
+            for entry in feed.entries[:30]:
+                link  = entry.get('link', '')
+                if link in seen:
+                    continue
+                seen.add(link)
+                title   = entry.get('title', '').strip()
+                pub     = entry.get('published_parsed')
+                ts      = int(time.mktime(pub)) if pub else now_ts()
+                if ts < cutoff:
+                    continue
+                summary = entry.get('summary', '') or ''
+                # Strip Google News wrapper title (source name appended after ' - ')
+                clean_title = re.sub(r'\s*-\s*[^-]+$', '', title).strip() or title
+                art = {
+                    'source':    'Google News',
+                    'title':     clean_title,
+                    'url':       link,
+                    'published': ts,
+                    'summary':   summary[:400],
+                    'relevance': 'high',
+                }
+                art['category'] = _categorize_news(art)
+                articles.append(art)
+        except Exception as e:
+            log.debug(f'Google News ({symbol}, q={q!r}): {e}')
+
+    articles.sort(key=lambda x: x['published'], reverse=True)
+    return articles[:40]
+
+
+# ── NSE Corporate Actions (dividends, splits, bonus via yfinance) ─────────────
+def fetch_corporate_actions(symbol: str) -> dict:
+    """
+    Return dividend history, stock splits, and upcoming earnings dates.
+    Uses yfinance — no API key required.
+    Returns { 'dividends': [...], 'splits': [...], 'earnings_dates': [...] }
+    """
+    result = {'dividends': [], 'splits': [], 'earnings_dates': []}
+    try:
+        t = yf.Ticker(symbol)
+
+        # Dividends — last 3 years
+        try:
+            divs = t.dividends
+            if divs is not None and len(divs) > 0:
+                for ts_idx, amt in divs.iloc[-12:].items():
+                    v = _safe_float(amt)
+                    if v and v > 0:
+                        result['dividends'].append({
+                            'date': ts_idx.strftime('%Y-%m-%d') if hasattr(ts_idx, 'strftime') else str(ts_idx)[:10],
+                            'amount': round(v, 4),
+                        })
+        except Exception:
+            pass
+
+        # Splits — last 5 years
+        try:
+            splits = t.splits
+            if splits is not None and len(splits) > 0:
+                for ts_idx, ratio in splits.items():
+                    v = _safe_float(ratio)
+                    if v and v != 1.0:
+                        result['splits'].append({
+                            'date':  ts_idx.strftime('%Y-%m-%d') if hasattr(ts_idx, 'strftime') else str(ts_idx)[:10],
+                            'ratio': round(v, 2),
+                        })
+        except Exception:
+            pass
+
+        # Upcoming / recent earnings dates
+        try:
+            ed = t.get_earnings_dates(limit=6)
+            if ed is not None and not ed.empty:
+                for idx, row in ed.iterrows():
+                    date_str = idx.strftime('%Y-%m-%d') if hasattr(idx, 'strftime') else str(idx)[:10]
+                    eps_est  = _safe_float(row.get('EPS Estimate'))
+                    eps_rep  = _safe_float(row.get('Reported EPS'))
+                    result['earnings_dates'].append({
+                        'date':         date_str,
+                        'eps_estimate': eps_est,
+                        'eps_reported': eps_rep,
+                    })
+        except Exception:
+            pass
+
+    except Exception as e:
+        log.debug(f'fetch_corporate_actions({symbol}): {e}')
+    return result
+
+
+def _embed_corporate_actions_bg(symbol: str, name: str, actions: dict):
+    """Embed corporate actions (dividends, splits, earnings) as RAG chunks."""
+    try:
+        with thread_connection() as conn:
+            label = name or symbol
+            divs   = actions.get('dividends', [])
+            splits = actions.get('splits', [])
+            dates  = actions.get('earnings_dates', [])
+
+            # Dividend narrative
+            if divs:
+                recent = divs[-6:]
+                total  = sum(d['amount'] for d in recent)
+                text   = (
+                    f"{label} ({symbol}) dividend history (recent {len(recent)} payments): "
+                    + ', '.join(f"{d['date']}: ₹{d['amount']}" for d in recent)
+                    + f". Total dividends over this period: ₹{total:.2f}."
+                )
+                store_embedding(conn, symbol, text,
+                                source='corporate_actions',
+                                article_url=f'actions:dividends:{symbol}')
+
+            # Split narrative
+            if splits:
+                text = (
+                    f"{label} ({symbol}) stock split history: "
+                    + ', '.join(f"{s['date']} ({s['ratio']}:1 split)" for s in splits)
+                    + ". Splits typically indicate strong prior performance."
+                )
+                store_embedding(conn, symbol, text,
+                                source='corporate_actions',
+                                article_url=f'actions:splits:{symbol}')
+
+            # Earnings dates + surprise narrative
+            beats, misses = [], []
+            for ed in dates:
+                if ed.get('eps_estimate') and ed.get('eps_reported'):
+                    diff = ed['eps_reported'] - ed['eps_estimate']
+                    if diff > 0:
+                        beats.append(f"{ed['date']} (beat by {diff:+.2f})")
+                    elif diff < 0:
+                        misses.append(f"{ed['date']} (missed by {diff:.2f})")
+            if beats or misses:
+                parts = [f"{label} ({symbol}) recent earnings vs estimates:"]
+                if beats:  parts.append(f"Beat estimates: {', '.join(beats[-3:])}.")
+                if misses: parts.append(f"Missed estimates: {', '.join(misses[-3:])}.")
+                store_embedding(conn, symbol, ' '.join(parts),
+                                source='corporate_actions',
+                                article_url=f'actions:earnings:{symbol}')
+    except Exception as e:
+        log.warning(f'_embed_corporate_actions_bg({symbol}): {e}')
+
+
+# ── Alpha Vantage — multi-year fundamentals (free key: 25 req/day) ────────────
+def fetch_alpha_vantage_fundamentals(symbol: str) -> dict | None:
+    """
+    Fetch company overview + 5-year annual income statement from Alpha Vantage.
+    Set ALPHA_VANTAGE_KEY env var to enable (free at alphavantage.co).
+    Returns merged dict or None if unavailable.
+    """
+    api_key = os.environ.get('ALPHA_VANTAGE_KEY', '')
+    if not api_key:
+        return None
+    base_sym = symbol.replace('.NS', '').replace('.BO', '')
+    av_sym   = f'{base_sym}.BSE' if '.BO' in symbol else (f'{base_sym}.NSE' if '.NS' in symbol else base_sym)
+    base_url = 'https://www.alphavantage.co/query'
+    try:
+        ov = http_requests.get(base_url, params={
+            'function': 'OVERVIEW', 'symbol': av_sym, 'apikey': api_key
+        }, timeout=10).json()
+        if ov.get('Note') or not ov.get('Symbol'):
+            return None
+        result = {
+            'description':    ov.get('Description', ''),
+            'sector':         ov.get('Sector', ''),
+            'industry':       ov.get('Industry', ''),
+            'pe_forward':     _safe_float(ov.get('ForwardPE')),
+            'peg':            _safe_float(ov.get('PEGRatio')),
+            'book_value':     _safe_float(ov.get('BookValue')),
+            'roe':            _safe_float(ov.get('ReturnOnEquityTTM')),
+            'roa':            _safe_float(ov.get('ReturnOnAssetsTTM')),
+            'analyst_target': _safe_float(ov.get('AnalystTargetPrice')),
+            'strong_buy':     ov.get('AnalystRatingStrongBuy'),
+            'buy':            ov.get('AnalystRatingBuy'),
+            'hold':           ov.get('AnalystRatingHold'),
+            'sell':           ov.get('AnalystRatingSell'),
+        }
+        # Annual income statement (last 5 years)
+        inc = http_requests.get(base_url, params={
+            'function': 'INCOME_STATEMENT', 'symbol': av_sym, 'apikey': api_key
+        }, timeout=10).json()
+        reports = (inc.get('annualReports') or [])[:5]
+        result['annual_reports'] = [
+            {
+                'year':            r.get('fiscalDateEnding', '')[:4],
+                'revenue':         _safe_float(r.get('totalRevenue')),
+                'gross_profit':    _safe_float(r.get('grossProfit')),
+                'net_income':      _safe_float(r.get('netIncome')),
+                'ebitda':          _safe_float(r.get('ebitda')),
+                'eps':             _safe_float(r.get('reportedEPS')),
+            }
+            for r in reports
+        ]
+        return result
+    except Exception as e:
+        log.debug(f'Alpha Vantage ({symbol}): {e}')
+        return None
+
+
+def _embed_alpha_vantage_bg(symbol: str, name: str, av_data: dict):
+    """Embed Alpha Vantage multi-year financials + analyst ratings for RAG."""
+    try:
+        with thread_connection() as conn:
+            label = name or symbol
+
+            # Analyst consensus
+            sb  = av_data.get('strong_buy')
+            b   = av_data.get('buy')
+            h   = av_data.get('hold')
+            s   = av_data.get('sell')
+            tgt = av_data.get('analyst_target')
+            if any(x for x in [sb, b, h, s]):
+                consensus_parts = [f"{label} ({symbol}) analyst consensus:"]
+                if tgt:
+                    consensus_parts.append(f"Target price: {tgt}.")
+                ratings = []
+                if sb: ratings.append(f"Strong buy: {sb}")
+                if b:  ratings.append(f"Buy: {b}")
+                if h:  ratings.append(f"Hold: {h}")
+                if s:  ratings.append(f"Sell: {s}")
+                if ratings: consensus_parts.append(' | '.join(ratings) + '.')
+                store_embedding(conn, symbol, ' '.join(consensus_parts),
+                                source='alpha_vantage',
+                                article_url=f'av:analyst:{symbol}')
+
+            # Multi-year revenue/profit trend
+            reports = av_data.get('annual_reports', [])
+            if len(reports) >= 2:
+                rev_trend, ni_trend = [], []
+                for rpt in reports:
+                    yr = rpt['year']
+                    if rpt.get('revenue'): rev_trend.append(f"{yr}: {rpt['revenue']/1e7:.0f}Cr")
+                    if rpt.get('net_income'): ni_trend.append(f"{yr}: {rpt['net_income']/1e7:.0f}Cr ({'profit' if rpt['net_income']>=0 else 'loss'})")
+
+                if rev_trend:
+                    rev_str = (
+                        f"{label} ({symbol}) 5-year revenue trend: "
+                        + ', '.join(rev_trend) + '. '
+                        + ('Revenue is GROWING — positive business momentum.'
+                           if _safe_float(reports[0].get('revenue', 0)) > _safe_float(reports[-1].get('revenue', 1))
+                           else 'Revenue has been declining or flat.')
+                    )
+                    store_embedding(conn, symbol, rev_str,
+                                    source='alpha_vantage',
+                                    article_url=f'av:revenue:{symbol}')
+
+                if ni_trend:
+                    store_embedding(conn, symbol,
+                                    f"{label} ({symbol}) 5-year net income trend: " + ', '.join(ni_trend),
+                                    source='alpha_vantage',
+                                    article_url=f'av:netincome:{symbol}')
+
+            # Extended ratios
+            roe = av_data.get('roe')
+            roa = av_data.get('roa')
+            peg = av_data.get('peg')
+            bv  = av_data.get('book_value')
+            if any(x for x in [roe, roa, peg, bv]):
+                ratio_parts = [f"{label} ({symbol}) extended valuation metrics:"]
+                if roe: ratio_parts.append(f"ROE: {roe*100:.1f}% ({'strong' if roe>0.2 else 'moderate' if roe>0.1 else 'weak'}).")
+                if roa: ratio_parts.append(f"ROA: {roa*100:.1f}%.")
+                if peg: ratio_parts.append(f"PEG ratio: {peg:.2f} ({'growth at fair value' if 0.5<peg<1.5 else 'overvalued' if peg>2 else ''}).")
+                if bv:  ratio_parts.append(f"Book value per share: {bv}.")
+                store_embedding(conn, symbol, ' '.join(ratio_parts),
+                                source='alpha_vantage',
+                                article_url=f'av:ratios:{symbol}')
+
+    except Exception as e:
+        log.warning(f'_embed_alpha_vantage_bg({symbol}): {e}')
+
+
+# ── Twelve Data — quote / history fallback (free: 800 credits/day) ────────────
+def fetch_twelve_data_quote(symbol: str) -> dict | None:
+    """
+    Twelve Data quote fallback.
+    Set TWELVE_DATA_KEY env var (free at twelvedata.com, 800 calls/day).
+    """
+    api_key = os.environ.get('TWELVE_DATA_KEY', '')
+    if not api_key:
+        return None
+    base = symbol.replace('.NS', '').replace('.BO', '')
+    exchange = 'NSE' if '.NS' in symbol else ('BSE' if '.BO' in symbol else None)
+    try:
+        params = {'symbol': base, 'apikey': api_key}
+        if exchange:
+            params['exchange'] = exchange
+        r = http_requests.get('https://api.twelvedata.com/quote', params=params, timeout=10)
+        r.raise_for_status()
+        d = r.json()
+        if d.get('status') == 'error' or not d.get('close'):
+            return None
+        price      = _safe_float(d.get('close'))
+        prev_close = _safe_float(d.get('previous_close'))
+        change     = round(price - prev_close, 2) if price and prev_close else 0
+        change_pct = round(change / prev_close * 100, 2) if prev_close else 0
+        currency   = 'INR' if exchange in ('NSE', 'BSE') else 'USD'
+        return {
+            'symbol':     symbol,
+            'price':      price,
+            'open':       _safe_float(d.get('open')),
+            'high':       _safe_float(d.get('high')),
+            'low':        _safe_float(d.get('low')),
+            'prev_close': prev_close,
+            'change':     change,
+            'change_pct': change_pct,
+            'volume':     int(d.get('volume') or 0) or None,
+            'currency':   currency,
+            '_source':    'twelvedata',
+        }
+    except Exception as e:
+        log.debug(f'Twelve Data quote ({symbol}): {e}')
+        return None
+
 
 # ── API Routes ───────────────────────────────────────────────────────────────
 
