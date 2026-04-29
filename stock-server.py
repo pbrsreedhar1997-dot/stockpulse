@@ -261,11 +261,12 @@ def _embed_financials_bg(symbol: str, data: dict):
         log.warning(f'_embed_financials_bg({symbol}): {e}')
 
 def _embed_price_history_bg(symbol: str, name: str = ''):
-    """Embed a price-performance narrative derived from cached history."""
+    """Embed rich price-performance narratives: short-term, annual, and quarterly breakdowns."""
     try:
         with thread_connection() as conn:
             label = name or symbol
-            narratives = []
+
+            # ── Short-term performance narratives (1mo / 3mo / 1y) ─────────────
             for rng, label_str in [('1mo', '1 month'), ('3mo', '3 months'), ('1y', '1 year')]:
                 rows = conn.execute(
                     'SELECT close, ts FROM history WHERE symbol=? AND range_key=? '
@@ -273,28 +274,181 @@ def _embed_price_history_bg(symbol: str, name: str = ''):
                 ).fetchall()
                 if len(rows) < 2:
                     continue
-                start_p = rows[0]['close']
-                end_p   = rows[-1]['close']
-                if not start_p or start_p == 0:
-                    continue
-                chg_pct = (end_p - start_p) / start_p * 100
+                closes = [r['close'] for r in rows if r['close']]
+                if len(closes) < 2: continue
+                start_p, end_p = closes[0], closes[-1]
+                if not start_p: continue
+                chg_pct   = (end_p - start_p) / start_p * 100
                 direction = 'gained' if chg_pct >= 0 else 'lost'
-                highs = [r['close'] for r in rows]
-                period_high = max(highs)
-                period_low  = min(highs)
+                # Volatility
+                import statistics
+                if len(closes) > 2:
+                    returns = [(closes[i]-closes[i-1])/closes[i-1]*100 for i in range(1,len(closes))]
+                    vol = round(statistics.stdev(returns), 2)
+                    vol_str = f" Annualised volatility: ~{vol*16:.0f}%." if rng in ('1mo','3mo') else ''
+                else:
+                    vol_str = ''
                 narrative = (
                     f"{label} ({symbol}) {direction} {abs(chg_pct):.1f}% over the past {label_str}, "
-                    f"moving from {start_p:.2f} to {end_p:.2f}. "
-                    f"Period high: {period_high:.2f}, period low: {period_low:.2f}."
+                    f"from {start_p:.2f} to {end_p:.2f}. "
+                    f"Period high: {max(closes):.2f}, period low: {min(closes):.2f}.{vol_str}"
                 )
-                narratives.append((narrative, rng))
-
-            for text, rng in narratives:
-                store_embedding(conn, symbol, text,
+                store_embedding(conn, symbol, narrative,
                                 source='price_history',
                                 article_url=f'history:{symbol}:{rng}')
+
+            # ── 2-year data: annual + quarterly breakdown ─────────────────────
+            rows2y = conn.execute(
+                'SELECT close, ts FROM history WHERE symbol=? AND range_key=? '
+                'ORDER BY ts ASC', (symbol, '2y')
+            ).fetchall()
+            if len(rows2y) >= 10:
+                import datetime
+                pts = [(r['ts'], r['close']) for r in rows2y if r['close']]
+
+                # Annual return per calendar year
+                by_year: dict = {}
+                for ts, c in pts:
+                    yr = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).year
+                    by_year.setdefault(yr, []).append(c)
+
+                annual_strs = []
+                for yr in sorted(by_year):
+                    yc = by_year[yr]
+                    if len(yc) < 2: continue
+                    ret = (yc[-1] - yc[0]) / yc[0] * 100
+                    sign = '+' if ret >= 0 else ''
+                    annual_strs.append(f"{yr}: {sign}{ret:.1f}%")
+
+                if annual_strs:
+                    ann_narrative = (
+                        f"{label} ({symbol}) annual price returns: "
+                        + ', '.join(annual_strs) + '. '
+                        f"Total 2-year change: {(pts[-1][1]-pts[0][1])/pts[0][1]*100:+.1f}%."
+                    )
+                    store_embedding(conn, symbol, ann_narrative,
+                                    source='price_history',
+                                    article_url=f'history:{symbol}:annual')
+
+                # Quarterly breakdown
+                by_quarter: dict = {}
+                for ts, c in pts:
+                    dt = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc)
+                    qkey = f"{dt.year} Q{(dt.month-1)//3+1}"
+                    by_quarter.setdefault(qkey, []).append(c)
+
+                qret_strs = []
+                for qk in sorted(by_quarter)[-8:]:  # last 8 quarters
+                    qc = by_quarter[qk]
+                    if len(qc) < 2: continue
+                    qr = (qc[-1] - qc[0]) / qc[0] * 100
+                    sign = '+' if qr >= 0 else ''
+                    qret_strs.append(f"{qk}: {sign}{qr:.1f}%")
+
+                if qret_strs:
+                    q_narrative = (
+                        f"{label} ({symbol}) quarterly price performance over the past 2 years: "
+                        + ', '.join(qret_strs) + '.'
+                    )
+                    store_embedding(conn, symbol, q_narrative,
+                                    source='price_history',
+                                    article_url=f'history:{symbol}:quarterly')
+
+                # Overall 2-year trend context
+                all_closes = [c for _, c in pts]
+                high2y = max(all_closes)
+                low2y  = min(all_closes)
+                current = all_closes[-1]
+                vs_high = (high2y - current) / high2y * 100
+                vs_low  = (current - low2y) / low2y * 100
+                trend_narrative = (
+                    f"{label} ({symbol}) 2-year price range: low {low2y:.2f} to high {high2y:.2f}. "
+                    f"Current price is {vs_high:.1f}% below the 2-year high "
+                    f"and {vs_low:.1f}% above the 2-year low. "
+                    f"{'Stock is near its 2-year high — strong momentum.' if vs_high < 10 else ''}"
+                    f"{'Stock is near its 2-year low — potential value opportunity.' if vs_low < 10 else ''}"
+                )
+                store_embedding(conn, symbol, trend_narrative,
+                                source='price_history',
+                                article_url=f'history:{symbol}:2y_context')
+
     except Exception as e:
         log.warning(f'_embed_price_history_bg({symbol}): {e}')
+
+
+def _embed_earnings_history_bg(symbol: str, name: str = ''):
+    """Embed quarterly and annual earnings/revenue trends from yfinance financials."""
+    try:
+        t = yf.Ticker(symbol)
+        label = name or symbol
+
+        # Quarterly financials (last 8 quarters)
+        try:
+            qfin = t.quarterly_financials
+            if not qfin.empty:
+                rev_row  = qfin.loc['Total Revenue'] if 'Total Revenue' in qfin.index else None
+                ni_row   = qfin.loc['Net Income']    if 'Net Income'    in qfin.index else None
+                gp_row   = qfin.loc['Gross Profit']  if 'Gross Profit'  in qfin.index else None
+
+                q_chunks = []
+                cols = list(qfin.columns[:8])  # last 8 quarters
+                for col in cols:
+                    try:
+                        qname = col.strftime('%Y Q%m') if hasattr(col, 'strftime') else str(col)[:10]
+                        parts = [f"{label} ({symbol}) quarterly results {qname}:"]
+                        if rev_row is not None:
+                            rev_v = _safe_float(rev_row.get(col))
+                            if rev_v: parts.append(f"Revenue {rev_v/1e7:.1f}Cr.")
+                        if ni_row is not None:
+                            ni_v = _safe_float(ni_row.get(col))
+                            if ni_v is not None:
+                                sign = 'profit' if ni_v >= 0 else 'loss'
+                                parts.append(f"Net {sign}: {abs(ni_v)/1e7:.1f}Cr.")
+                        if gp_row is not None:
+                            gp_v = _safe_float(gp_row.get(col))
+                            if gp_v: parts.append(f"Gross profit: {gp_v/1e7:.1f}Cr.")
+                        if len(parts) > 1:
+                            q_chunks.append(' '.join(parts))
+                    except Exception:
+                        continue
+
+                if q_chunks:
+                    with thread_connection() as conn:
+                        for i, chunk in enumerate(q_chunks):
+                            store_embedding(conn, symbol, chunk,
+                                            source='earnings',
+                                            article_url=f'earn:quarterly:{symbol}:{i}')
+        except Exception as e:
+            log.debug(f'_embed_earnings quarterly ({symbol}): {e}')
+
+        # Annual financials (last 3 years)
+        try:
+            afin = t.financials
+            if not afin.empty:
+                rev_row = afin.loc['Total Revenue'] if 'Total Revenue' in afin.index else None
+                ni_row  = afin.loc['Net Income']    if 'Net Income'    in afin.index else None
+                if rev_row is not None or ni_row is not None:
+                    annual_parts = [f"{label} ({symbol}) annual financial summary (last 3 years):"]
+                    for col in list(afin.columns[:3]):
+                        yr = col.year if hasattr(col, 'year') else str(col)[:4]
+                        line_parts = [f"FY{yr}:"]
+                        if rev_row is not None:
+                            rv = _safe_float(rev_row.get(col))
+                            if rv: line_parts.append(f"Rev {rv/1e7:.0f}Cr")
+                        if ni_row is not None:
+                            nv = _safe_float(ni_row.get(col))
+                            if nv is not None:
+                                line_parts.append(f"NetIncome {nv/1e7:.0f}Cr ({'profit' if nv>=0 else 'loss'})")
+                        annual_parts.append(' '.join(line_parts))
+                    with thread_connection() as conn:
+                        store_embedding(conn, symbol, ' '.join(annual_parts),
+                                        source='earnings',
+                                        article_url=f'earn:annual:{symbol}')
+        except Exception as e:
+            log.debug(f'_embed_earnings annual ({symbol}): {e}')
+
+    except Exception as e:
+        log.warning(f'_embed_earnings_history_bg({symbol}): {e}')
 
 def _rag_ingest_symbol(symbol: str):
     """Full RAG ingestion for one symbol. Uses thread_connection (safe outside Flask requests).
@@ -363,14 +517,26 @@ def _rag_ingest_symbol(symbol: str):
             if news:
                 _embed_articles_bg(symbol, list(news))
 
-            # ── Price history narrative ────────────────────────────────────────
-            for rng in ('1mo', '3mo', '1y'):
-                cached = conn.execute(
+            # ── Price history (store 2y weekly + 5y monthly for deep analysis) ──
+            for rng in ('1mo', '3mo', '6mo', '1y', '2y', '5y'):
+                cached_n = conn.execute(
                     'SELECT COUNT(*) as n FROM history WHERE symbol=? AND range_key=?',
                     (symbol, rng)
                 ).fetchone()['n']
-                if not cached:
-                    pts = fetch_history(symbol, rng)  # returns list of dicts
+                # Re-fetch 2y/5y data if stale or missing (they accumulate over time)
+                max_age = 86400 * 7   # 7 days for short ranges
+                if rng in ('2y', '5y'):
+                    max_age = 86400 * 30  # 30 days for long ranges
+                oldest = conn.execute(
+                    'SELECT MIN(ts) as oldest FROM history WHERE symbol=? AND range_key=?',
+                    (symbol, rng)
+                ).fetchone()
+                is_stale = not cached_n or (
+                    oldest and oldest['oldest'] and
+                    (now_ts() - oldest['oldest']) > max_age * 40
+                )
+                if not cached_n or (rng in ('2y','5y') and is_stale):
+                    pts = fetch_history(symbol, rng)
                     if pts:
                         rows_hist = [(symbol, rng, p['ts'],
                                       p.get('open'), p.get('high'), p.get('low'),
@@ -384,6 +550,9 @@ def _rag_ingest_symbol(symbol: str):
 
             name = (p.get('name') if p else None) or symbol
             _embed_price_history_bg(symbol, name)
+
+        # ── Earnings history (runs in separate thread_connection inside) ────────
+        _embed_earnings_history_bg(symbol, name)
 
         log.info(f'RAG ingestion complete for {symbol}')
     except Exception as e:
@@ -422,64 +591,85 @@ INDIA_LARGE_CAP = [
 
 SCREENER_TTL = 6 * 3600  # 6-hour cache
 
+def _safe_float(v) -> float | None:
+    """Return float or None — guards against nan/inf from yfinance."""
+    try:
+        f = float(v)
+        return None if (f != f or f == float('inf') or f == float('-inf')) else f
+    except (TypeError, ValueError):
+        return None
+
+# Sectors where gross-margin is structurally near-zero (banks use NIM, not GM)
+_FINANCIAL_SECTORS = {'Financial Services', 'Financial Services Stocks', 'Banking',
+                      'Banks', 'Insurance', 'Capital Markets', 'Diversified Financial Services'}
+
 def _screener_fetch_one(sym: str) -> dict | None:
     """Fetch one stock for the value-picks screener. Returns None if disqualified."""
     try:
         t  = yf.Ticker(sym)
         fi = t.fast_info
-        price   = getattr(fi, 'last_price',  None)
-        mkt_cap = getattr(fi, 'market_cap',  None)
+        price   = _safe_float(getattr(fi, 'last_price',  None))
+        mkt_cap = _safe_float(getattr(fi, 'market_cap',  None))
         # yfinance 1.3+ renamed fifty_two_week_high → year_high
-        w52h    = getattr(fi, 'year_high',   None)
-        w52l    = getattr(fi, 'year_low',    None)
+        w52h = _safe_float(getattr(fi, 'year_high', None)) or \
+               _safe_float(getattr(fi, 'fifty_two_week_high', None))
+        w52l = _safe_float(getattr(fi, 'year_low',  None)) or \
+               _safe_float(getattr(fi, 'fifty_two_week_low',  None))
 
         if not price or not mkt_cap or not w52h or w52h <= 0:
             return None
 
         mkt_cap_cr = mkt_cap / 1e7
-        if mkt_cap_cr < 50000:          # < ₹50,000 Cr → skip
+        if mkt_cap_cr < 10000:          # < ₹10,000 Cr → skip small caps
             return None
 
         decline = ((w52h - price) / w52h) * 100
-        if decline < 20:                # not fallen ≥20% from 52W peak
+        if decline < 10:                # not fallen ≥10% from 52W peak
             return None
 
         # Qualifies on price/mktcap — now fetch fundamentals
-        info = t.info
-        eps         = info.get('trailingEps')      or 0
-        gross_m     = info.get('grossMargins')     or 0
-        net_m       = info.get('profitMargins')    or 0
-        pe          = info.get('trailingPE')
-        roe         = info.get('returnOnEquity')
-        revenue     = info.get('totalRevenue')
-        beta        = info.get('beta')
-        de_ratio    = info.get('debtToEquity')
-        curr_ratio  = info.get('currentRatio')
+        info    = t.info
+        sector  = info.get('sector', '') or ''
+        is_fin  = sector in _FINANCIAL_SECTORS or 'bank' in sector.lower() or 'financ' in sector.lower()
+
+        eps      = _safe_float(info.get('trailingEps'))   or 0
+        gross_m  = _safe_float(info.get('grossMargins'))
+        net_m    = _safe_float(info.get('profitMargins'))
+        pe       = _safe_float(info.get('trailingPE'))
+        roe      = _safe_float(info.get('returnOnEquity'))
+        revenue  = _safe_float(info.get('totalRevenue'))
+        beta     = _safe_float(info.get('beta'))
+        de_ratio = _safe_float(info.get('debtToEquity'))
 
         if eps <= 0:                    # must be profitable
             return None
-        if gross_m < 0.15:             # gross margin < 15% → weak business
-            return None
+
+        # Gross-margin filter: skip for financial sector (banks use NIM, not GM)
+        if not is_fin:
+            gm_val = gross_m or 0.0
+            if gm_val < 0.08:          # gross margin < 8% → weak non-financial business
+                return None
+
+        gross_m_pct = round(gross_m * 100, 1) if gross_m is not None else None
 
         return {
             'symbol':       sym,
             'name':         info.get('longName') or info.get('shortName', sym),
-            'sector':       info.get('sector', ''),
+            'sector':       sector,
             'industry':     info.get('industry', ''),
             'price':        round(float(price), 2),
             'week52_high':  round(float(w52h), 2),
             'week52_low':   round(float(w52l), 2) if w52l else None,
             'decline_pct':  round(decline, 1),
             'mkt_cap_cr':   round(mkt_cap_cr, 0),
-            'pe_ratio':     round(pe, 1)        if pe        else None,
+            'pe_ratio':     round(pe, 1)          if pe       else None,
             'eps':          round(eps, 2),
-            'gross_margin': round(gross_m * 100, 1),
+            'gross_margin': gross_m_pct if gross_m_pct is not None else 0.0,
             'net_margin':   round(net_m  * 100, 1) if net_m  else None,
-            'roe':          round(roe    * 100, 1) if roe    else None,
+            'roe':          round(roe    * 100, 1) if roe     else None,
             'revenue_cr':   round(revenue / 1e7, 0) if revenue else None,
-            'beta':         round(beta, 2)       if beta      else None,
+            'beta':         round(beta, 2)         if beta     else None,
             'de_ratio':     round(de_ratio / 100, 2) if de_ratio else None,
-            'curr_ratio':   round(curr_ratio, 2) if curr_ratio else None,
         }
     except Exception as e:
         log.warning(f'Screener {sym}: {e}')
@@ -542,7 +732,9 @@ RANGE_MAP = {
     '5d':  ('5d',  '60m'),
     '1mo': ('1mo', '1d'),
     '3mo': ('3mo', '1d'),
+    '6mo': ('6mo', '1d'),
     '1y':  ('1y',  '1wk'),
+    '2y':  ('2y',  '1wk'),
     '5y':  ('5y',  '1mo'),
 }
 
@@ -1433,29 +1625,40 @@ def rag_status():
 @app.route('/api/rag/train', methods=['POST'])
 def rag_train():
     """Bulk-ingest RAG data for given symbols (or user's watchlist).
-    Body: { "symbols": ["AAPL","RELIANCE.NS"] }  — omit to use watchlist.
+    Body: { "symbols": ["AAPL","RELIANCE.NS"], "all_universe": false }
+    Pass "all_universe": true to train on the full Nifty 100 universe (~2 min).
     """
     if not get_embed_model():
         return jsonify({'ok': False, 'error': 'Embedding model not available (install fastembed)'}), 503
 
-    body    = request.get_json(silent=True) or {}
-    symbols = body.get('symbols', [])
+    body         = request.get_json(silent=True) or {}
+    req_symbols  = body.get('symbols', [])
+    all_universe = bool(body.get('all_universe', False))
+
+    db      = get_db()
+    symbols = list(req_symbols)
 
     if not symbols:
         user_id = get_current_user_id()
-        db = get_db()
         if user_id:
             symbols = [r['symbol'] for r in db.execute(
                 'SELECT symbol FROM watchlist WHERE user_id=?', (user_id,)).fetchall()]
-        if not symbols:
-            return jsonify({'ok': False, 'error': 'No symbols provided and no watchlist found'}), 400
 
+    if all_universe:
+        # Merge watchlist + full Nifty 100 universe
+        symbols = list({*symbols, *INDIA_LARGE_CAP})
+    elif not symbols:
+        return jsonify({'ok': False, 'error': 'No symbols provided and no watchlist found'}), 400
+
+    # Normalise + deduplicate; cap at 150 to protect Render free tier
     symbols = list({s.upper() if not s.endswith('.NS') and not s.endswith('.BO') else s
-                    for s in symbols})[:20]  # cap at 20 to avoid abuse
+                    for s in symbols})[:150]
 
     def _run():
-        log.info(f'RAG training started for {len(symbols)} symbols: {symbols}')
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+        log.info(f'RAG training started for {len(symbols)} symbols')
+        # Use 2 workers for free tier; if universe is small use 3
+        workers = 2 if len(symbols) > 30 else 3
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
             futures = {ex.submit(_rag_ingest_symbol, sym): sym for sym in symbols}
             for fut in concurrent.futures.as_completed(futures):
                 sym = futures[fut]
@@ -1469,8 +1672,10 @@ def rag_train():
     return jsonify({
         'ok': True,
         'message': f'RAG ingestion started for {len(symbols)} symbols. '
-                   f'Check /api/rag/status in ~30s.',
+                   f'Downloading 2-year price history, quarterly earnings, and news. '
+                   f'Check /api/rag/status in ~60s.',
         'symbols': symbols,
+        'count': len(symbols),
     })
 
 @app.route('/api/rag/clear', methods=['POST'])
@@ -1642,7 +1847,7 @@ def db_status():
     try:
         from db import thread_connection
         with thread_connection() as conn:
-            row = conn.execute('SELECT 1 AS ok').fetchone()
+            conn.execute('SELECT 1 AS ok').fetchone()
         return jsonify({'ok': True, 'backend': 'postgresql' if USE_PG else 'sqlite',
                         'url_set': bool(DATABASE_URL)})
     except Exception as e:

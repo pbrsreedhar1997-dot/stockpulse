@@ -8,19 +8,29 @@
       </div>
     </div>
     <div class="chat-head-actions">
-      <!-- RAG Train button -->
+      <!-- Train watchlist -->
       <button
         class="rag-btn"
         [class.training]="ragTraining()"
         [disabled]="ragTraining()"
         (click)="trainRag()"
-        [title]="ragStatus() || 'Train AI on your watchlist data for better answers'"
+        [title]="ragStatus() || 'Train AI on your watchlist stocks (2-year history + earnings)'"
       >
         @if (ragTraining()) {
           <div class="send-spin"></div> Training…
         } @else {
-          🧠 Train AI
+          🧠 Train Watchlist
         }
+      </button>
+      <!-- Train full Nifty 100 universe -->
+      <button
+        class="rag-btn rag-btn-universe"
+        [class.training]="ragTraining()"
+        [disabled]="ragTraining()"
+        (click)="trainAllUniverse()"
+        title="Download 2-year data for all 100+ Nifty large-cap stocks (~2-3 min)"
+      >
+        🌐 Train All Stocks
       </button>
       <button class="chat-clear" (click)="clear()" title="Clear chat">🗑</button>
     </div>

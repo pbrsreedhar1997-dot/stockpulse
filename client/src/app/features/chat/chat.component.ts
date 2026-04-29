@@ -105,24 +105,37 @@ export class ChatComponent implements AfterViewChecked, OnInit {
   trainRag() {
     const symbols = this.wl.items().map(i => i.symbol);
     if (!symbols.length) { this.showRagMsg('Add stocks to your watchlist first', false); return; }
+    this._doTrain({ symbols }, `Indexing ${symbols.length} watchlist stocks with 2-year history…`, 45000);
+  }
+
+  trainAllUniverse() {
+    this._doTrain(
+      { all_universe: true },
+      'Downloading 2-year data for full Nifty 100 universe (~100 stocks). This takes 2–3 min…',
+      180000
+    );
+  }
+
+  private _doTrain(body: object, msg: string, waitMs: number) {
     this.ragTraining.set(true);
-    this.showRagMsg(`Indexing ${symbols.length} stocks… this takes ~30s`, true);
-    this.http.post<{ ok: boolean; message: string; error?: string }>(
+    this.showRagMsg(msg, true);
+    this.http.post<{ ok: boolean; message: string; count?: number; error?: string }>(
       `${this.api.base}/rag/train`,
-      { symbols },
+      body,
       { headers: new HttpHeaders({ 'Content-Type': 'application/json' }) }
     ).pipe(catchError(err => of({ ok: false, message: '', error: err?.error?.error || err?.message || 'Network error' })))
     .subscribe(r => {
       if (r?.ok) {
+        const n = (r as any).count || '';
+        this.showRagMsg(`⏳ Ingesting ${n} stocks — will update when ready…`, true);
         setTimeout(() => {
           this.fetchRagStatus();
           this.ragTraining.set(false);
-          this.showRagMsg('✅ Training complete — AI now has richer context for your stocks', true);
-        }, 35000);
+          this.showRagMsg('✅ RAG training complete — 2-year history + earnings indexed', true);
+        }, waitMs);
       } else {
         this.ragTraining.set(false);
-        const reason = r?.error || 'Unknown error — check backend logs';
-        this.showRagMsg(`Training failed: ${reason}`, false);
+        this.showRagMsg(`Training failed: ${r?.error || 'Unknown error'}`, false);
       }
     });
   }
