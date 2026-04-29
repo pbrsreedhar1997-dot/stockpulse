@@ -599,10 +599,12 @@ def store_embedding_vec(conn, symbol: str, content: str, vec: np.ndarray,
     conn.commit()
 
 
-def retrieve_top_chunks(symbols: list, query_vec: np.ndarray, top_k: int = 5) -> list:
+def retrieve_top_chunks(symbols: list, query_vec: np.ndarray, top_k: int = 5,
+                        conn=None) -> list:
     """
     Return top-k most similar embeddings for the given symbols.
     `query_vec` is a float32 numpy array of shape (384,).
+    Pass `conn` to reuse an existing connection (avoids acquiring a second pool slot).
 
     PG path: uses pgvector HNSW index (cosine distance <=>).
     SQLite path: numpy linear scan.
@@ -610,11 +612,11 @@ def retrieve_top_chunks(symbols: list, query_vec: np.ndarray, top_k: int = 5) ->
     if not symbols:
         return []
 
-    if USE_PG:
-        with thread_connection() as conn:
+    def _run(c):
+        if USE_PG:
             placeholders = ','.join(['%s'] * len(symbols))
             vec_str      = _vec_to_pg_str(query_vec)
-            rows = conn.execute(
+            rows = c.execute(
                 f"""
                 SELECT symbol, content, source, article_url, ts,
                        (1 - (vector <=> '{vec_str}'::vector)) AS score
@@ -625,28 +627,30 @@ def retrieve_top_chunks(symbols: list, query_vec: np.ndarray, top_k: int = 5) ->
                 """,
                 symbols + [top_k]
             ).fetchall()
-        return [dict(r) for r in rows]
-
-    else:
-        with thread_connection() as conn:
+            return [dict(r) for r in rows]
+        else:
             placeholders = ','.join('?' * len(symbols))
-            rows = conn.execute(
+            rows = c.execute(
                 f'SELECT symbol,content,vector,source,article_url,ts '
                 f'FROM embeddings WHERE symbol IN ({placeholders})',
                 symbols
             ).fetchall()
+            scored = []
+            for r in rows:
+                try:
+                    r = dict(r)
+                    vec   = np.frombuffer(r['vector'], dtype=np.float32)
+                    denom = np.linalg.norm(query_vec) * np.linalg.norm(vec)
+                    score = float(np.dot(query_vec, vec) / denom) if denom else 0.0
+                    r['score'] = score
+                    del r['vector']
+                    scored.append(r)
+                except Exception:
+                    continue
+            scored.sort(key=lambda x: x['score'], reverse=True)
+            return scored[:top_k]
 
-        scored = []
-        for r in rows:
-            try:
-                r = dict(r)
-                vec  = np.frombuffer(r['vector'], dtype=np.float32)
-                denom = np.linalg.norm(query_vec) * np.linalg.norm(vec)
-                score = float(np.dot(query_vec, vec) / denom) if denom else 0.0
-                r['score'] = score
-                del r['vector']  # don't ship raw bytes to callers
-                scored.append(r)
-            except Exception:
-                continue
-        scored.sort(key=lambda x: x['score'], reverse=True)
-        return scored[:top_k]
+    if conn is not None:
+        return _run(conn)
+    with thread_connection() as c:
+        return _run(c)

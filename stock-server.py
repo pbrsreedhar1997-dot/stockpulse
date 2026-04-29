@@ -1868,172 +1868,212 @@ def _compute_technicals(closes: list, current_price: float | None) -> dict:
 
     return result
 
-def _build_context(symbols, question):
-    """Build full analyst context: fundamentals + technicals + sentiment + RAG chunks."""
-    parts = []
+# ── Conversation classifier ───────────────────────────────────────────────────
+_STOCK_KEYWORDS = {
+    'stock','price','analysis','analyze','analyse','bullish','bearish','market',
+    'buy','sell','hold','revenue','earnings','eps','pe','p/e','p/b','portfolio',
+    'sector','technical','fundamental','rsi','macd','moving','average','dividend',
+    'valuation','forecast','target','outlook','watchlist','chart','trend','momentum',
+    'support','resistance','volume','breakout','rally','correction','crash','gain',
+    'loss','profit','margin','growth','quarterly','annual','invest','trade','short',
+    'long','cap','ipo','split','buyback','overvalued','undervalued','compare',
+    'risk','beta','volatility','hedge','rebalance','diversify','return',
+}
 
-    with thread_connection() as conn:
-        for sym in symbols[:6]:
-            q_row  = conn.execute('SELECT * FROM quotes     WHERE symbol=?', (sym,)).fetchone()
-            f_row  = conn.execute('SELECT * FROM financials WHERE symbol=?', (sym,)).fetchone()
-            p_row  = conn.execute('SELECT name,sector,industry,description FROM profiles WHERE symbol=?', (sym,)).fetchone()
-            n_rows = conn.execute(
-                'SELECT title,source,published,category,summary FROM news '
-                'WHERE symbol=? ORDER BY published DESC LIMIT 12', (sym,)).fetchall()
-            # Fetch up to 1-year of daily closes for technicals
-            h_rows = conn.execute(
-                'SELECT close FROM history WHERE symbol=? AND range_key=? '
-                'ORDER BY ts', (sym, '1y')).fetchall()
-            # Fall back to 3mo if 1y not available
-            if len(h_rows) < 10:
-                h_rows = conn.execute(
-                    'SELECT close FROM history WHERE symbol=? AND range_key=? '
-                    'ORDER BY ts', (sym, '3mo')).fetchall()
+def _is_conversational(question: str, symbols: list) -> bool:
+    """Return True if the message is chit-chat and NOT a stock analysis query."""
+    q_lower = question.lower()
+    # Any watchlist ticker mentioned → analysis
+    for sym in symbols:
+        base = sym.replace('.NS','').replace('.BO','').lower()
+        if base in q_lower or sym.lower() in q_lower:
+            return False
+    # Any financial keyword → analysis
+    words = set(q_lower.split())
+    if words & _STOCK_KEYWORDS:
+        return False
+    # Very short or greetings → conversational
+    return len(question.split()) <= 8
 
-            if not (q_row or f_row or n_rows):
-                continue
+# ── Context cache (5-minute TTL, keyed by frozenset of symbols) ───────────────
+_ctx_cache: dict = {}
+_ctx_cache_lock  = threading.Lock()
+_CTX_TTL         = 300  # seconds
 
-            cur       = (q_row['currency'] if q_row else None) or 'USD'
-            sym_label = (p_row['name'] if p_row else None) or sym
-            sector    = (p_row['sector'] if p_row else None) or ''
-            price     = q_row['price'] if q_row else None
+def _get_cached_context(key: frozenset) -> str | None:
+    with _ctx_cache_lock:
+        entry = _ctx_cache.get(key)
+        if entry and (now_ts() - entry[0]) < _CTX_TTL:
+            return entry[1]
+    return None
 
-            parts.append(f'### {sym} — {sym_label}')
-            if sector:
-                ind = (p_row['industry'] if p_row else '') or ''
-                parts.append(f'Sector: {sector}' + (f' | {ind}' if ind else ''))
+def _set_cached_context(key: frozenset, ctx: str):
+    with _ctx_cache_lock:
+        _ctx_cache[key] = (now_ts(), ctx)
+        # Evict stale entries if cache grows large
+        if len(_ctx_cache) > 50:
+            cutoff = now_ts() - _CTX_TTL
+            stale_keys = [k for k, v in _ctx_cache.items() if v[0] < cutoff]
+            for k in stale_keys:
+                del _ctx_cache[k]
 
-            # ── Data staleness warning ────────────────────────────────────────
-            if q_row and q_row.get('fetched_at'):
-                age_h = (now_ts() - q_row['fetched_at']) / 3600
-                if age_h > 24:
-                    parts.append(f'⚠️ Price data is {age_h:.0f}h old — may be stale')
+def _build_context(symbols, question, conn=None):
+    """Build analyst context: fundamentals + technicals + sentiment + RAG chunks.
 
-            # ── Price snapshot ────────────────────────────────────────────────
-            if q_row:
-                chg  = q_row['change_pct'] or 0
-                sign = '+' if chg >= 0 else ''
-                mktcap = _fmt_large(q_row['mkt_cap'], cur)
-                price_line = f'Price: {cur} {q_row["price"]} ({sign}{chg:.2f}% today)'
-                if mktcap: price_line += f' | Mkt Cap: {mktcap}'
-                if q_row['volume']: price_line += f' | Volume: {q_row["volume"]:,}'
-                parts.append(price_line)
+    Uses the passed `conn` (get_db()) to avoid opening an extra pool connection.
+    RAG retrieval reuses the same conn for pgvector query.
+    Caches the DB-derived portion for 5 min so repeated chat messages are fast.
+    """
+    if not symbols:
+        return ''
 
-            # ── Technical indicators ──────────────────────────────────────────
-            closes = [r['close'] for r in h_rows if r['close']]
-            tech   = _compute_technicals(closes, price)
-            if tech:
-                t_parts = []
-                if 'ma50' in tech:
-                    sign = '▲' if tech.get('vs_ma50', 0) >= 0 else '▼'
-                    t_parts.append(f'50-day MA: {tech["ma50"]} ({sign}{abs(tech["vs_ma50"]):.1f}%)')
-                if 'ma200' in tech:
-                    sign = '▲' if tech.get('vs_ma200', 0) >= 0 else '▼'
-                    t_parts.append(f'200-day MA: {tech["ma200"]} ({sign}{abs(tech["vs_ma200"]):.1f}%)')
-                if 'rsi14' in tech:
-                    rsi = tech['rsi14']
-                    rsi_label = 'Overbought' if rsi > 70 else ('Oversold' if rsi < 30 else 'Neutral')
-                    t_parts.append(f'RSI(14): {rsi} [{rsi_label}]')
-                mom_parts = []
-                for k, label in [('chg_1d','1d'),('chg_7d','7d'),('chg_1mo','30d'),('chg_1y','1y')]:
-                    if k in tech:
-                        sign = '+' if tech[k] >= 0 else ''
-                        mom_parts.append(f'{label}: {sign}{tech[k]}%')
-                if mom_parts:
-                    t_parts.append('Momentum: ' + ' · '.join(mom_parts))
-                # MA crossover signal
-                if 'ma50' in tech and 'ma200' in tech:
-                    signal = 'GOLDEN CROSS (bullish)' if tech['ma50'] > tech['ma200'] else 'DEATH CROSS (bearish)'
-                    t_parts.append(f'MA Signal: {signal}')
-                parts.append('Technicals: ' + ' | '.join(t_parts))
+    # ── Cached structural context (quotes/financials/news/technicals) ─────────
+    cache_key = frozenset(symbols[:6])
+    cached    = _get_cached_context(cache_key)
 
-            # ── Key metrics (fundamentals) ────────────────────────────────────
-            if f_row:
-                metrics = []
-                pe = f_row['pe_ratio']
-                if pe:
-                    label = _assess(pe, [(15,'Attractive'),(25,'Fair'),(999,'Expensive')])
-                    metrics.append(f'P/E {pe:.1f} [{label}]')
-                pb = f_row.get('pb_ratio')
-                if pb:
-                    label = _assess(pb, [(1,'Attractive'),(3,'Fair'),(999,'Expensive')])
-                    metrics.append(f'P/B {pb:.1f} [{label}]')
-                gm = f_row['gross_margin']
-                if gm:
-                    label = _assess(gm*100, [(20,'Weak'),(40,'Fair'),(999,'Strong')])
-                    metrics.append(f'Gross Margin {gm*100:.1f}% [{label}]')
-                nm = f_row.get('net_margin') or (
-                    (f_row['net_income_ttm'] / f_row['revenue_ttm'])
-                    if f_row['net_income_ttm'] and f_row['revenue_ttm'] else None)
-                if nm:
-                    label = _assess(nm*100, [(5,'Weak'),(10,'Fair'),(20,'Good'),(999,'Excellent')])
-                    metrics.append(f'Net Margin {nm*100:.1f}% [{label}]')
-                roe = f_row.get('roe')
-                if roe:
-                    label = _assess(roe*100, [(10,'Weak'),(15,'Fair'),(25,'Good'),(999,'Exceptional')])
-                    metrics.append(f'ROE {roe*100:.1f}% [{label}]')
-                eps = f_row['eps']
-                if eps: metrics.append(f'EPS {cur} {eps:.2f}')
-                rev = f_row['revenue_ttm']
-                rq  = f_row.get('revenue_q')
-                rq_prev = f_row.get('revenue_q_prev')
-                if rev: metrics.append(f'Revenue TTM {_fmt_large(rev, cur)}')
-                if rq and rq_prev and rq_prev:
-                    qoq = round((rq - rq_prev) / abs(rq_prev) * 100, 1)
-                    sign = '+' if qoq >= 0 else ''
-                    metrics.append(f'Revenue QoQ {sign}{qoq}%')
-                ni = f_row.get('net_income_ttm')
-                if ni: metrics.append(f'Net Income TTM {_fmt_large(ni, cur)}')
-                beta = f_row['beta']
-                if beta:
-                    label = _assess(abs(beta), [(0.8,'Defensive'),(1.2,'Moderate'),(1.5,'Volatile'),(999,'High Volatility')])
-                    metrics.append(f'Beta {beta:.2f} [{label}]')
-                w52h = f_row['week52_high']
-                w52l = f_row['week52_low']
-                if w52h and w52l:
-                    metrics.append(f'52W Range {w52l:.2f}–{w52h:.2f}')
-                    if price and w52h:
-                        pct_off = round((w52h - price) / w52h * 100, 1)
-                        near = ' ⚠️ Near 52W low' if price and w52l and (price - w52l) / w52l < 0.05 else ''
-                        near_high = ' ⚠️ Near 52W high' if pct_off < 5 else ''
-                        if near or near_high:
-                            metrics.append(f'{near}{near_high}'.strip())
-                dy = f_row['dividend_yield']
-                if dy: metrics.append(f'Div Yield {dy*100:.2f}%')
-                if metrics:
-                    parts.append('Fundamentals: ' + ' | '.join(metrics))
+    if not cached:
+        parts = []
+        # Use passed conn or fall back to thread_connection for background use
+        def _query(sql, params=()):
+            if conn:
+                return conn.execute(sql, params)
+            # Should not happen in normal request flow
+            raise RuntimeError('_build_context: no connection provided')
 
-            # ── News with sentiment score ─────────────────────────────────────
-            if n_rows:
-                n_dicts = [dict(r) for r in n_rows]
-                sent_score = _news_sentiment_score(n_dicts)
-                sent_label = 'Positive' if sent_score > 65 else ('Negative' if sent_score < 40 else 'Neutral')
-                parts.append(f'News Sentiment: {sent_score}/100 [{sent_label}]')
-                parts.append('Recent News:')
-                for n in n_dicts:
-                    age_d = (now_ts() - (n.get('published') or 0)) // 86400
-                    cat   = n.get('category') or 'gen'
-                    stale = ' ⚠️ stale' if age_d > 7 else ''
-                    tag   = {'contract':'[Contract]','results':'[Results]',
-                             'acq':'[M&A]','earn':'[Earnings]','part':'[Deal]'}.get(cat, '')
-                    parts.append(f'  {tag} [{n.get("source","")}] {n.get("title","")} ({age_d}d ago){stale}')
-            parts.append('')
+        try:
+            for sym in symbols[:6]:
+                # Single-pass: all needed rows per symbol
+                q_row = _query('SELECT * FROM quotes WHERE symbol=?', (sym,)).fetchone()
+                f_row = _query('SELECT * FROM financials WHERE symbol=?', (sym,)).fetchone()
+                p_row = _query(
+                    'SELECT name,sector,industry FROM profiles WHERE symbol=?', (sym,)
+                ).fetchone()
+                n_rows = _query(
+                    'SELECT title,source,published,category,summary FROM news '
+                    'WHERE symbol=? ORDER BY published DESC LIMIT 6', (sym,)
+                ).fetchall()
+                # Only fetch 3mo history (≤63 rows) — enough for 50-day MA + RSI
+                h_rows = _query(
+                    'SELECT close FROM history WHERE symbol=? AND range_key=? ORDER BY ts',
+                    (sym, '3mo')
+                ).fetchall()
 
-    # ── RAG: top semantically relevant chunks ─────────────────────────────────
-    chunks = retrieve_top_chunks(symbols, question, top_k=6)
-    if chunks:
-        parts.append('--- RETRIEVED CONTEXT (RAG) ---')
-        for i, c in enumerate(chunks, 1):
-            age  = f' ({(now_ts()-c["ts"])//86400}d ago)' if c.get('ts') else ''
-            score = f' [relevance: {c.get("score",0):.2f}]' if c.get('score') else ''
-            parts.append(f'[{i}] {c["symbol"]} | source: {c["source"]}{age}{score}')
-            parts.append(f'    {c["content"][:350]}')
-        parts.append('--- END RETRIEVED CONTEXT ---')
+                if not (q_row or f_row):
+                    continue
 
-    if not parts:
-        return 'No data loaded yet. Add stocks to your watchlist and wait for data to fetch.'
+                cur       = (q_row['currency'] if q_row else None) or 'USD'
+                sym_label = (p_row['name'] if p_row else None) or sym
+                sector    = (p_row['sector'] if p_row else None) or ''
+                price     = q_row['price'] if q_row else None
 
-    return '\n'.join(parts)
+                parts.append(f'### {sym} — {sym_label}')
+                if sector:
+                    parts.append(f'Sector: {sector}')
+
+                # Price snapshot
+                if q_row:
+                    chg  = q_row['change_pct'] or 0
+                    sign = '+' if chg >= 0 else ''
+                    mktcap = _fmt_large(q_row['mkt_cap'], cur)
+                    line   = f'Price: {cur} {q_row["price"]} ({sign}{chg:.2f}%)'
+                    if mktcap: line += f' | Mkt Cap: {mktcap}'
+                    parts.append(line)
+
+                # Technicals from 3mo history
+                closes = [r['close'] for r in h_rows if r['close']]
+                tech   = _compute_technicals(closes, price)
+                if tech:
+                    t = []
+                    if 'ma50'  in tech:
+                        s = '▲' if tech.get('vs_ma50',0) >= 0 else '▼'
+                        t.append(f'MA50: {tech["ma50"]} ({s}{abs(tech["vs_ma50"]):.1f}%)')
+                    if 'rsi14' in tech:
+                        rsi = tech['rsi14']
+                        t.append(f'RSI14: {rsi} [{"Overbought" if rsi>70 else "Oversold" if rsi<30 else "Neutral"}]')
+                    mom = []
+                    for k, lbl in [('chg_1d','1d'),('chg_7d','7d'),('chg_1mo','30d')]:
+                        if k in tech:
+                            s = '+' if tech[k] >= 0 else ''
+                            mom.append(f'{lbl}: {s}{tech[k]}%')
+                    if mom: t.append('Mom: ' + ' · '.join(mom))
+                    if 'ma50' in tech and 'ma200' in tech:
+                        t.append('GOLDEN CROSS' if tech['ma50'] > tech['ma200'] else 'DEATH CROSS')
+                    if t: parts.append('Technicals: ' + ' | '.join(t))
+
+                # Fundamentals
+                if f_row:
+                    m = []
+                    pe = f_row['pe_ratio']
+                    if pe:
+                        m.append(f'P/E {pe:.1f} [{_assess(pe,[(15,"Attractive"),(25,"Fair"),(999,"Expensive")])}]')
+                    gm = f_row['gross_margin']
+                    if gm:
+                        m.append(f'GM {gm*100:.1f}% [{_assess(gm*100,[(20,"Weak"),(40,"Fair"),(999,"Strong")])}]')
+                    nm = f_row.get('net_margin') or (
+                        (f_row['net_income_ttm']/f_row['revenue_ttm'])
+                        if f_row.get('net_income_ttm') and f_row.get('revenue_ttm') else None)
+                    if nm:
+                        m.append(f'NM {nm*100:.1f}% [{_assess(nm*100,[(5,"Weak"),(10,"Fair"),(20,"Good"),(999,"Excellent")])}]')
+                    eps = f_row['eps']
+                    if eps: m.append(f'EPS {cur}{eps:.2f}')
+                    rev = f_row['revenue_ttm']
+                    if rev: m.append(f'Rev {_fmt_large(rev,cur)}')
+                    rq, rqp = f_row.get('revenue_q'), f_row.get('revenue_q_prev')
+                    if rq and rqp:
+                        qoq = round((rq-rqp)/abs(rqp)*100,1)
+                        m.append(f'RevQoQ {"+" if qoq>=0 else ""}{qoq}%')
+                    beta = f_row['beta']
+                    if beta:
+                        m.append(f'Beta {beta:.2f}')
+                    w52h, w52l = f_row['week52_high'], f_row['week52_low']
+                    if w52h and w52l:
+                        m.append(f'52W {w52l:.1f}–{w52h:.1f}')
+                    dy = f_row['dividend_yield']
+                    if dy: m.append(f'Div {dy*100:.2f}%')
+                    if m: parts.append('Fundamentals: ' + ' | '.join(m))
+
+                # News + sentiment
+                if n_rows:
+                    n_dicts    = [dict(r) for r in n_rows]
+                    sent       = _news_sentiment_score(n_dicts)
+                    sent_label = 'Positive' if sent > 65 else ('Negative' if sent < 40 else 'Neutral')
+                    parts.append(f'Sentiment: {sent}/100 [{sent_label}]')
+                    for n in n_dicts[:5]:
+                        age_d = (now_ts() - (n.get('published') or 0)) // 86400
+                        cat   = n.get('category') or 'gen'
+                        tag   = {'earn':'[Earn]','acq':'[M&A]','results':'[Results]',
+                                 'part':'[Deal]'}.get(cat, '')
+                        parts.append(f'  {tag}[{n.get("source","")}] {n.get("title","")} ({age_d}d)')
+                parts.append('')
+
+        except Exception as e:
+            log.warning(f'_build_context DB error: {e}')
+
+        cached = '\n'.join(parts) if parts else ''
+        if cached:
+            _set_cached_context(cache_key, cached)
+
+    if not cached:
+        return 'No market data available yet. Add symbols to your watchlist to load data.'
+
+    # ── RAG: semantic chunks (reuse same conn) ────────────────────────────────
+    q_vec = _embed_vec(question)
+    if q_vec is not None and symbols:
+        try:
+            chunks = db_retrieve_top_chunks(symbols, q_vec, top_k=8, conn=conn)
+            scored = [c for c in chunks if c.get('score', 1.0) >= RAG_SCORE_THRESHOLD][:4]
+            if scored:
+                rag_parts = ['--- RAG CONTEXT ---']
+                for c in scored:
+                    age = f'({(now_ts()-c["ts"])//86400}d ago)' if c.get('ts') else ''
+                    rag_parts.append(f'[{c["symbol"]}|{c["source"]}|{age}] {c["content"][:280]}')
+                rag_parts.append('---')
+                cached = cached + '\n' + '\n'.join(rag_parts)
+        except Exception as e:
+            log.warning(f'RAG retrieval error: {e}')
+
+    return cached
+
 
 # ── AI Chat endpoint (streaming SSE) ─────────────────────────────────────────
 @app.route('/api/chat', methods=['POST'])
@@ -2045,26 +2085,42 @@ def api_chat():
     body         = request.get_json(silent=True) or {}
     question     = (body.get('question') or '').strip()
     symbols      = body.get('symbols', [])
-    chat_history = body.get('chat_history', [])
+    chat_history = body.get('history') or body.get('chat_history', [])
 
     if not question:
         return jsonify({'ok': False, 'error': 'question required'}), 400
 
+    # ── Resolve symbols from watchlist if not provided ────────────────────────
+    db = get_db()
     if not symbols:
         user_id = get_current_user_id()
-        db = get_db()
         if user_id:
             symbols = [r['symbol'] for r in db.execute(
                 'SELECT symbol FROM watchlist WHERE user_id=?', (user_id,)).fetchall()]
 
-    context_block = _build_context(symbols, question)
+    # ── Conversational fast path — skip expensive context building ────────────
+    conversational = _is_conversational(question, symbols)
 
-    messages = [
+    if conversational:
+        context_block = ''
+        max_tok = 512
+    else:
+        context_block = _build_context(symbols, question, conn=db)
+        max_tok = 1500
+
+    # ── Build message list ────────────────────────────────────────────────────
+    history_msgs = [
         {'role': t['role'], 'content': t['content']}
-        for t in chat_history[-10:]
+        for t in (chat_history or [])[-6:]
         if t.get('role') in ('user', 'assistant') and t.get('content')
     ]
-    messages.append({'role': 'user', 'content': f"{context_block}\n\nQuestion: {question}"})
+
+    if context_block:
+        user_content = f"MARKET DATA:\n{context_block}\n\nQuestion: {question}"
+    else:
+        user_content = question
+
+    messages = history_msgs + [{'role': 'user', 'content': user_content}]
 
     def generate_groq():
         try:
@@ -2072,14 +2128,20 @@ def api_chat():
             stream = client.chat.completions.create(
                 model=GROQ_MODEL,
                 messages=[{'role': 'system', 'content': SYSTEM_PROMPT}] + messages,
-                max_tokens=2048,
+                max_tokens=max_tok,
+                temperature=0.4,
                 stream=True,
+                timeout=60,
             )
             for chunk in stream:
                 delta = chunk.choices[0].delta.content or ''
                 if delta:
                     yield f"data: {json.dumps({'type': 'delta', 'text': delta})}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except groq_sdk.RateLimitError:
+            yield f"data: {json.dumps({'type':'error','message':'Groq rate limit reached — wait a moment and retry.'})}\n\n"
+        except groq_sdk.APITimeoutError:
+            yield f"data: {json.dumps({'type':'error','message':'Groq timed out — retry in a moment.'})}\n\n"
         except Exception as e:
             log.warning(f'Groq stream error: {e}')
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
@@ -2088,7 +2150,7 @@ def api_chat():
         try:
             client = anthropic.Anthropic(api_key=api_key)
             with client.messages.stream(
-                model='claude-haiku-4-5-20251001', max_tokens=2048,
+                model='claude-haiku-4-5-20251001', max_tokens=max_tok,
                 system=SYSTEM_PROMPT, messages=messages,
             ) as stream:
                 for text in stream.text_stream:
