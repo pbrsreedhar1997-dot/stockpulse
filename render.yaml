@@ -13,6 +13,8 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+      - key: FINNHUB_API_KEY
+        sync: false
       - key: ALPHA_VANTAGE_KEY
         sync: false
       - key: TWELVE_DATA_KEY
