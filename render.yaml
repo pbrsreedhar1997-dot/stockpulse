@@ -19,3 +19,9 @@ services:
         sync: false
       - key: TWELVE_DATA_KEY
         sync: false
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_CONTACT
+        sync: false

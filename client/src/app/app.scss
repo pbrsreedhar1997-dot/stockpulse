@@ -75,6 +75,11 @@ button, a { transition: background-color .15s, color .15s, border-color .15s, op
   &:hover { background: var(--hover); }
 }
 
+.push-btn {
+  &.push-on  { border-color: rgba(245,158,11,.5); color: #f59e0b; background: rgba(245,158,11,.08); }
+  &.push-denied { opacity: .5; cursor: not-allowed; }
+}
+
 .signin-btn {
   padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--card);
   color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer;

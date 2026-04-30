@@ -12,6 +12,7 @@ import { AuthService } from './core/services/auth.service';
 import { ApiService } from './core/services/api.service';
 import { AlertService } from './core/services/alert.service';
 import { ToastService } from './core/services/toast.service';
+import { PushNotificationService } from './core/services/push-notification.service';
 
 type View = 'stocks' | 'chat' | 'screener';
 
@@ -29,6 +30,7 @@ export class App implements OnInit, OnDestroy {
   private api      = inject(ApiService);
   private alertSvc = inject(AlertService);
   private toast    = inject(ToastService);
+  protected push   = inject(PushNotificationService);
 
   view        = signal<View>('stocks');
   selectedSym = signal('');
@@ -55,6 +57,7 @@ export class App implements OnInit, OnDestroy {
           this.auth.setUser(r.user);
           this.syncWatchlist();
           this.alertSvc.fetchFromServer().subscribe();
+          this.push.enableAfterLogin();
         } else { this.auth.logout(); }
       });
     }
@@ -112,6 +115,7 @@ export class App implements OnInit, OnDestroy {
   onAuthSuccess() {
     this.syncWatchlist();
     this.alertSvc.fetchFromServer().subscribe();
+    this.push.enableAfterLogin();
   }
 
   selectStock(sym: string) {
@@ -134,6 +138,22 @@ export class App implements OnInit, OnDestroy {
 
   private applyTheme(t: 'dark' | 'light') {
     document.documentElement.setAttribute('data-theme', t);
+  }
+
+  togglePush() {
+    if (this.push.subscribed()) {
+      this.push.disable().then(() =>
+        this.toast.show('🔕 Notifications disabled', 'info', undefined, 3000)
+      );
+    } else if (this.push.status() === 'denied') {
+      this.toast.show('Notifications blocked', 'warning', 'Allow them in your browser settings, then refresh.', 6000);
+    } else {
+      this.push.enableAfterLogin().then(() => {
+        if (this.push.subscribed()) {
+          this.toast.show('🔔 Notifications enabled!', 'success', 'You\'ll get alerts on this device.', 4000);
+        }
+      });
+    }
   }
 
   logout() {

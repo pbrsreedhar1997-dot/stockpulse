@@ -372,6 +372,16 @@ CREATE TABLE IF NOT EXISTS price_alerts (
     created_at  INTEGER DEFAULT (strftime('%s','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_user ON price_alerts(user_id, triggered);
+
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    endpoint    TEXT NOT NULL UNIQUE,
+    p256dh      TEXT NOT NULL,
+    auth        TEXT NOT NULL,
+    created_at  INTEGER DEFAULT (strftime('%s','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id);
 """
 
 _PG_SCHEMA = """
@@ -513,6 +523,16 @@ CREATE TABLE IF NOT EXISTS price_alerts (
     created_at   INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_user ON price_alerts(user_id, triggered);
+
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id          SERIAL PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    endpoint    TEXT NOT NULL UNIQUE,
+    p256dh      TEXT NOT NULL,
+    auth        TEXT NOT NULL,
+    created_at  INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id);
 """
 
 

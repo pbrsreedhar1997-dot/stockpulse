@@ -2018,6 +2018,99 @@ def screener_refresh():
         threading.Thread(target=_run_screener_bg, daemon=True).start()
     return jsonify({'ok': True, 'message': 'Screener re-running in background — check back in ~60 s'})
 
+# ── Web Push helpers ──────────────────────────────────────────────────────────
+
+VAPID_PUBLIC_KEY  = os.environ.get('VAPID_PUBLIC_KEY', '')
+VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY', '')
+VAPID_CONTACT     = os.environ.get('VAPID_CONTACT', 'mailto:admin@stockpulse.app')
+
+
+def _send_push_to_user(user_id: int, title: str, body: str, url: str = '/'):
+    """Send Web Push notification to all registered devices for a user.
+    Runs silently — failed/expired subscriptions are cleaned up automatically.
+    """
+    if not VAPID_PRIVATE_KEY or not VAPID_PUBLIC_KEY:
+        return
+    try:
+        from pywebpush import webpush, WebPushException
+        with thread_connection() as conn:
+            rows = conn.execute(
+                'SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id=?',
+                (user_id,)
+            ).fetchall()
+        for row in rows:
+            try:
+                webpush(
+                    subscription_info={
+                        'endpoint': row['endpoint'],
+                        'keys': {'p256dh': row['p256dh'], 'auth': row['auth']},
+                    },
+                    data=json.dumps({'title': title, 'body': body, 'url': url}),
+                    vapid_private_key=VAPID_PRIVATE_KEY,
+                    vapid_claims={'sub': VAPID_CONTACT},
+                )
+            except Exception as exc:
+                msg = str(exc)
+                # 410 Gone / 404 = subscription expired — delete it
+                if '410' in msg or '404' in msg or 'Gone' in msg:
+                    with thread_connection() as conn2:
+                        conn2.execute('DELETE FROM push_subscriptions WHERE id=?', (row['id'],))
+                        conn2.commit()
+                else:
+                    log.debug(f'push send failed uid={user_id}: {exc}')
+    except Exception as e:
+        log.debug(f'_send_push_to_user({user_id}): {e}')
+
+
+# ── Web Push endpoints ─────────────────────────────────────────────────────────
+
+@app.route('/api/push/vapid-key')
+def push_vapid_key():
+    """Return the VAPID public key so the frontend can subscribe."""
+    if not VAPID_PUBLIC_KEY:
+        return jsonify({'ok': False, 'error': 'Push not configured'}), 503
+    return jsonify({'ok': True, 'public_key': VAPID_PUBLIC_KEY})
+
+
+@app.route('/api/push/subscribe', methods=['POST'])
+def push_subscribe():
+    """Save a Web Push subscription for the authenticated user."""
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'ok': False, 'error': 'auth required'}), 401
+    body     = request.get_json(silent=True) or {}
+    endpoint = body.get('endpoint', '').strip()
+    keys     = body.get('keys', {})
+    p256dh   = keys.get('p256dh', '').strip()
+    auth     = keys.get('auth', '').strip()
+    if not endpoint or not p256dh or not auth:
+        return jsonify({'ok': False, 'error': 'endpoint and keys required'}), 400
+    db = get_db()
+    db.execute(
+        '''INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT (endpoint) DO UPDATE SET user_id=excluded.user_id,
+               p256dh=excluded.p256dh, auth=excluded.auth''',
+        (user_id, endpoint, p256dh, auth)
+    )
+    db.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/push/unsubscribe', methods=['POST'])
+def push_unsubscribe():
+    """Remove a push subscription (user opts out or browser unsubscribes)."""
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'ok': False}), 401
+    body     = request.get_json(silent=True) or {}
+    endpoint = body.get('endpoint', '').strip()
+    db = get_db()
+    db.execute('DELETE FROM push_subscriptions WHERE user_id=? AND endpoint=?', (user_id, endpoint))
+    db.commit()
+    return jsonify({'ok': True})
+
+
 # ── Price Alert endpoints ─────────────────────────────────────────────────────
 
 @app.route('/api/alerts', methods=['GET'])
@@ -2119,6 +2212,19 @@ def check_alerts():
             })
     if newly_triggered:
         db.commit()
+        # Fire push notifications in background — don't block the response
+        sym_labels = ', '.join(
+            f'{a["symbol"].replace(".NS","").replace(".BO","")} '
+            f'{"≥" if a["condition"]=="above" else "≤"} ₹{a["target_price"]}'
+            for a in newly_triggered
+        )
+        title = f'🔔 StockPulse Alert Triggered'
+        body  = sym_labels[:200]
+        threading.Thread(
+            target=_send_push_to_user,
+            args=(user_id, title, body, '/'),
+            daemon=True
+        ).start()
     return jsonify({'ok': True, 'triggered': newly_triggered})
 
 
