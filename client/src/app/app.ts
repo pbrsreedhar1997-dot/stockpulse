@@ -5,25 +5,30 @@ import { StockDetailComponent } from './features/stock-detail/stock-detail.compo
 import { ChatComponent } from './features/chat/chat.component';
 import { ScreenerComponent } from './features/screener/screener.component';
 import { AuthModalComponent } from './features/auth/auth-modal.component';
+import { ToastComponent } from './shared/components/toast/toast.component';
 import { WatchlistService } from './core/services/watchlist.service';
 import { StockService } from './core/services/stock.service';
 import { AuthService } from './core/services/auth.service';
 import { ApiService } from './core/services/api.service';
+import { AlertService } from './core/services/alert.service';
+import { ToastService } from './core/services/toast.service';
 
 type View = 'stocks' | 'chat' | 'screener';
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule, SidebarComponent, StockDetailComponent, ChatComponent, ScreenerComponent, AuthModalComponent],
+  imports: [CommonModule, SidebarComponent, StockDetailComponent, ChatComponent, ScreenerComponent, AuthModalComponent, ToastComponent],
   templateUrl: './app.html',
   styleUrl: './app.scss'
 })
 export class App implements OnInit, OnDestroy {
-  private wl     = inject(WatchlistService);
-  private stocks = inject(StockService);
-  protected auth = inject(AuthService);
-  private api    = inject(ApiService);
+  private wl       = inject(WatchlistService);
+  private stocks   = inject(StockService);
+  protected auth   = inject(AuthService);
+  private api      = inject(ApiService);
+  private alertSvc = inject(AlertService);
+  private toast    = inject(ToastService);
 
   view        = signal<View>('stocks');
   selectedSym = signal('');
@@ -46,8 +51,11 @@ export class App implements OnInit, OnDestroy {
 
     if (this.auth.token()) {
       this.api.getRaw<{ ok: boolean; user: any }>('/auth/me').subscribe(r => {
-        if (r?.ok) { this.auth.setUser(r.user); this.syncWatchlist(); }
-        else this.auth.logout();
+        if (r?.ok) {
+          this.auth.setUser(r.user);
+          this.syncWatchlist();
+          this.alertSvc.fetchFromServer().subscribe();
+        } else { this.auth.logout(); }
       });
     }
 
@@ -70,7 +78,25 @@ export class App implements OnInit, OnDestroy {
   refreshQuotes() {
     const syms = this.wl.items().map(i => i.symbol);
     if (!syms.length) return;
-    this.stocks.getBatchQuotes(syms).subscribe();
+    this.stocks.getBatchQuotes(syms).subscribe(quotes => {
+      if (!quotes) return;
+      // Build { symbol → price } map and check alerts
+      const priceMap: Record<string, number> = {};
+      for (const [sym, q] of Object.entries(quotes as Record<string, any>)) {
+        if (q?.price) priceMap[sym] = q.price;
+      }
+      const fired = this.alertSvc.checkTriggered(priceMap);
+      fired.forEach(a => {
+        const sym  = a.symbol.replace('.NS','').replace('.BO','');
+        const dir  = a.condition === 'above' ? '↑ Above' : '↓ Below';
+        this.toast.show(
+          `🔔 Alert: ${sym} ${dir} ₹${a.target_price}`,
+          'warning',
+          `Current price: ₹${a.current_price.toFixed(2)}`,
+          8000
+        );
+      });
+    });
   }
 
   syncWatchlist() {
@@ -83,7 +109,10 @@ export class App implements OnInit, OnDestroy {
     });
   }
 
-  onAuthSuccess() { this.syncWatchlist(); }
+  onAuthSuccess() {
+    this.syncWatchlist();
+    this.alertSvc.fetchFromServer().subscribe();
+  }
 
   selectStock(sym: string) {
     this.selectedSym.set(sym);

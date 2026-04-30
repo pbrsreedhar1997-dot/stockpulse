@@ -3,6 +3,8 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { WatchlistService } from '../../core/services/watchlist.service';
 import { StockService } from '../../core/services/stock.service';
+import { AlertService, PriceAlert } from '../../core/services/alert.service';
+import { AuthService } from '../../core/services/auth.service';
 import { Quote, WatchlistItem, SearchResult } from '../../core/models/stock.model';
 import { Subject } from 'rxjs';
 import { takeUntil, debounceTime, distinctUntilChanged, switchMap } from 'rxjs/operators';
@@ -15,8 +17,10 @@ import { takeUntil, debounceTime, distinctUntilChanged, switchMap } from 'rxjs/o
   styleUrl: './sidebar.component.scss'
 })
 export class SidebarComponent implements OnInit, OnDestroy {
-  wl     = inject(WatchlistService);
-  stocks = inject(StockService);
+  wl        = inject(WatchlistService);
+  stocks    = inject(StockService);
+  alertSvc  = inject(AlertService);
+  auth      = inject(AuthService);
 
   selected   = input<string>('');
   selectSym  = output<string>();
@@ -26,6 +30,11 @@ export class SidebarComponent implements OnInit, OnDestroy {
   searchResults = signal<SearchResult[]>([]);
   searching     = signal(false);
   showSearch    = signal(false);
+
+  // Alert panel state
+  alertTarget   = signal<string | null>(null);   // symbol whose alert panel is open
+  alertPrice    = signal('');
+  alertCond     = signal<'above' | 'below'>('above');
 
   private destroy$ = new Subject<void>();
   private search$  = new Subject<string>();
@@ -81,4 +90,46 @@ export class SidebarComponent implements OnInit, OnDestroy {
   }
 
   isUp(q: Quote | undefined): boolean { return (q?.change_pct ?? 0) >= 0; }
+
+  // ── Alert helpers ────────────────────────────────────────────────────────
+  toggleAlertPanel(sym: string, e: Event) {
+    e.stopPropagation();
+    if (this.alertTarget() === sym) {
+      this.alertTarget.set(null);
+    } else {
+      this.alertTarget.set(sym);
+      const q = this.getQuote(sym);
+      this.alertPrice.set(q?.price ? q.price.toFixed(2) : '');
+      this.alertCond.set('above');
+    }
+  }
+
+  saveAlert(sym: string, e: Event) {
+    e.stopPropagation();
+    const price = parseFloat(this.alertPrice());
+    if (!price || isNaN(price)) return;
+    const item = this.wl.items().find(i => i.symbol === sym);
+    this.alertSvc.add({
+      symbol:       sym,
+      name:         item?.name || sym,
+      condition:    this.alertCond(),
+      target_price: price,
+    }, !!this.auth.token()).subscribe();
+    this.alertTarget.set(null);
+  }
+
+  removeAlert(id: number, e: Event) {
+    e.stopPropagation();
+    this.alertSvc.remove(id, !!this.auth.token()).subscribe();
+  }
+
+  alertsFor(sym: string): PriceAlert[] {
+    return this.alertSvc.alertsForSymbol(sym);
+  }
+
+  hasAlert(sym: string): boolean {
+    return this.alertsFor(sym).length > 0;
+  }
+
+  condLabel(c: 'above' | 'below'): string { return c === 'above' ? '≥' : '≤'; }
 }

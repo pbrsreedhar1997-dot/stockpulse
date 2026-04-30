@@ -1,8 +1,8 @@
-.chart-wrap { display: flex; flex-direction: column; gap: 8px; }
+.chart-wrap { display: flex; flex-direction: column; gap: 6px; }
 
 // Stats bar
 .chart-stats {
-  display: flex; align-items: baseline; gap: 10px; padding: 4px 0;
+  display: flex; align-items: baseline; gap: 10px; padding: 2px 0;
   &.pos { .stat-change, .stat-pct { color: var(--green); } }
   &.neg { .stat-change, .stat-pct { color: var(--red); } }
 }
@@ -15,32 +15,41 @@
   background: var(--hover); padding: 2px 8px; border-radius: 20px;
 }
 
-// Range buttons
+// Range pill buttons
 .chart-ranges {
-  display: flex; gap: 3px;
+  display: flex; gap: 2px;
   background: var(--hover); border-radius: 8px; padding: 3px;
 }
 .rng-btn {
-  flex: 1; padding: 5px 0; border-radius: 6px; border: none; background: transparent;
-  color: var(--text3); font-size: 11px; font-weight: 600; cursor: pointer;
-  transition: all .15s; letter-spacing: .02em;
-  &:hover:not(.active) { color: var(--text); background: rgba(255,255,255,.05); }
-  &.active {
-    background: var(--card); color: var(--text);
-    box-shadow: 0 1px 4px rgba(0,0,0,.25);
-  }
+  flex: 1; padding: 5px 0; border-radius: 5px; border: none; background: transparent;
+  color: var(--text3); font-size: 11px; font-weight: 600; cursor: pointer; transition: all .12s;
+  &:hover:not(.active) { color: var(--text); background: rgba(255,255,255,.04); }
+  &.active { background: var(--card); color: var(--text); box-shadow: 0 1px 4px rgba(0,0,0,.22); }
 }
 
-// Chart canvas area
+// Indicator toggles
+.chart-indicators {
+  display: flex; gap: 4px;
+}
+.ind-btn {
+  padding: 3px 10px; border-radius: 20px; font-size: 10px; font-weight: 600;
+  border: 1px solid var(--border); background: transparent; color: var(--text3);
+  cursor: pointer; transition: all .12s;
+  &:hover { color: var(--text); border-color: var(--text3); }
+  &.on { background: var(--hover); color: var(--text); border-color: var(--accent); }
+}
+
+// Chart area — height expands when volume is shown
 .chart-area {
-  position: relative; height: 240px;
-  canvas { width: 100% !important; }
+  position: relative; height: 230px;
+  &.with-vol { height: 260px; }
+  canvas { width: 100% !important; height: 100% !important; }
 }
 
 .chart-overlay {
   position: absolute; inset: 0;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 10px; background: rgba(0,0,0,.15); border-radius: 8px; z-index: 2;
+  gap: 8px; background: rgba(0,0,0,.12); border-radius: 8px; z-index: 2;
 }
 .loading-text { font-size: 11px; color: var(--text3); font-weight: 500; }
 
@@ -48,7 +57,7 @@
   position: absolute; inset: 0;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 8px; color: var(--text3); font-size: 12px;
-  .empty-icon { font-size: 28px; opacity: .5; }
+  .empty-icon { font-size: 28px; opacity: .4; }
 }
 
 .spin {
@@ -59,15 +68,16 @@
 
 // OHLV meta bar
 .chart-meta {
-  display: flex; gap: 16px; padding: 6px 2px;
+  display: flex; gap: 12px; flex-wrap: wrap; padding: 6px 2px;
   border-top: 1px solid var(--border);
 }
 .meta-item {
-  display: flex; align-items: center; gap: 5px;
-  font-size: 11px; color: var(--text2);
+  display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text2);
+  &.meta-chg { margin-left: auto; }
+  &.pos { color: var(--green); }
+  &.neg { color: var(--red); }
 }
 .meta-lbl {
-  font-size: 9px; font-weight: 700; color: var(--text3);
-  text-transform: uppercase; letter-spacing: .05em;
-  background: var(--hover); padding: 1px 5px; border-radius: 4px;
+  font-size: 9px; font-weight: 700; color: var(--text3); text-transform: uppercase;
+  letter-spacing: .05em; background: var(--hover); padding: 1px 5px; border-radius: 4px;
 }

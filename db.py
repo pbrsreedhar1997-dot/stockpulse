@@ -359,6 +359,19 @@ CREATE TABLE IF NOT EXISTS embeddings (
     ts          INTEGER DEFAULT (strftime('%s','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_embed_symbol ON embeddings(symbol, ts DESC);
+
+CREATE TABLE IF NOT EXISTS price_alerts (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    symbol      TEXT NOT NULL,
+    name        TEXT,
+    condition   TEXT NOT NULL CHECK(condition IN ('above','below')),
+    target_price REAL NOT NULL,
+    triggered   INTEGER DEFAULT 0,
+    triggered_at INTEGER,
+    created_at  INTEGER DEFAULT (strftime('%s','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_user ON price_alerts(user_id, triggered);
 """
 
 _PG_SCHEMA = """
@@ -487,6 +500,19 @@ CREATE TABLE IF NOT EXISTS embeddings (
 );
 CREATE INDEX IF NOT EXISTS idx_embed_symbol ON embeddings(symbol, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_embed_hnsw   ON embeddings USING hnsw (vector vector_cosine_ops);
+
+CREATE TABLE IF NOT EXISTS price_alerts (
+    id           SERIAL PRIMARY KEY,
+    user_id      INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    symbol       TEXT NOT NULL,
+    name         TEXT,
+    condition    TEXT NOT NULL CHECK(condition IN ('above','below')),
+    target_price REAL NOT NULL,
+    triggered    INTEGER DEFAULT 0,
+    triggered_at INTEGER,
+    created_at   INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_user ON price_alerts(user_id, triggered);
 """
 
 

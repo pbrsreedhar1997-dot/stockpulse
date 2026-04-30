@@ -626,6 +626,30 @@ INDIA_LARGE_CAP = [
     'IRFC.NS','JUBLFOOD.NS','LICHSGFIN.NS','MAXHEALTH.NS','NAUKRI.NS',
     'PFC.NS','PIIND.NS','PRESTIGE.NS','SUNTV.NS','TORNTPOWER.NS',
     'VOLTAS.NS','MCDOWELL-N.NS','OBEROIRLTY.NS','ATGL.NS','CGPOWER.NS',
+    # ── Energy & Power sector ────────────────────────────────────────────────
+    'ADANIPOWER.NS',    # Adani Power — thermal generation
+    'CESC.NS',          # CESC — integrated power utility
+    'SJVN.NS',          # SJVN — hydro + renewable PSU
+    'IREDA.NS',         # India Renewable Energy Dev Agency — green infra
+    'IGL.NS',           # Indraprastha Gas — CNG/PNG city gas
+    'MGL.NS',           # Mahanagar Gas — Mumbai CNG
+    'GUJGASLTD.NS',     # Gujarat Gas — largest city gas distributor
+    'SUZLON.NS',        # Suzlon Energy — wind turbines
+    'HINDPETRO.NS',     # HPCL — downstream oil & gas
+    'MRPL.NS',          # Mangalore Refinery — refining + petrochem
+    'PETRONET.NS',      # Petronet LNG — LNG import terminal (already Nifty Next 50 but ensure)
+    'GSPL.NS',          # Gujarat State Petronet — gas transmission
+    # ── High-demand / new-age popular stocks ────────────────────────────────
+    'PAYTM.NS',         # Paytm (One97) — fintech payments
+    'POLICYBZR.NS',     # PB Fintech — insurtech aggregator
+    'DELHIVERY.NS',     # Delhivery — logistics / ecommerce delivery
+    'SWIGGY.NS',        # Swiggy — food delivery (recently listed)
+    'RVNL.NS',          # Rail Vikas Nigam — railway infra high-demand
+    'DIXON.NS',         # Dixon Technologies — electronics EMS
+    'MANKIND.NS',       # Mankind Pharma — fast-growing pharma
+    'JYOTHYLAB.NS',     # Jyothy Labs — FMCG (high buzz)
+    'KAYNES.NS',        # Kaynes Technology — electronics EMS
+    'TIINDIA.NS',       # Tube Investments — auto + fin services
 ]
 
 SCREENER_TTL = 6 * 3600  # 6-hour cache
@@ -1994,6 +2018,110 @@ def screener_refresh():
         threading.Thread(target=_run_screener_bg, daemon=True).start()
     return jsonify({'ok': True, 'message': 'Screener re-running in background — check back in ~60 s'})
 
+# ── Price Alert endpoints ─────────────────────────────────────────────────────
+
+@app.route('/api/alerts', methods=['GET'])
+def get_alerts():
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'ok': False, 'error': 'auth required'}), 401
+    db = get_db()
+    rows = db.execute(
+        'SELECT id,symbol,name,condition,target_price,triggered,triggered_at,created_at '
+        'FROM price_alerts WHERE user_id=? ORDER BY created_at DESC',
+        (user_id,)
+    ).fetchall()
+    return jsonify({'ok': True, 'alerts': [dict(r) for r in rows]})
+
+
+@app.route('/api/alerts', methods=['POST'])
+def create_alert():
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'ok': False, 'error': 'auth required'}), 401
+    body         = request.get_json(silent=True) or {}
+    symbol       = (body.get('symbol') or '').strip().upper()
+    name         = (body.get('name') or symbol).strip()
+    condition    = body.get('condition', '').lower()
+    target_price = body.get('target_price')
+    if not symbol or condition not in ('above', 'below') or not target_price:
+        return jsonify({'ok': False, 'error': 'symbol, condition (above|below), target_price required'}), 400
+    try:
+        target_price = float(target_price)
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'target_price must be a number'}), 400
+    db = get_db()
+    cur = db.execute(
+        'INSERT INTO price_alerts (user_id,symbol,name,condition,target_price) VALUES (?,?,?,?,?)',
+        (user_id, symbol, name, condition, target_price)
+    )
+    db.commit()
+    return jsonify({'ok': True, 'id': cur.lastrowid})
+
+
+@app.route('/api/alerts/<int:alert_id>', methods=['DELETE'])
+def delete_alert(alert_id):
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'ok': False, 'error': 'auth required'}), 401
+    db = get_db()
+    db.execute('DELETE FROM price_alerts WHERE id=? AND user_id=?', (alert_id, user_id))
+    db.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/alerts/check', methods=['POST'])
+def check_alerts():
+    """Batch-check which alerts are newly triggered. Frontend calls this after each quote refresh.
+    Body: { quotes: { SYMBOL: price, ... } }
+    Returns list of newly triggered alerts.
+    """
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'ok': True, 'triggered': []})
+    body   = request.get_json(silent=True) or {}
+    quotes = body.get('quotes', {})   # { symbol: current_price }
+    if not quotes:
+        return jsonify({'ok': True, 'triggered': []})
+
+    db = get_db()
+    pending = db.execute(
+        'SELECT id,symbol,name,condition,target_price FROM price_alerts '
+        'WHERE user_id=? AND triggered=0',
+        (user_id,)
+    ).fetchall()
+
+    newly_triggered = []
+    ts = now_ts()
+    for row in pending:
+        sym   = row['symbol']
+        price = quotes.get(sym)
+        if price is None:
+            continue
+        try:
+            price = float(price)
+        except (TypeError, ValueError):
+            continue
+        hit = (row['condition'] == 'above' and price >= row['target_price']) or \
+              (row['condition'] == 'below' and price <= row['target_price'])
+        if hit:
+            db.execute(
+                'UPDATE price_alerts SET triggered=1, triggered_at=? WHERE id=?',
+                (ts, row['id'])
+            )
+            newly_triggered.append({
+                'id':           row['id'],
+                'symbol':       sym,
+                'name':         row['name'],
+                'condition':    row['condition'],
+                'target_price': row['target_price'],
+                'current_price': price,
+            })
+    if newly_triggered:
+        db.commit()
+    return jsonify({'ok': True, 'triggered': newly_triggered})
+
+
 # ── RAG management endpoints ──────────────────────────────────────────────────
 
 @app.route('/api/rag/status')
@@ -2660,17 +2788,38 @@ def _build_context(symbols, question, conn=None):
     if not cached:
         return 'No market data available yet. Add symbols to your watchlist to load data.'
 
+    # ── Live watchlist snapshot (real-time prices from quotes table) ──────────
+    if conn and symbols:
+        try:
+            snap_rows = []
+            for sym in symbols[:10]:
+                q = row_to_dict(conn.execute('SELECT * FROM quotes WHERE symbol=?', (sym,)).fetchone())
+                if q and q.get('price'):
+                    cur   = q.get('currency') or 'INR'
+                    sym_c = cur == 'INR' and '₹' or '$'
+                    chg   = q.get('change_pct') or 0
+                    sign  = '+' if chg >= 0 else ''
+                    age_m = (now_ts() - (q.get('fetched_at') or now_ts())) // 60
+                    snap_rows.append(
+                        f'{sym}: {sym_c}{q["price"]} ({sign}{chg:.2f}%) '
+                        f'[fetched {age_m}m ago]'
+                    )
+            if snap_rows:
+                cached = '## LIVE WATCHLIST QUOTES\n' + '\n'.join(snap_rows) + '\n\n' + cached
+        except Exception as e:
+            log.debug(f'live snapshot error: {e}')
+
     # ── RAG: semantic chunks (reuse same conn) ────────────────────────────────
     q_vec = _embed_vec(question)
     if q_vec is not None and symbols:
         try:
             chunks = db_retrieve_top_chunks(symbols, q_vec, top_k=8, conn=conn)
-            scored = [c for c in chunks if c.get('score', 1.0) >= RAG_SCORE_THRESHOLD][:4]
+            scored = [c for c in chunks if c.get('score', 1.0) >= RAG_SCORE_THRESHOLD][:5]
             if scored:
-                rag_parts = ['--- RAG CONTEXT ---']
+                rag_parts = ['--- RAG KNOWLEDGE BASE ---']
                 for c in scored:
                     age = f'({(now_ts()-c["ts"])//86400}d ago)' if c.get('ts') else ''
-                    rag_parts.append(f'[{c["symbol"]}|{c["source"]}|{age}] {c["content"][:280]}')
+                    rag_parts.append(f'[{c["symbol"]}|{c["source"]}|score:{c.get("score",0):.2f}|{age}] {c["content"][:300]}')
                 rag_parts.append('---')
                 cached = cached + '\n' + '\n'.join(rag_parts)
         except Exception as e:
