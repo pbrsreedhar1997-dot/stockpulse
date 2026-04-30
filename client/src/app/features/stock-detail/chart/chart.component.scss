@@ -66,6 +66,77 @@
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+// Analysis panel
+.chart-analysis {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  overflow: hidden; margin-top: 4px;
+}
+.ca-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; cursor: pointer;
+  &:hover { background: var(--hover); }
+}
+.ca-title { font-size: 11px; font-weight: 700; color: var(--text); text-transform: uppercase; letter-spacing: .05em; }
+.ca-toggle { font-size: 10px; color: var(--text3); }
+
+.ca-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; }
+
+.ca-section-title { font-size: 9px; font-weight: 700; color: var(--text3); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 6px; }
+
+.ca-pressure { display: flex; gap: 8px; align-items: stretch; }
+.ca-pressure-bar {
+  flex: 1; border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px;
+  &.buy  { background: rgba(0,212,170,.08); border: 1px solid rgba(0,212,170,.2); }
+  &.sell { background: rgba(248,113,113,.08); border: 1px solid rgba(248,113,113,.2); }
+}
+.ca-pb-label { font-size: 10px; font-weight: 700; }
+.ca-pb-label.buy  { color: var(--green); }
+.ca-pb-label.sell { color: var(--red); }
+.ca-pb-val   { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
+.ca-pb-val.buy  { color: var(--green); }
+.ca-pb-val.sell { color: var(--red); }
+.ca-pb-sub   { font-size: 10px; color: var(--text3); }
+.ca-pb-track { height: 4px; border-radius: 2px; background: var(--border); margin-top: 6px; overflow: hidden; }
+.ca-pb-fill  { height: 100%; border-radius: 2px; }
+.ca-pb-fill.buy  { background: var(--green); }
+.ca-pb-fill.sell { background: var(--red); }
+
+.ca-signals { display: flex; flex-direction: column; gap: 6px; }
+.ca-signal {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px; border-radius: 6px; background: var(--hover);
+}
+.ca-sig-label { font-size: 11px; color: var(--text2); }
+.ca-sig-value { font-size: 11px; font-weight: 700; }
+.ca-sig-value.bullish { color: var(--green); }
+.ca-sig-value.bearish { color: var(--red); }
+.ca-sig-value.neutral { color: var(--text3); }
+
+.ca-levels { display: flex; gap: 8px; }
+.ca-level-card {
+  flex: 1; padding: 8px 10px; border-radius: 8px; background: var(--hover);
+  border: 1px solid var(--border);
+}
+.ca-lev-label { font-size: 9px; color: var(--text3); font-weight: 700; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
+.ca-lev-val   { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text); }
+
+.ca-verdict {
+  padding: 10px 12px; border-radius: 8px; text-align: center;
+  &.bull { background: rgba(0,212,170,.1); border: 1px solid rgba(0,212,170,.25); }
+  &.bear { background: rgba(248,113,113,.1); border: 1px solid rgba(248,113,113,.25); }
+  &.neut { background: var(--hover); border: 1px solid var(--border); }
+}
+.ca-verdict-icon  { font-size: 20px; }
+.ca-verdict-title { font-size: 12px; font-weight: 800; margin: 4px 0 2px; }
+.ca-verdict-title.bull { color: var(--green); }
+.ca-verdict-title.bear { color: var(--red); }
+.ca-verdict-title.neut { color: var(--text3); }
+.ca-verdict-body  { font-size: 11px; color: var(--text2); line-height: 1.5; }
+
+@media (max-width: 480px) {
+  .ca-pressure { flex-direction: column; }
+}
+
 // OHLV meta bar
 .chart-meta {
   display: flex; gap: 12px; flex-wrap: wrap; padding: 6px 2px;
@@ -80,4 +151,15 @@
 .meta-lbl {
   font-size: 9px; font-weight: 700; color: var(--text3); text-transform: uppercase;
   letter-spacing: .05em; background: var(--hover); padding: 1px 5px; border-radius: 4px;
+}
+
+@media (max-width: 600px) {
+  .chart-area { height: 200px; &.with-vol { height: 226px; } }
+  .stat-price { font-size: 18px; }
+  .rng-btn { font-size: 10px; padding: 4px 0; }
+  .chart-meta { gap: 8px; }
+}
+@media (max-width: 480px) {
+  .chart-area { height: 180px; &.with-vol { height: 206px; } }
+  .ind-btn { font-size: 9px; padding: 2px 8px; }
 }

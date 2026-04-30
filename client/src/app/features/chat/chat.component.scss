@@ -103,3 +103,15 @@
 }
 .send-spin { width: 16px; height: 16px; border: 2px solid rgba(0,0,0,.3); border-top-color: #000; border-radius: 50%; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 600px) {
+  .chat-head { padding: 10px 12px; }
+  .chat-msgs { padding: 12px; }
+  .cmsg-body { max-width: 92%; }
+  .chat-input-wrap { padding: 8px 12px; }
+  .rag-btn span:not(:first-child) { display: none; }
+}
+@media (max-width: 480px) {
+  .chat-title { font-size: 13px; }
+  .chat-clear, .rag-btn { padding: 5px; }
+}

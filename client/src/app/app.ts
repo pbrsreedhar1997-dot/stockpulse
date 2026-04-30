@@ -32,8 +32,8 @@ export class App implements OnInit, OnDestroy {
   private toast    = inject(ToastService);
   protected push   = inject(PushNotificationService);
 
-  view        = signal<View>('stocks');
-  selectedSym = signal('');
+  view        = signal<View>((sessionStorage.getItem('sp_view') as View) || 'stocks');
+  selectedSym = signal(sessionStorage.getItem('sp_sym') || '');
   showAuth    = signal(false);
   backendOk   = signal<boolean | null>(null);
   showMobile  = signal(false);
@@ -43,13 +43,31 @@ export class App implements OnInit, OnDestroy {
   );
 
   private intervals: ReturnType<typeof setInterval>[] = [];
+  private hiddenAt = 0;
+  private visibilityHandler = () => {
+    if (document.visibilityState === 'hidden') {
+      this.hiddenAt = Date.now();
+    } else if (document.visibilityState === 'visible') {
+      if (this.hiddenAt && Date.now() - this.hiddenAt > 5 * 60 * 1000) {
+        this.refreshQuotes();
+        this.checkBackend();
+      }
+      this.hiddenAt = 0;
+    }
+  };
 
   ngOnInit() {
     this.applyTheme(this.theme());
     this.checkBackend();
 
     if (!this.wl.items().length) this.wl.set(this.stocks.loadDefaults());
-    if (this.wl.items().length) this.selectedSym.set(this.wl.items()[0].symbol);
+    const savedSym = sessionStorage.getItem('sp_sym');
+    const items = this.wl.items();
+    if (savedSym && items.some(i => i.symbol === savedSym)) {
+      this.selectedSym.set(savedSym);
+    } else if (items.length) {
+      this.selectedSym.set(items[0].symbol);
+    }
 
     if (this.auth.token()) {
       this.api.getRaw<{ ok: boolean; user: any }>('/auth/me').subscribe(r => {
@@ -65,9 +83,13 @@ export class App implements OnInit, OnDestroy {
     this.refreshQuotes();
     this.intervals.push(setInterval(() => this.refreshQuotes(), 60000));
     this.intervals.push(setInterval(() => this.checkBackend(), 30000));
+    document.addEventListener('visibilitychange', this.visibilityHandler);
   }
 
-  ngOnDestroy() { this.intervals.forEach(id => clearInterval(id)); }
+  ngOnDestroy() {
+    this.intervals.forEach(id => clearInterval(id));
+    document.removeEventListener('visibilitychange', this.visibilityHandler);
+  }
 
   private checkBackend() {
     this.api.getRaw<{ ok: boolean }>('/ping').subscribe(r => {
@@ -122,11 +144,14 @@ export class App implements OnInit, OnDestroy {
     this.selectedSym.set(sym);
     this.view.set('stocks');
     this.showMobile.set(false);
+    sessionStorage.setItem('sp_sym', sym);
+    sessionStorage.setItem('sp_view', 'stocks');
   }
 
   switchView(v: View) {
     this.view.set(v);
     this.showMobile.set(false);
+    sessionStorage.setItem('sp_view', v);
   }
 
   toggleTheme() {

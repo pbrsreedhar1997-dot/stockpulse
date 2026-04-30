@@ -35,6 +35,92 @@ function maxTicks(rng: string): number {
   return ({ '1d': 8, '5d': 6, '1mo': 8, '3mo': 8, '6mo': 7, '1y': 8, '2y': 8, '5y': 8 } as Record<string,number>)[rng] ?? 8;
 }
 
+function computeRSI(closes: number[], period = 14): number | null {
+  if (closes.length < period + 1) return null;
+  const recent = closes.slice(-period - 1);
+  let gains = 0, losses = 0;
+  for (let i = 1; i < recent.length; i++) {
+    const diff = recent[i] - recent[i - 1];
+    if (diff > 0) gains += diff; else losses -= diff;
+  }
+  if (losses === 0) return 100;
+  const rs = gains / losses;
+  return parseFloat((100 - 100 / (1 + rs)).toFixed(1));
+}
+
+interface Analysis {
+  buyPct: number;
+  sellPct: number;
+  rsi: number | null;
+  trend: 'bullish' | 'bearish' | 'neutral';
+  support: number;
+  resistance: number;
+  verdict: 'bull' | 'bear' | 'neut';
+  verdictText: string;
+}
+
+function computeAnalysis(pts: { close: number; open?: number; high?: number; low?: number; volume?: number }[]): Analysis | null {
+  if (pts.length < 10) return null;
+  const recent = pts.slice(-20);
+  const closes = pts.map(p => p.close);
+  const avgVol  = recent.reduce((s, p) => s + (p.volume ?? 0), 0) / recent.length;
+
+  let buyCandles = 0, sellCandles = 0;
+  for (const p of recent) {
+    const isUp   = p.close > (p.open ?? p.close);
+    const highVol = (p.volume ?? 0) >= avgVol * 0.8;
+    if (isUp && highVol)   buyCandles++;
+    if (!isUp && highVol)  sellCandles++;
+  }
+  const total  = buyCandles + sellCandles || 1;
+  const buyPct  = Math.round((buyCandles / total) * 100);
+  const sellPct = 100 - buyPct;
+
+  const rsi = computeRSI(closes);
+  const last = closes[closes.length - 1];
+  const sma20 = closes.length >= 20 ? closes.slice(-20).reduce((s, v) => s + v, 0) / 20 : null;
+
+  // Support = recent 20-period low, Resistance = recent 20-period high
+  const recentLows  = pts.slice(-20).map(p => p.low ?? p.close);
+  const recentHighs = pts.slice(-20).map(p => p.high ?? p.close);
+  const support     = Math.min(...recentLows);
+  const resistance  = Math.max(...recentHighs);
+
+  // Trend: compare first and last close in recent window, cross SMA
+  const trendUp = sma20 != null ? last > sma20 : last > closes[closes.length - 10];
+  const trendDown = sma20 != null ? last < sma20 * 0.98 : last < closes[closes.length - 10];
+  const trend: 'bullish' | 'bearish' | 'neutral' = trendUp ? 'bullish' : trendDown ? 'bearish' : 'neutral';
+
+  // Verdict: combine RSI + pressure + trend
+  let bullScore = 0;
+  if (buyPct > 55)            bullScore++;
+  if (rsi != null && rsi < 40) bullScore++;
+  if (trend === 'bullish')    bullScore++;
+  if (last > support * 1.01)  bullScore++;
+
+  let bearScore = 0;
+  if (sellPct > 55)            bearScore++;
+  if (rsi != null && rsi > 65) bearScore++;
+  if (trend === 'bearish')     bearScore++;
+  if (last < resistance * 0.99) bearScore++;
+
+  let verdict: 'bull' | 'bear' | 'neut' = 'neut';
+  let verdictText = 'Mixed signals — watch for a breakout in either direction.';
+  if (bullScore >= 3) {
+    verdict = 'bull';
+    verdictText = rsi != null && rsi < 40
+      ? 'Oversold with strong buying pressure — potential reversal or bounce.'
+      : 'Bullish momentum detected. Buyers are in control above key support.';
+  } else if (bearScore >= 3) {
+    verdict = 'bear';
+    verdictText = rsi != null && rsi > 70
+      ? 'Overbought territory with selling pressure — watch for pullback.'
+      : 'Bearish pressure dominates. Stock is below key moving averages.';
+  }
+
+  return { buyPct, sellPct, rsi, trend, support, resistance, verdict, verdictText };
+}
+
 function computeSMA(data: number[], window: number): (number | null)[] {
   return data.map((_, i) => {
     if (i < window - 1) return null;
@@ -101,6 +187,7 @@ Chart.register(priceLinePlugin);
         <button class="ind-btn" [class.on]="showSma20" (click)="toggleInd('sma20')">SMA 20</button>
         <button class="ind-btn" [class.on]="showSma50" (click)="toggleInd('sma50')">SMA 50</button>
         <button class="ind-btn" [class.on]="showVol"   (click)="toggleInd('vol')">Volume</button>
+        <button class="ind-btn" [class.on]="showAnalysis" (click)="showAnalysis = !showAnalysis" style="margin-left:auto">Analysis</button>
       </div>
 
       <!-- Canvas -->
@@ -124,6 +211,82 @@ Chart.register(priceLinePlugin);
           <span class="meta-item"><span class="meta-lbl">Vol</span>{{ fmtVol(latestVol) }}</span>
         </div>
       }
+
+      <!-- Analysis panel -->
+      @if (showAnalysis && analysis) {
+        <div class="chart-analysis">
+          <div class="ca-header" (click)="showAnalysis = !showAnalysis">
+            <span class="ca-title">📊 Market Analysis</span>
+            <span class="ca-toggle">▲ Hide</span>
+          </div>
+          <div class="ca-body">
+
+            <!-- Buy / Sell pressure -->
+            <div>
+              <div class="ca-section-title">Buying vs Selling Pressure</div>
+              <div class="ca-pressure">
+                <div class="ca-pressure-bar buy">
+                  <span class="ca-pb-label buy">Buying</span>
+                  <span class="ca-pb-val buy">{{ analysis.buyPct }}%</span>
+                  <span class="ca-pb-sub">of high-volume candles</span>
+                  <div class="ca-pb-track"><div class="ca-pb-fill buy" [style.width.%]="analysis.buyPct"></div></div>
+                </div>
+                <div class="ca-pressure-bar sell">
+                  <span class="ca-pb-label sell">Selling</span>
+                  <span class="ca-pb-val sell">{{ analysis.sellPct }}%</span>
+                  <span class="ca-pb-sub">of high-volume candles</span>
+                  <div class="ca-pb-track"><div class="ca-pb-fill sell" [style.width.%]="analysis.sellPct"></div></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Signal grid -->
+            <div>
+              <div class="ca-section-title">Technical Signals</div>
+              <div class="ca-signals">
+                <div class="ca-signal">
+                  <span class="ca-sig-label">Trend (vs SMA 20)</span>
+                  <span class="ca-sig-value" [class.bullish]="analysis.trend==='bullish'" [class.bearish]="analysis.trend==='bearish'" [class.neutral]="analysis.trend==='neutral'">
+                    {{ analysis.trend === 'bullish' ? '↑ Bullish' : analysis.trend === 'bearish' ? '↓ Bearish' : '→ Neutral' }}
+                  </span>
+                </div>
+                <div class="ca-signal">
+                  <span class="ca-sig-label">RSI (14)</span>
+                  <span class="ca-sig-value" [class.bullish]="analysis.rsi !== null && analysis.rsi < 40" [class.bearish]="analysis.rsi !== null && analysis.rsi > 65" [class.neutral]="analysis.rsi === null || (analysis.rsi >= 40 && analysis.rsi <= 65)">
+                    {{ analysis.rsi !== null ? analysis.rsi : '—' }}
+                    {{ analysis.rsi !== null ? (analysis.rsi < 30 ? '— Oversold' : analysis.rsi > 70 ? '— Overbought' : analysis.rsi < 40 ? '— Weak' : analysis.rsi > 65 ? '— Strong' : '— Neutral') : '' }}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Support / Resistance -->
+            <div>
+              <div class="ca-section-title">Key Levels (20-period)</div>
+              <div class="ca-levels">
+                <div class="ca-level-card">
+                  <div class="ca-lev-label">Support</div>
+                  <div class="ca-lev-val">{{ fmt(analysis.support) }}</div>
+                </div>
+                <div class="ca-level-card">
+                  <div class="ca-lev-label">Resistance</div>
+                  <div class="ca-lev-val">{{ fmt(analysis.resistance) }}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Verdict -->
+            <div class="ca-verdict" [class.bull]="analysis.verdict==='bull'" [class.bear]="analysis.verdict==='bear'" [class.neut]="analysis.verdict==='neut'">
+              <div class="ca-verdict-icon">{{ analysis.verdict === 'bull' ? '🟢' : analysis.verdict === 'bear' ? '🔴' : '🟡' }}</div>
+              <div class="ca-verdict-title" [class.bull]="analysis.verdict==='bull'" [class.bear]="analysis.verdict==='bear'" [class.neut]="analysis.verdict==='neut'">
+                {{ analysis.verdict === 'bull' ? 'Bullish Bias' : analysis.verdict === 'bear' ? 'Bearish Bias' : 'Neutral / Watch' }}
+              </div>
+              <div class="ca-verdict-body">{{ analysis.verdictText }}</div>
+            </div>
+
+          </div>
+        </div>
+      }
     </div>
   `,
   styleUrl: './chart.component.scss'
@@ -139,9 +302,10 @@ export class ChartComponent implements AfterViewInit, OnChanges, OnDestroy {
   ranges  = RANGES;
 
   // Indicator toggles — plain booleans, no signals needed
-  showSma20 = true;
-  showSma50 = false;
-  showVol   = true;
+  showSma20    = true;
+  showSma50    = false;
+  showVol      = true;
+  showAnalysis = false;
 
   private chart?: Chart;
 
@@ -153,6 +317,7 @@ export class ChartComponent implements AfterViewInit, OnChanges, OnDestroy {
   periodName = '';
   rangeLabel = '';
   hi = 0; lo = 0; latestVol = 0;
+  analysis: Analysis | null = null;
 
   ngAfterViewInit() { this.buildChart(); }
 
@@ -328,6 +493,8 @@ export class ChartComponent implements AfterViewInit, OnChanges, OnDestroy {
     this.chart.data.labels   = labels;
     this.chart.data.datasets = datasets;
     this.chart.update('active');
+
+    this.analysis = computeAnalysis(pts);
   }
 
   ngOnDestroy() { this.chart?.destroy(); }

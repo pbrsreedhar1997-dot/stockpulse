@@ -47,3 +47,14 @@
 .up { color: var(--green); } .dn { color: var(--red); }
 .spin { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; flex-shrink: 0; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 768px) {
+  .screener-wrap { padding: 12px; }
+  .scr-head { flex-direction: column; gap: 8px; align-items: stretch; }
+  .scr-table th:nth-child(n+5), .scr-table td:nth-child(n+5) { display: none; }
+}
+@media (max-width: 480px) {
+  .screener-wrap { padding: 8px; }
+  .scr-table th:nth-child(n+4), .scr-table td:nth-child(n+4) { display: none; }
+  .scr-title { font-size: 15px; }
+}

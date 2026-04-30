@@ -152,12 +152,28 @@
 @keyframes spin { to { transform: rotate(360deg); } }
 .up { color: var(--green); } .dn { color: var(--red); }
 
+/* Tablet */
+@media (max-width: 900px) {
+  .metrics-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+}
+
 /* Mobile */
 @media (max-width: 600px) {
   .detail-wrap { padding: 12px; }
+  .qh-sym { font-size: 18px; }
   .qh-price { font-size: 22px; }
   .qstats .qs-item { min-width: 70px; padding: 8px; }
   .metrics-grid { grid-template-columns: repeat(2, 1fr); }
-  .tabs { gap: 3px; }
-  .tab-btn { padding: 6px 10px; font-size: 11px; }
+  .tabs { gap: 3px; overflow-x: auto; }
+  .tab-btn { padding: 6px 10px; font-size: 11px; white-space: nowrap; }
+  .quote-header { gap: 8px; }
+}
+
+/* Small mobile */
+@media (max-width: 380px) {
+  .detail-wrap { padding: 8px; }
+  .qh-price { font-size: 20px; }
+  .qs-lbl { font-size: 8px; }
+  .qs-val { font-size: 11px; }
+  .tab-btn { padding: 5px 8px; font-size: 10px; }
 }

@@ -102,20 +102,42 @@ button, a { transition: background-color .15s, color .15s, border-color .15s, op
 }
 app-stock-detail, app-screener, app-chat { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 
+/* ── Tablet ────────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .topnav { padding: 0 12px; }
+  .tnav-btn { font-size: 11px; padding: 5px 10px; }
+  .user-chip span { max-width: 80px; }
+}
+
 /* ── Mobile ───────────────────────────────────────────────────── */
 @media (max-width: 768px) {
+  .shell { height: 100dvh; }
+
   .hamburger { display: flex; }
 
   .sidebar-wrap {
-    position: fixed; left: 0; top: 0; height: 100vh;
+    position: fixed; left: 0; top: 0; height: 100dvh;
     transform: translateX(-100%);
     transition: transform .25s cubic-bezier(.4,0,.2,1);
+    box-shadow: 4px 0 24px rgba(0,0,0,.35);
     &.mobile-open { transform: translateX(0); }
   }
 
+  .topnav { padding: 0 10px; gap: 4px; }
   .tnav-btn { font-size: 11px; padding: 5px 8px; }
 
   .be-pill { display: none; }
 
-  .user-chip span { display: none; }
+  .user-chip {
+    padding: 4px 8px;
+    span { display: none; }
+  }
+}
+
+/* ── Small mobile ─────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  .topnav { padding: 0 8px; height: 48px; }
+  .tnav-btn { font-size: 10px; padding: 4px 7px; }
+  .icon-btn { width: 28px; height: 28px; font-size: 13px; }
+  .signin-btn { padding: 5px 10px; font-size: 11px; }
 }
