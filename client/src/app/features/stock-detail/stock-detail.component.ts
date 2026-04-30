@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, inject, signal, input, effect, SecurityContext } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, signal, input, effect, untracked, SecurityContext } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { DomSanitizer } from '@angular/platform-browser';
 import { StockService } from '../../core/services/stock.service';
@@ -63,19 +63,29 @@ export class StockDetailComponent implements OnInit, OnDestroy {
   private finsLoaded = false;
   private perfLoaded = false;
   protected readonly Math = Math;
-  private destroy$ = new Subject<void>();
+  private destroy$  = new Subject<void>();
+  private history$  = new Subject<void>();
+  private news$     = new Subject<void>();
   private lastPrice: number | null = null;
   private flashTimer?: ReturnType<typeof setTimeout>;
 
   constructor() {
+    // Use untracked so only symbol() is tracked — NOT range(), profile(), or any
+    // signal read inside load()/loadNews(). Without this, each API response that
+    // sets a signal (profile, quote, etc.) re-triggers the effect and cascades
+    // into duplicate requests.
     effect(() => {
       const sym = this.symbol();
-      if (sym) this.load(sym);
+      if (sym) untracked(() => this.load(sym));
     });
   }
 
   ngOnInit() {}
-  ngOnDestroy() { this.destroy$.next(); this.destroy$.complete(); clearTimeout(this.flashTimer); }
+  ngOnDestroy() {
+    this.destroy$.next(); this.destroy$.complete();
+    this.history$.complete(); this.news$.complete();
+    clearTimeout(this.flashTimer);
+  }
 
   load(sym: string) {
     this.quote.set(null); this.profile.set(null); this.fins.set(null);
@@ -90,7 +100,8 @@ export class StockDetailComponent implements OnInit, OnDestroy {
       this.quote.set(q);
     });
     this.stocks.getProfile(sym).pipe(takeUntil(this.destroy$)).subscribe(p => this.profile.set(p));
-    this.loadHistory(sym, this.range());
+    this.range.set('1mo');
+    this.loadHistory(sym, '1mo');
     this.loadNews(sym);
     // Pre-fetch financials so Overview key metrics load immediately
     this.loadFins(sym);
@@ -107,15 +118,19 @@ export class StockDetailComponent implements OnInit, OnDestroy {
   }
 
   loadHistory(sym: string, rng: string) {
+    this.history$.next(); // cancel any in-flight history request
     this.loadingChart.set(true);
-    this.stocks.getHistory(sym, rng).pipe(takeUntil(this.destroy$))
+    this.stocks.getHistory(sym, rng)
+      .pipe(takeUntil(this.history$), takeUntil(this.destroy$))
       .subscribe(h => { this.history.set(h || []); this.loadingChart.set(false); });
   }
 
   loadNews(sym: string) {
+    this.news$.next(); // cancel any in-flight news request
     this.loadingNews.set(true);
-    const name = this.profile()?.name || sym;
-    this.stocks.getNews(sym, name).pipe(takeUntil(this.destroy$))
+    const name = untracked(() => this.profile()?.name) || sym;
+    this.stocks.getNews(sym, name)
+      .pipe(takeUntil(this.news$), takeUntil(this.destroy$))
       .subscribe(a => { this.news.set(a || []); this.loadingNews.set(false); });
   }
 
