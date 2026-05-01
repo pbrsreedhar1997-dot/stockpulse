@@ -8,29 +8,36 @@
       </div>
     </div>
     <div class="chat-head-actions">
-      <!-- Train watchlist -->
+      @if (ragStatus()) {
+        <div class="rag-index-status">
+          <span class="ris-dot" [class.indexed]="!hasUnindexed" [class.partial]="hasUnindexed"></span>
+          <span class="ris-text">{{ ragStatus() }}</span>
+          @if (hasUnindexed) {
+            <span class="ris-warn">· {{ unindexedCount }} not indexed</span>
+          }
+        </div>
+      }
       <button
         class="rag-btn"
         [class.training]="ragTraining()"
         [disabled]="ragTraining()"
         (click)="trainRag()"
-        [title]="ragStatus() || 'Train AI on your watchlist stocks (2-year history + earnings)'"
+        [title]="ragStatus() || 'Index your watchlist stocks for smarter AI answers'"
       >
         @if (ragTraining()) {
-          <div class="send-spin"></div> Training…
+          <div class="send-spin"></div>&nbsp;Training…
         } @else {
-          🧠 Train Watchlist
+          🧠 {{ hasUnindexed ? 'Index Watchlist' : 'Re-index' }}
         }
       </button>
-      <!-- Train full Nifty 100 universe -->
       <button
         class="rag-btn rag-btn-universe"
         [class.training]="ragTraining()"
         [disabled]="ragTraining()"
         (click)="trainAllUniverse()"
-        title="Download 2-year data for all 100+ Nifty large-cap stocks (~2-3 min)"
+        title="Index all Nifty 100 stocks (~2-3 min)"
       >
-        🌐 Train All Stocks
+        🌐 Index All
       </button>
       <button class="chat-clear" (click)="clear()" title="Clear chat">🗑</button>
     </div>

@@ -77,15 +77,16 @@ export class ChatComponent implements AfterViewChecked, OnInit {
   private http      = inject(HttpClient);
   private sanitizer = inject(DomSanitizer);
 
-  messages     = signal<UIMessage[]>([]);
-  history      = signal<ChatMessage[]>([]);
-  question     = '';
-  streaming    = signal(false);
-  ragTraining  = signal(false);
-  ragStatus    = signal('');
-  ragStatusMsg = signal('');
-  ragStatusOk  = signal(true);
-  messagesEl   = viewChild<ElementRef<HTMLDivElement>>('msgs');
+  messages          = signal<UIMessage[]>([]);
+  history           = signal<ChatMessage[]>([]);
+  question          = '';
+  streaming         = signal(false);
+  ragTraining       = signal(false);
+  ragStatus         = signal('');
+  ragStatusMsg      = signal('');
+  ragStatusOk       = signal(true);
+  ragIndexedSymbols = signal<Set<string>>(new Set());
+  messagesEl        = viewChild<ElementRef<HTMLDivElement>>('msgs');
 
   private shouldScroll = false;
 
@@ -98,6 +99,7 @@ export class ChatComponent implements AfterViewChecked, OnInit {
           const count = r.total_chunks;
           const syms  = Object.keys(r.symbols || {}).length;
           this.ragStatus.set(`${count} chunks · ${syms} symbols indexed`);
+          this.ragIndexedSymbols.set(new Set(Object.keys(r.symbols || {})));
         }
       });
   }
@@ -157,6 +159,13 @@ export class ChatComponent implements AfterViewChecked, OnInit {
   }
 
   get time() { return new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }); }
+
+  get unindexedCount(): number {
+    const indexed = this.ragIndexedSymbols();
+    return this.wl.items().filter(i => !indexed.has(i.symbol)).length;
+  }
+
+  get hasUnindexed(): boolean { return this.unindexedCount > 0; }
 
   private renderMarkdown(text: string): string {
     const raw = mdToHtml(text);

@@ -29,6 +29,13 @@
         <div class="be-pill" [class.ok]="backendOk()===true" [class.err]="backendOk()===false">
           {{backendOk() === null ? '⟳ Connecting…' : backendOk() ? '● Live' : '✕ Offline'}}
         </div>
+        <div class="live-pill"
+             [class.live]="livePriceSvc.status()==='live'"
+             [class.connecting]="livePriceSvc.status()==='connecting'"
+             [class.err]="livePriceSvc.status()==='error'"
+             [title]="livePriceSvc.status()==='live' ? 'Live price stream active' : livePriceSvc.status()==='connecting' ? 'Connecting to price stream…' : livePriceSvc.status()==='error' ? 'Price stream error' : 'Price stream off'">
+          {{livePriceSvc.status()==='live' ? '▶ Streaming' : livePriceSvc.status()==='connecting' ? '⟳ Stream…' : livePriceSvc.status()==='error' ? '✕ Stream' : ''}}
+        </div>
         <!-- Push notification toggle (only when logged in and supported) -->
         @if (auth.isLoggedIn() && push.supported()) {
           <button

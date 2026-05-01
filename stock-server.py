@@ -962,6 +962,36 @@ def fetch_quote(symbol: str) -> dict | None:
     log.warning(f'fetch_quote({symbol}): all sources failed')
     return None
 
+# ── Background quote refresh (deduplicated) ──────────────────────────────────
+_refresh_in_flight: set = set()
+_refresh_lock = threading.Lock()
+
+def _refresh_quote_bg(sym: str):
+    """Refresh one quote in background, skipping if already in flight."""
+    with _refresh_lock:
+        if sym in _refresh_in_flight:
+            return
+        _refresh_in_flight.add(sym)
+    def _do():
+        try:
+            q = fetch_quote(sym)
+            if q:
+                with thread_connection() as conn:
+                    conn.execute("""INSERT OR REPLACE INTO quotes
+                        (symbol,price,open,high,low,prev_close,change,change_pct,
+                         volume,mkt_cap,currency,fetched_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (sym, q['price'], q['open'], q['high'], q['low'],
+                         q['prev_close'], q['change'], q['change_pct'],
+                         q['volume'], q['mkt_cap'], q['currency'], now_ts()))
+                    conn.commit()
+        except Exception as e:
+            log.debug(f'_refresh_quote_bg({sym}): {e}')
+        finally:
+            with _refresh_lock:
+                _refresh_in_flight.discard(sym)
+    threading.Thread(target=_do, daemon=True).start()
+
 def _history_from_stooq(symbol: str, range_key: str) -> list:
     """Stooq fallback for price history — returns daily OHLCV rows."""
     try:
@@ -1742,6 +1772,89 @@ def api_financials(symbol):
     db.commit()
     threading.Thread(target=_embed_financials_bg, args=(symbol, data), daemon=True).start()
     return jsonify({'ok': True, 'data': data})
+
+@app.route('/api/stream/prices')
+def api_stream_prices():
+    """SSE endpoint — streams live price updates for a comma-separated list of symbols."""
+    raw     = request.args.get('symbols', '')
+    symbols = [s.strip() for s in raw.split(',') if s.strip()][:20]
+    if not symbols:
+        return jsonify({'ok': False, 'error': 'symbols required'}), 400
+
+    def generate():
+        # Initial snapshot from DB cache
+        snapshot = {}
+        with thread_connection() as conn:
+            for sym in symbols:
+                row = row_to_dict(conn.execute(
+                    'SELECT price,change,change_pct,volume,currency,fetched_at '
+                    'FROM quotes WHERE symbol=?', (sym,)
+                ).fetchone())
+                if row:
+                    snapshot[sym] = {
+                        'price':      row['price'],
+                        'change':     row['change'],
+                        'change_pct': row['change_pct'],
+                        'volume':     row.get('volume'),
+                        'currency':   row.get('currency') or 'INR',
+                    }
+                    if stale(row.get('fetched_at'), CACHE_TTL):
+                        _refresh_quote_bg(sym)
+                else:
+                    _refresh_quote_bg(sym)
+
+        yield f"data: {json.dumps({'type': 'snapshot', 'quotes': snapshot})}\n\n"
+
+        prev_prices = {s: snapshot.get(s, {}).get('price') for s in symbols}
+        tick = 0
+
+        while True:
+            try:
+                time.sleep(5)
+                tick += 1
+                updates = {}
+
+                with thread_connection() as conn:
+                    for sym in symbols:
+                        row = row_to_dict(conn.execute(
+                            'SELECT price,change,change_pct,volume,currency,fetched_at '
+                            'FROM quotes WHERE symbol=?', (sym,)
+                        ).fetchone())
+                        if row:
+                            new_price = row.get('price')
+                            # Send if price changed or force-refresh every 60 s (12 × 5 s)
+                            if new_price != prev_prices.get(sym) or tick % 12 == 0:
+                                updates[sym] = {
+                                    'price':      row['price'],
+                                    'change':     row['change'],
+                                    'change_pct': row['change_pct'],
+                                    'volume':     row.get('volume'),
+                                    'currency':   row.get('currency') or 'INR',
+                                }
+                                prev_prices[sym] = new_price
+                            if stale(row.get('fetched_at'), CACHE_TTL):
+                                _refresh_quote_bg(sym)
+
+                if updates:
+                    yield f"data: {json.dumps({'type': 'update', 'quotes': updates})}\n\n"
+                elif tick % 12 == 0:
+                    yield f"data: {json.dumps({'type': 'ping'})}\n\n"
+
+            except GeneratorExit:
+                return
+            except Exception as e:
+                log.debug(f'stream_prices error: {e}')
+                return
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control':    'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection':       'keep-alive',
+        },
+    )
 
 @app.route('/api/news/<path:symbol>')
 def api_news(symbol):
@@ -3114,6 +3227,47 @@ init_db()
 # thread so the dev server is ready quickly.
 if __name__ == '__main__':
     threading.Thread(target=get_embed_model, daemon=True).start()
+
+# ── Startup: pre-warm DB with quotes for default watchlist ───────────────────
+def _preload_default_quotes():
+    """Fetch quotes for popular stocks into DB cache on startup."""
+    defaults = [
+        'RELIANCE.NS','TCS.NS','HDFCBANK.NS','INFY.NS','WIPRO.NS',
+        'APOLLOHOSP.NS','BHARTIARTL.NS','ICICIBANK.NS','KOTAKBANK.NS','SBIN.NS',
+        'HCLTECH.NS','BAJFINANCE.NS','LT.NS','MARUTI.NS','TITAN.NS',
+        'AAPL','MSFT','GOOGL','AMZN','TSLA',
+    ]
+    def _fetch_one(sym):
+        try:
+            with thread_connection() as conn:
+                row = row_to_dict(conn.execute(
+                    'SELECT fetched_at FROM quotes WHERE symbol=?', (sym,)
+                ).fetchone())
+                if row and not stale(row['fetched_at'], CACHE_TTL * 5):
+                    return
+            q = fetch_quote(sym)
+            if q:
+                with thread_connection() as conn:
+                    conn.execute("""INSERT OR REPLACE INTO quotes
+                        (symbol,price,open,high,low,prev_close,change,change_pct,
+                         volume,mkt_cap,currency,fetched_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (sym, q['price'], q['open'], q['high'], q['low'],
+                         q['prev_close'], q['change'], q['change_pct'],
+                         q['volume'], q['mkt_cap'], q['currency'], now_ts()))
+                    conn.commit()
+        except Exception as e:
+            log.debug(f'preload {sym}: {e}')
+
+    def _run():
+        log.info('Preloading default stock quotes…')
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+            list(ex.map(_fetch_one, defaults))
+        log.info('Default quote preload complete.')
+
+    threading.Thread(target=_run, daemon=True).start()
+
+_preload_default_quotes()
 
 # Pre-warm the screener cache so the first user doesn't wait 60+ seconds.
 # This runs in master and in each forked worker, but _maybe_start_screener guards

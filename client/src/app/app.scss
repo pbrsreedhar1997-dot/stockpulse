@@ -68,6 +68,15 @@ button, a { transition: background-color .15s, color .15s, border-color .15s, op
   &.err { background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.3); color: var(--red); }
 }
 
+.live-pill {
+  padding: 4px 10px; border-radius: 20px; font-size: 10px; font-weight: 700;
+  background: var(--card); border: 1px solid var(--border); color: var(--text3);
+  white-space: nowrap; display: none;
+  &.live       { display: inline-flex; background: rgba(99,102,241,.12); border-color: rgba(99,102,241,.35); color: #818cf8; }
+  &.connecting { display: inline-flex; background: rgba(245,158,11,.10); border-color: rgba(245,158,11,.3); color: #f59e0b; }
+  &.err        { display: inline-flex; background: rgba(239,68,68,.10); border-color: rgba(239,68,68,.3); color: var(--red); }
+}
+
 .icon-btn {
   width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border);
   background: var(--card); cursor: pointer; font-size: 15px; display: flex;

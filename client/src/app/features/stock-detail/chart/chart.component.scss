@@ -41,8 +41,8 @@
 
 // Chart area — height expands when volume is shown
 .chart-area {
-  position: relative; height: 230px;
-  &.with-vol { height: 260px; }
+  position: relative; height: 270px;
+  &.with-vol { height: 310px; }
   canvas { width: 100% !important; height: 100% !important; }
 }
 
@@ -154,12 +154,12 @@
 }
 
 @media (max-width: 600px) {
-  .chart-area { height: 200px; &.with-vol { height: 226px; } }
+  .chart-area { height: 230px; &.with-vol { height: 260px; } }
   .stat-price { font-size: 18px; }
   .rng-btn { font-size: 10px; padding: 4px 0; }
   .chart-meta { gap: 8px; }
 }
 @media (max-width: 480px) {
-  .chart-area { height: 180px; &.with-vol { height: 206px; } }
+  .chart-area { height: 200px; &.with-vol { height: 228px; } }
   .ind-btn { font-size: 9px; padding: 2px 8px; }
 }

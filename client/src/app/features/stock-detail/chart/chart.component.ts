@@ -129,6 +129,22 @@ function computeSMA(data: number[], window: number): (number | null)[] {
   });
 }
 
+function computeBollingerBands(closes: number[], period = 20): {
+  upper: (number|null)[]; lower: (number|null)[];
+} {
+  const upper: (number|null)[] = [];
+  const lower: (number|null)[] = [];
+  for (let i = 0; i < closes.length; i++) {
+    if (i < period - 1) { upper.push(null); lower.push(null); continue; }
+    const slice = closes.slice(i - period + 1, i + 1);
+    const mean  = slice.reduce((s, v) => s + v, 0) / period;
+    const std   = Math.sqrt(slice.reduce((s, v) => s + (v - mean) ** 2, 0) / period);
+    upper.push(parseFloat((mean + 2 * std).toFixed(2)));
+    lower.push(parseFloat((mean - 2 * std).toFixed(2)));
+  }
+  return { upper, lower };
+}
+
 const priceLinePlugin: Plugin<'line'> = {
   id: 'priceLine',
   afterDraw(chart) {
@@ -187,6 +203,7 @@ Chart.register(priceLinePlugin);
         <button class="ind-btn" [class.on]="showSma20" (click)="toggleInd('sma20')">SMA 20</button>
         <button class="ind-btn" [class.on]="showSma50" (click)="toggleInd('sma50')">SMA 50</button>
         <button class="ind-btn" [class.on]="showVol"   (click)="toggleInd('vol')">Volume</button>
+        <button class="ind-btn" [class.on]="showBB"    (click)="toggleInd('bb')">BB 20</button>
         <button class="ind-btn" [class.on]="showAnalysis" (click)="showAnalysis = !showAnalysis" style="margin-left:auto">Analysis</button>
       </div>
 
@@ -305,6 +322,7 @@ export class ChartComponent implements AfterViewInit, OnChanges, OnDestroy {
   showSma20    = true;
   showSma50    = false;
   showVol      = true;
+  showBB       = false;
   showAnalysis = false;
 
   private chart?: Chart;
@@ -326,10 +344,11 @@ export class ChartComponent implements AfterViewInit, OnChanges, OnDestroy {
     if (c['color'] && !c['color'].firstChange) this.buildChart();
   }
 
-  toggleInd(ind: 'sma20' | 'sma50' | 'vol') {
+  toggleInd(ind: 'sma20' | 'sma50' | 'vol' | 'bb') {
     if (ind === 'sma20') this.showSma20 = !this.showSma20;
     if (ind === 'sma50') this.showSma50 = !this.showSma50;
     if (ind === 'vol')   this.showVol   = !this.showVol;
+    if (ind === 'bb')    this.showBB    = !this.showBB;
     this.updateData();
   }
 
@@ -379,6 +398,7 @@ export class ChartComponent implements AfterViewInit, OnChanges, OnDestroy {
                 if (item.dataset.label === 'Volume') {
                   return ` Vol  ${this.fmtVol(item.raw as number)}`;
                 }
+                if (item.dataset.label === 'BB Upper' || item.dataset.label === 'BB Lower') return '';
                 if (item.datasetIndex !== 0) {
                   return ` ${item.dataset.label}  ₹${Number(item.raw).toFixed(2)}`;
                 }
@@ -412,10 +432,10 @@ export class ChartComponent implements AfterViewInit, OnChanges, OnDestroy {
 
   private makeGradient(el: HTMLCanvasElement, col: string): CanvasGradient {
     const ctx = el.getContext('2d')!;
-    const g = ctx.createLinearGradient(0, 0, 0, 280);
+    const g = ctx.createLinearGradient(0, 0, 0, 350);
     const r = parseInt(col.slice(1,3),16), gv = parseInt(col.slice(3,5),16), b = parseInt(col.slice(5,7),16);
-    g.addColorStop(0,   `rgba(${r},${gv},${b},0.14)`);
-    g.addColorStop(0.6, `rgba(${r},${gv},${b},0.03)`);
+    g.addColorStop(0,   `rgba(${r},${gv},${b},0.28)`);
+    g.addColorStop(0.5, `rgba(${r},${gv},${b},0.07)`);
     g.addColorStop(1,   `rgba(${r},${gv},${b},0)`);
     return g;
   }
@@ -449,7 +469,7 @@ export class ChartComponent implements AfterViewInit, OnChanges, OnDestroy {
 
     const datasets: any[] = [{
       type: 'line', label: 'Price', data: closes,
-      borderColor: lineCol, borderWidth: 1.5, tension: 0.15,
+      borderColor: lineCol, borderWidth: 2, tension: 0.12,
       fill: true, backgroundColor: el ? this.makeGradient(el, lineCol) : 'transparent',
       pointRadius: 0, pointHoverRadius: 5,
       pointHoverBackgroundColor: lineCol, pointHoverBorderColor: '#fff', pointHoverBorderWidth: 2,
@@ -471,6 +491,27 @@ export class ChartComponent implements AfterViewInit, OnChanges, OnDestroy {
         borderColor: '#818cf8', borderWidth: 1, borderDash: [4, 3],
         tension: 0.2, fill: false, pointRadius: 0, pointHoverRadius: 0,
         spanGaps: true, yAxisID: 'y', order: 2,
+      });
+    }
+
+    if (this.showBB && pts.length >= 20) {
+      const bb = computeBollingerBands(closes);
+      // Upper band
+      datasets.push({
+        type: 'line', label: 'BB Upper', data: bb.upper,
+        borderColor: 'rgba(148,163,184,0.45)', borderWidth: 1,
+        borderDash: [3, 3], tension: 0.2, fill: false,
+        pointRadius: 0, pointHoverRadius: 0,
+        spanGaps: true, yAxisID: 'y', order: 3,
+      });
+      // Lower band — fill between upper and lower
+      datasets.push({
+        type: 'line', label: 'BB Lower', data: bb.lower,
+        borderColor: 'rgba(148,163,184,0.45)', borderWidth: 1,
+        borderDash: [3, 3], tension: 0.2,
+        fill: '-1', backgroundColor: 'rgba(148,163,184,0.05)',
+        pointRadius: 0, pointHoverRadius: 0,
+        spanGaps: true, yAxisID: 'y', order: 3,
       });
     }
 

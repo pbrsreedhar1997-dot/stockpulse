@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { DomSanitizer } from '@angular/platform-browser';
 import { StockService } from '../../core/services/stock.service';
 import { WatchlistService } from '../../core/services/watchlist.service';
+import { LivePriceService } from '../../core/services/live-price.service';
 import { Quote, Profile, Financials, NewsArticle, HistoryPoint, PerformanceData } from '../../core/models/stock.model';
 import { ChartComponent } from './chart/chart.component';
 import { Subject } from 'rxjs';
@@ -35,9 +36,10 @@ function simpleMd(md: string): string {
   styleUrl: './stock-detail.component.scss'
 })
 export class StockDetailComponent implements OnInit, OnDestroy {
-  stocks    = inject(StockService);
-  wl        = inject(WatchlistService);
-  sanitizer = inject(DomSanitizer);
+  stocks       = inject(StockService);
+  wl           = inject(WatchlistService);
+  sanitizer    = inject(DomSanitizer);
+  livePriceSvc = inject(LivePriceService);
 
   symbol = input<string>('');
 
@@ -77,6 +79,29 @@ export class StockDetailComponent implements OnInit, OnDestroy {
     effect(() => {
       const sym = this.symbol();
       if (sym) untracked(() => this.load(sym));
+    });
+    // Update quote in real-time from live price stream
+    effect(() => {
+      const sym = this.symbol();
+      const lp  = this.livePriceSvc.quotes()[sym];
+      if (!lp || !sym) return;
+      untracked(() => {
+        const prev = this.quote();
+        this.animatePrice(lp.price);
+        this.quote.set({
+          symbol:     sym,
+          price:      lp.price,
+          change:     lp.change,
+          change_pct: lp.change_pct,
+          volume:     lp.volume ?? prev?.volume ?? null,
+          currency:   lp.currency || prev?.currency || 'INR',
+          open:       prev?.open       ?? null,
+          high:       prev?.high       ?? null,
+          low:        prev?.low        ?? null,
+          prev_close: prev?.prev_close ?? null,
+          mkt_cap:    prev?.mkt_cap    ?? null,
+        });
+      });
     });
   }
 
