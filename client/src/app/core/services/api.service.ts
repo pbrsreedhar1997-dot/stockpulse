@@ -1,4 +1,4 @@
-import { Injectable, inject } from '@angular/core';
+import { Injectable, inject, signal } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Observable, of } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
@@ -10,6 +10,9 @@ export class ApiService {
   private http = inject(HttpClient);
   private auth = inject(AuthService);
   readonly base = environment.apiUrl;
+
+  /** Shared backend-reachability signal — updated by app.ts checkBackend() */
+  backendOk = signal<boolean | null>(null);
 
   private headers(): HttpHeaders {
     const token = this.auth.token();

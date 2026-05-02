@@ -37,7 +37,8 @@ export class App implements OnInit, OnDestroy {
   view        = signal<View>((sessionStorage.getItem('sp_view') as View) || 'stocks');
   selectedSym = signal(sessionStorage.getItem('sp_sym') || '');
   showAuth    = signal(false);
-  backendOk   = signal<boolean | null>(null);
+  /** Proxy to ApiService.backendOk so the template can bind to it directly */
+  protected readonly backendOk = this.api.backendOk;
   showMobile  = signal(false);
   theme       = signal<'dark' | 'light'>(
     (localStorage.getItem('sp_theme') as 'dark' | 'light') ||

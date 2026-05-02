@@ -4,6 +4,7 @@ import { DomSanitizer } from '@angular/platform-browser';
 import { StockService } from '../../core/services/stock.service';
 import { WatchlistService } from '../../core/services/watchlist.service';
 import { LivePriceService } from '../../core/services/live-price.service';
+import { ApiService } from '../../core/services/api.service';
 import { Quote, Profile, Financials, NewsArticle, HistoryPoint, PerformanceData } from '../../core/models/stock.model';
 import { ChartComponent } from './chart/chart.component';
 import { Subject } from 'rxjs';
@@ -40,6 +41,7 @@ export class StockDetailComponent implements OnInit, OnDestroy {
   wl           = inject(WatchlistService);
   sanitizer    = inject(DomSanitizer);
   livePriceSvc = inject(LivePriceService);
+  private api  = inject(ApiService);
 
   symbol = input<string>('');
 
@@ -61,6 +63,7 @@ export class StockDetailComponent implements OnInit, OnDestroy {
   showFullDesc = signal(false);
   newsCategory = signal('all');
   priceFlash   = signal<'up'|'dn'|''>('');
+  loadFailed   = signal(false);
 
   private finsLoaded = false;
   private perfLoaded = false;
@@ -79,6 +82,16 @@ export class StockDetailComponent implements OnInit, OnDestroy {
     effect(() => {
       const sym = this.symbol();
       if (sym) untracked(() => this.load(sym));
+    });
+    // Retry full load when backend comes back online after a failed initial load
+    effect(() => {
+      const ok  = this.api.backendOk();
+      const sym = this.symbol();
+      if (ok && sym) {
+        untracked(() => {
+          if (this.loadFailed()) this.load(sym);
+        });
+      }
     });
     // Update quote in real-time from live price stream
     effect(() => {
@@ -117,12 +130,14 @@ export class StockDetailComponent implements OnInit, OnDestroy {
     this.news.set([]); this.history.set([]); this.perf.set(null);
     this.aiSummary.set(''); this.aiHtml.set('');
     this.finsLoaded = false; this.perfLoaded = false;
+    this.loadFailed.set(false);
     this.showFullDesc.set(false); this.newsCategory.set('all');
     this.lastPrice = null;
 
     this.stocks.getQuote(sym).pipe(takeUntil(this.destroy$)).subscribe(q => {
       this.animatePrice(q?.price ?? null);
       this.quote.set(q);
+      if (!q) this.loadFailed.set(true);
     });
     this.stocks.getProfile(sym).pipe(takeUntil(this.destroy$)).subscribe(p => this.profile.set(p));
     this.range.set('1mo');
