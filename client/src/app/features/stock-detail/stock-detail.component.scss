@@ -12,8 +12,9 @@
 .qh-name { font-size: 13px; color: var(--text2); margin-top: 2px; }
 .qh-tags { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
 .tag { padding: 2px 8px; border-radius: 4px; background: var(--card); border: 1px solid var(--border); font-size: 10px; color: var(--text3); font-weight: 600; }
-.badge-high { background: rgba(255,165,0,.12); border-color: rgba(255,165,0,.4); color: #f59e0b; }
-.badge-low  { background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.4); color: var(--red); }
+.badge-high   { background: rgba(255,165,0,.12); border-color: rgba(255,165,0,.4); color: #f59e0b; }
+.badge-low    { background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.4); color: var(--red); }
+.badge-closed { background: rgba(100,116,139,.12); border-color: rgba(100,116,139,.4); color: var(--text3); }
 .qh-right { text-align: right; }
 .qh-price {
   font-size: 28px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums;

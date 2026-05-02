@@ -17,6 +17,7 @@
             @if (profile()?.sector)   { <span class="tag">{{profile()?.sector}}</span> }
             @if (near52High()) { <span class="tag badge-high">🔥 Near 52W High</span> }
             @if (near52Low())  { <span class="tag badge-low">📉 Near 52W Low</span> }
+            @if (marketClosed) { <span class="tag badge-closed">⏸ Market Closed</span> }
           </div>
         </div>
       } @else {

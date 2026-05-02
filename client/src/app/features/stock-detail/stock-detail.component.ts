@@ -65,6 +65,34 @@ export class StockDetailComponent implements OnInit, OnDestroy {
   priceFlash   = signal<'up'|'dn'|''>('');
   loadFailed   = signal(false);
 
+  /** True when the relevant market is outside trading hours */
+  get marketClosed(): boolean {
+    const sym = this.symbol();
+    const isIndian = sym.endsWith('.NS') || sym.endsWith('.BO');
+    const now = new Date();
+    // Weekends: no market is open
+    if (now.getDay() === 0 || now.getDay() === 6) return true;
+    if (isIndian) {
+      // IST offset = UTC+5:30
+      const istMs  = now.getTime() + (5 * 60 + 30) * 60 * 1000;
+      const ist    = new Date(istMs);
+      const mins   = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+      return !(mins >= 9 * 60 + 15 && mins <= 15 * 60 + 30);
+    }
+    // US stocks: NYSE 9:30-16:00 ET (UTC-4 or -5)
+    const etOffset = this._isEDT(now) ? -4 : -5;
+    const etMs     = now.getTime() + etOffset * 3600 * 1000;
+    const et       = new Date(etMs);
+    const minsEt   = et.getUTCHours() * 60 + et.getUTCMinutes();
+    return !(minsEt >= 9 * 60 + 30 && minsEt <= 16 * 60);
+  }
+
+  private _isEDT(d: Date): boolean {
+    // EDT (UTC-4) is observed roughly March to November
+    const m = d.getUTCMonth() + 1;
+    return m >= 3 && m <= 11;
+  }
+
   private finsLoaded = false;
   private perfLoaded = false;
   protected readonly Math = Math;

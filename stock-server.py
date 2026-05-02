@@ -6,6 +6,7 @@ Serves Indian (NSE/BSE) and US stock data without CORS issues.
 
 import os, json, time, threading, logging, re, secrets, concurrent.futures
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from werkzeug.security import generate_password_hash, check_password_hash
 import requests as http_requests
 import feedparser
@@ -27,12 +28,56 @@ from db import (
 )
 
 # ── Config ──────────────────────────────────────────────────────────────────
-CACHE_TTL = 60          # seconds — quote cache lifetime
+CACHE_TTL = 60          # seconds — quote cache lifetime (during market hours)
 HIST_TTL  = 300         # seconds — history cache lifetime
 NEWS_TTL  = 600         # seconds — news cache lifetime
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('stockpulse')
+
+# ── Market-hours helpers ─────────────────────────────────────────────────────
+_IST = ZoneInfo('Asia/Kolkata')
+_EST = ZoneInfo('America/New_York')
+
+# NSE/BSE holidays where the exchange is fully closed.
+# Keyed as (year, month, day). Covers 2025-2026; update annually.
+_NSE_HOLIDAYS = {
+    # 2025
+    (2025,  1, 26), (2025,  2, 19), (2025,  3, 14), (2025,  3, 31),
+    (2025,  4, 14), (2025,  4, 18), (2025,  5,  1), (2025,  8, 15),
+    (2025,  8, 27), (2025, 10,  2), (2025, 10, 20), (2025, 10, 21),
+    (2025, 11,  5), (2025, 12, 25),
+    # 2026
+    (2026,  1, 26), (2026,  2, 19), (2026,  3,  3), (2026,  3, 20),
+    (2026,  4,  3), (2026,  4, 14), (2026,  5,  1), (2026,  8, 15),
+    (2026, 10,  2), (2026, 11,  9), (2026, 12, 25),
+}
+
+
+def is_market_open(symbol: str = '') -> bool:
+    """Return True if the relevant exchange is currently in a live trading session."""
+    is_indian = '.NS' in symbol or '.BO' in symbol or not symbol
+    if is_indian:
+        now = datetime.now(_IST)
+        if now.weekday() >= 5:                          # Sat / Sun
+            return False
+        if (now.year, now.month, now.day) in _NSE_HOLIDAYS:
+            return False
+        # NSE cash-market session: 09:15 – 15:30 IST
+        mins = now.hour * 60 + now.minute
+        return 9 * 60 + 15 <= mins <= 15 * 60 + 30
+    else:
+        # US stocks: NYSE regular session 09:30 – 16:00 ET
+        now_et = datetime.now(_EST)
+        if now_et.weekday() >= 5:
+            return False
+        mins_et = now_et.hour * 60 + now_et.minute
+        return 9 * 60 + 30 <= mins_et <= 16 * 60
+
+
+def quote_ttl(symbol: str = '') -> int:
+    """Cache TTL for a quote: 60 s during live session, 4 h when market is closed."""
+    return CACHE_TTL if is_market_open(symbol) else 3600 * 4
 
 app = Flask(__name__)
 CORS(app, origins='*')
@@ -1662,14 +1707,19 @@ def fetch_twelve_data_quote(symbol: str) -> dict | None:
 
 @app.route('/api/quote/<path:symbol>')
 def api_quote(symbol):
-    db = get_db()
+    db  = get_db()
     row = row_to_dict(db.execute('SELECT * FROM quotes WHERE symbol=?', (symbol,)).fetchone())
-    if row and not stale(row['fetched_at'], CACHE_TTL):
+    ttl = quote_ttl(symbol)   # 60 s during live session, 4 h when market closed
+    if row and not stale(row['fetched_at'], ttl):
         return jsonify({'ok': True, 'data': row, 'cached': True})
+
+    # Market closed + DB has recent-enough data → serve without hitting yfinance
+    if row and not is_market_open(symbol):
+        return jsonify({'ok': True, 'data': row, 'cached': True, 'market_closed': True})
 
     data = fetch_quote(symbol)
     if not data:
-        # return stale cache if we have it
+        # return stale cache if we have it (last-resort fallback)
         if row:
             return jsonify({'ok': True, 'data': row, 'cached': True, 'stale': True})
         return jsonify({'ok': False, 'error': 'No data'}), 404
@@ -1696,12 +1746,23 @@ def api_history(symbol):
     ).fetchone()
     newest_ts = newest['ts'] if newest and newest['ts'] else 0
 
-    if not stale(newest_ts, HIST_TTL):
+    # Use a longer TTL when market is closed — no new candles will arrive
+    hist_ttl = HIST_TTL if is_market_open(symbol) else 3600 * 4
+
+    if not stale(newest_ts, hist_ttl):
         rows = rows_to_list(db.execute(
             'SELECT ts,open,high,low,close,volume FROM history WHERE symbol=? AND range_key=? ORDER BY ts ASC',
             (symbol, range_key)
         ).fetchall())
         return jsonify({'ok': True, 'data': rows, 'cached': True})
+
+    # Market closed but we have history → serve without re-fetching
+    if newest_ts and not is_market_open(symbol):
+        rows = rows_to_list(db.execute(
+            'SELECT ts,open,high,low,close,volume FROM history WHERE symbol=? AND range_key=? ORDER BY ts ASC',
+            (symbol, range_key)
+        ).fetchall())
+        return jsonify({'ok': True, 'data': rows, 'cached': True, 'market_closed': True})
 
     pts = fetch_history(symbol, range_key)
     if not pts:
@@ -1802,10 +1863,11 @@ def api_stream_prices():
                         'volume':     row.get('volume'),
                         'currency':   row.get('currency') or 'INR',
                     }
-                    if stale(row.get('fetched_at'), CACHE_TTL):
+                    if stale(row.get('fetched_at'), quote_ttl(sym)):
                         _refresh_quote_bg(sym)
                 else:
-                    _refresh_quote_bg(sym)
+                    if is_market_open(sym):
+                        _refresh_quote_bg(sym)
 
         yield f"data: {json.dumps({'type': 'snapshot', 'quotes': snapshot})}\n\n"
 
@@ -1837,7 +1899,7 @@ def api_stream_prices():
                                     'currency':   row.get('currency') or 'INR',
                                 }
                                 prev_prices[sym] = new_price
-                            if stale(row.get('fetched_at'), CACHE_TTL):
+                            if stale(row.get('fetched_at'), quote_ttl(sym)):
                                 _refresh_quote_bg(sym)
 
                 if updates:
@@ -2072,14 +2134,25 @@ def batch_quotes():
     results = {}
     db = get_db()
 
-    # serve from cache first
+    # serve from cache first — use market-aware TTL
+    stale_rows = {}   # DB row exists but is stale; use as fallback if fetch fails
     for sym in symbols:
         row = row_to_dict(db.execute('SELECT * FROM quotes WHERE symbol=?', (sym,)).fetchone())
-        if row and not stale(row['fetched_at'], CACHE_TTL):
+        ttl = quote_ttl(sym)
+        if row and not stale(row['fetched_at'], ttl):
             results[sym] = row
+        elif row:
+            stale_rows[sym] = row   # keep for fallback
 
-    # fetch stale / missing in parallel threads
-    missing = [s for s in symbols if s not in results]
+    # When market is closed, don't re-fetch stale cached rows — just serve them
+    truly_missing = []
+    for sym in symbols:
+        if sym in results:
+            continue
+        if not is_market_open(sym) and sym in stale_rows:
+            results[sym] = stale_rows[sym]   # serve last-known price on holiday/weekend
+        else:
+            truly_missing.append(sym)
 
     def fetch_one(sym):
         data = fetch_quote(sym)
@@ -2094,8 +2167,10 @@ def batch_quotes():
                       data['prev_close'], data['change'], data['change_pct'],
                       data['volume'], data['mkt_cap'], data['currency'], now_ts()))
                 db2.commit()
+        elif sym in stale_rows:
+            results[sym] = stale_rows[sym]   # last-resort: serve stale data
 
-    threads = [threading.Thread(target=fetch_one, args=(sym,)) for sym in missing]
+    threads = [threading.Thread(target=fetch_one, args=(sym,)) for sym in truly_missing]
     for t in threads: t.start()
     for t in threads: t.join(timeout=20)
 
