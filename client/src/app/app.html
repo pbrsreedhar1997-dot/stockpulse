@@ -26,8 +26,8 @@
         <button class="tnav-btn" [class.active]="view()==='chat'"     (click)="switchView('chat')">🤖 AI Chat</button>
       </div>
       <div class="tnav-right">
-        <div class="be-pill" [class.ok]="backendOk()===true" [class.err]="backendOk()===false">
-          {{backendOk() === null ? '⟳ Connecting…' : backendOk() ? '● Live' : '✕ Offline'}}
+        <div class="be-pill" [class.ok]="backendOk()===true" [class.err]="backendOk()===false" [class.waking]="backendOk()===null||backendOk()===false">
+          {{backendOk() === null ? '⟳ Waking up…' : backendOk() ? '● Live' : '⟳ Reconnecting…'}}
         </div>
         <div class="live-pill"
              [class.live]="livePriceSvc.status()==='live'"

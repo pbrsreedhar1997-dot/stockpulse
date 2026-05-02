@@ -88,6 +88,8 @@ export class App implements OnInit, OnDestroy {
 
   private intervals: ReturnType<typeof setInterval>[] = [];
   private hiddenAt = 0;
+  private wakeRetryId?: ReturnType<typeof setTimeout>;
+  private wakeRetries = 0;
   private visibilityHandler = () => {
     if (document.visibilityState === 'hidden') {
       this.hiddenAt = Date.now();
@@ -130,11 +132,14 @@ export class App implements OnInit, OnDestroy {
     setTimeout(() => this.livePriceSvc.connect(this.wl.items().map(i => i.symbol)), 5000);
     this.intervals.push(setInterval(() => this.refreshQuotes(), 60000));
     this.intervals.push(setInterval(() => this.checkBackend(), 30000));
+    // Fast-retry loop for cold-start wake-up (Render free tier sleeps after inactivity)
+    this._scheduleWakeRetry();
     document.addEventListener('visibilitychange', this.visibilityHandler);
   }
 
   ngOnDestroy() {
     this.intervals.forEach(id => clearInterval(id));
+    clearTimeout(this.wakeRetryId);
     document.removeEventListener('visibilitychange', this.visibilityHandler);
     this.livePriceSvc.disconnect();
   }
@@ -144,8 +149,26 @@ export class App implements OnInit, OnDestroy {
       const ok = !!r?.ok;
       const prev = this.backendOk();
       this.backendOk.set(ok);
-      if (ok && prev === false) this.refreshQuotes();
+      if (ok) {
+        // Server is up — stop wake-up retries
+        clearTimeout(this.wakeRetryId);
+        this.wakeRetries = 0;
+        if (prev === false) this.refreshQuotes();
+      }
     });
+  }
+
+  // Retry ping every 5 s for the first 2 minutes to handle Render cold starts.
+  // Stops automatically once the backend responds OK.
+  private _scheduleWakeRetry() {
+    if (this.backendOk() === true || this.wakeRetries >= 24) return;
+    this.wakeRetries++;
+    this.wakeRetryId = setTimeout(() => {
+      if (this.backendOk() !== true) {
+        this.checkBackend();
+        this._scheduleWakeRetry();
+      }
+    }, 5000);
   }
 
   refreshQuotes() {

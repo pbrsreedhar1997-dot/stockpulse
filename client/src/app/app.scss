@@ -23,6 +23,7 @@ button, a { transition: background-color .15s, color .15s, border-color .15s, op
   animation: fadeIn .15s ease;
 }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pulse  { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
 
 .main {
   flex: 1;
@@ -64,8 +65,10 @@ button, a { transition: background-color .15s, color .15s, border-color .15s, op
   padding: 4px 10px; border-radius: 20px; font-size: 10px; font-weight: 700;
   background: var(--card); border: 1px solid var(--border); color: var(--text3);
   white-space: nowrap;
-  &.ok  { background: rgba(0,212,170,.12); border-color: rgba(0,212,170,.3); color: var(--green); }
-  &.err { background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.3); color: var(--red); }
+  &.ok     { background: rgba(0,212,170,.12); border-color: rgba(0,212,170,.3); color: var(--green); }
+  &.err    { background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.3); color: var(--red); }
+  &.waking { background: rgba(240,168,50,.10); border-color: rgba(240,168,50,.3); color: var(--amber);
+             animation: pulse 1.5s ease-in-out infinite; }
 }
 
 .live-pill {
