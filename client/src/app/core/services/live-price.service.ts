@@ -14,7 +14,9 @@ export class LivePriceService implements OnDestroy {
   private api  = inject(ApiService);
   private zone = inject(NgZone);
 
-  private es?: EventSource;
+  private es?:          EventSource;
+  private reconnectId?: ReturnType<typeof setTimeout>;
+  private symbols:      string[] = [];
 
   quotes = signal<Record<string, LivePrice>>({});
   status = signal<'off' | 'connecting' | 'live' | 'error'>('off');
@@ -22,7 +24,14 @@ export class LivePriceService implements OnDestroy {
   connect(symbols: string[]) {
     this.disconnect();
     if (!symbols.length) return;
-    this.status.set('connecting');
+    this.symbols = symbols;
+    this._open();
+  }
+
+  private _open() {
+    const symbols = this.symbols;
+    if (!symbols.length) return;
+    this.zone.run(() => this.status.set('connecting'));
 
     const url = `${this.api.base}/stream/prices?symbols=${symbols.map(encodeURIComponent).join(',')}`;
 
@@ -35,19 +44,39 @@ export class LivePriceService implements OnDestroy {
         try {
           const msg = JSON.parse(e.data as string);
           if (msg.type === 'snapshot' || msg.type === 'update') {
-            this.zone.run(() => this.quotes.update(q => ({ ...q, ...(msg.quotes as Record<string, LivePrice>) })));
+            this.zone.run(() =>
+              this.quotes.update(q => ({ ...q, ...(msg.quotes as Record<string, LivePrice>) }))
+            );
+          } else if (msg.type === 'close') {
+            // Server closed gracefully after 5-min cycle; reconnect after 30 s
+            this._scheduleReconnect(30000);
           }
         } catch { /* ignore parse errors */ }
       };
 
-      this.es.onerror = () => this.zone.run(() => this.status.set('error'));
+      this.es.onerror = () => {
+        // Close immediately so EventSource doesn't auto-retry every 3 s and
+        // flood the thread pool. Reconnect manually after 30 s.
+        this.es?.close();
+        this.es = undefined;
+        this.zone.run(() => this.status.set('error'));
+        this._scheduleReconnect(30000);
+      };
     });
   }
 
+  private _scheduleReconnect(delayMs: number) {
+    clearTimeout(this.reconnectId);
+    this.reconnectId = setTimeout(() => this._open(), delayMs);
+  }
+
   disconnect() {
+    clearTimeout(this.reconnectId);
     this.es?.close();
-    this.es = undefined;
-    this.status.set('off');
+    this.es          = undefined;
+    this.reconnectId = undefined;
+    this.symbols     = [];
+    this.zone.run(() => this.status.set('off'));
   }
 
   ngOnDestroy() { this.disconnect(); }

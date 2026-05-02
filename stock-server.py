@@ -1782,7 +1782,11 @@ def api_stream_prices():
         return jsonify({'ok': False, 'error': 'symbols required'}), 400
 
     def generate():
-        # Initial snapshot from DB cache
+        # Tell the browser: wait 30 s before reconnecting if the connection drops.
+        # Prevents thundering-herd reconnect storms on the free-tier worker pool.
+        yield "retry: 30000\n\n"
+
+        # ── Initial snapshot ─────────────────────────────────────────────────
         snapshot = {}
         with thread_connection() as conn:
             for sym in symbols:
@@ -1806,12 +1810,13 @@ def api_stream_prices():
         yield f"data: {json.dumps({'type': 'snapshot', 'quotes': snapshot})}\n\n"
 
         prev_prices = {s: snapshot.get(s, {}).get('price') for s in symbols}
-        tick = 0
+        # Max 30 ticks × 10 s = 5 minutes, then close so the thread is freed.
+        # The browser auto-reconnects (after the retry: 30000 delay above).
+        MAX_TICKS = 30
 
-        while True:
+        for tick in range(1, MAX_TICKS + 1):
             try:
-                time.sleep(5)
-                tick += 1
+                time.sleep(10)   # 10 s between DB polls — halves thread-sleep time vs 5 s
                 updates = {}
 
                 with thread_connection() as conn:
@@ -1822,8 +1827,8 @@ def api_stream_prices():
                         ).fetchone())
                         if row:
                             new_price = row.get('price')
-                            # Send if price changed or force-refresh every 60 s (12 × 5 s)
-                            if new_price != prev_prices.get(sym) or tick % 12 == 0:
+                            # Emit when price changed or every 60 s (6 × 10 s)
+                            if new_price != prev_prices.get(sym) or tick % 6 == 0:
                                 updates[sym] = {
                                     'price':      row['price'],
                                     'change':     row['change'],
@@ -1837,7 +1842,7 @@ def api_stream_prices():
 
                 if updates:
                     yield f"data: {json.dumps({'type': 'update', 'quotes': updates})}\n\n"
-                elif tick % 12 == 0:
+                elif tick % 6 == 0:
                     yield f"data: {json.dumps({'type': 'ping'})}\n\n"
 
             except GeneratorExit:
@@ -1845,6 +1850,9 @@ def api_stream_prices():
             except Exception as e:
                 log.debug(f'stream_prices error: {e}')
                 return
+
+        # Graceful close — client will reconnect after the retry delay
+        yield f"data: {json.dumps({'type': 'close'})}\n\n"
 
     return Response(
         stream_with_context(generate()),

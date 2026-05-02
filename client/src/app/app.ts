@@ -125,8 +125,9 @@ export class App implements OnInit, OnDestroy {
     }
 
     this.refreshQuotes();
-    // Start live price streaming
-    this.livePriceSvc.connect(this.wl.items().map(i => i.symbol));
+    // Delay SSE connection so the initial batch of API calls (quote, profile,
+    // history, financials, news) can claim threads before SSE occupies one.
+    setTimeout(() => this.livePriceSvc.connect(this.wl.items().map(i => i.symbol)), 5000);
     this.intervals.push(setInterval(() => this.refreshQuotes(), 60000));
     this.intervals.push(setInterval(() => this.checkBackend(), 30000));
     document.addEventListener('visibilitychange', this.visibilityHandler);

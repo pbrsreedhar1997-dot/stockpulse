@@ -15,7 +15,7 @@ import threading
 
 workers     = int(os.environ.get('WEB_CONCURRENCY', 1))
 worker_class = 'gthread'
-threads     = 4
+threads     = 10   # raised from 4 — SSE sleeps occupy threads; need headroom for API calls
 timeout     = 300
 keepalive   = 5
 bind        = f"0.0.0.0:{os.environ.get('PORT', '10000')}"
