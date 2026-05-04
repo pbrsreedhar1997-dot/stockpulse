@@ -154,7 +154,7 @@ export class App implements OnInit, OnDestroy {
         // Server is up — stop wake-up retries
         clearTimeout(this.wakeRetryId);
         this.wakeRetries = 0;
-        if (prev === false) this.refreshQuotes();
+        if (prev !== true) this.refreshQuotes();
       }
     });
   }

@@ -1,9 +1,11 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Observable, of } from 'rxjs';
-import { catchError, map } from 'rxjs/operators';
+import { catchError, map, timeout } from 'rxjs/operators';
 import { environment } from '../../../environments/environment';
 import { AuthService } from './auth.service';
+
+const API_TIMEOUT = 25000; // 25 s — enough for yfinance cold fetch on Render
 
 @Injectable({ providedIn: 'root' })
 export class ApiService {
@@ -25,7 +27,8 @@ export class ApiService {
     return this.http
       .get<{ ok: boolean; data: T; [k: string]: unknown }>(`${this.base}${path}`, { headers: this.headers() })
       .pipe(
-        map(r => (r.ok ? (r.data as T) : null)),
+        timeout(API_TIMEOUT),
+        map(r => (r?.ok ? (r.data as T) : null)),
         catchError(() => of(null))
       );
   }
@@ -33,18 +36,27 @@ export class ApiService {
   getRaw<T>(path: string): Observable<T | null> {
     return this.http
       .get<T>(`${this.base}${path}`, { headers: this.headers() })
-      .pipe(catchError(() => of(null)));
+      .pipe(
+        timeout(API_TIMEOUT),
+        catchError(() => of(null))
+      );
   }
 
   post<T>(path: string, body: unknown): Observable<T | null> {
     return this.http
       .post<T>(`${this.base}${path}`, body, { headers: this.headers().set('Content-Type', 'application/json') })
-      .pipe(catchError(() => of(null)));
+      .pipe(
+        timeout(API_TIMEOUT),
+        catchError(() => of(null))
+      );
   }
 
   delete<T>(path: string): Observable<T | null> {
     return this.http
       .delete<T>(`${this.base}${path}`, { headers: this.headers() })
-      .pipe(catchError(() => of(null)));
+      .pipe(
+        timeout(API_TIMEOUT),
+        catchError(() => of(null))
+      );
   }
 }

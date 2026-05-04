@@ -95,6 +95,8 @@ export class StockDetailComponent implements OnInit, OnDestroy {
 
   private finsLoaded = false;
   private perfLoaded = false;
+  private retried    = false;
+  private autoRetryTimer?: ReturnType<typeof setTimeout>;
   protected readonly Math = Math;
   private destroy$  = new Subject<void>();
   private history$  = new Subject<void>();
@@ -111,13 +113,26 @@ export class StockDetailComponent implements OnInit, OnDestroy {
       const sym = this.symbol();
       if (sym) untracked(() => this.load(sym));
     });
-    // Retry full load when backend comes back online after a failed initial load
+    // Reset retry flag whenever the symbol changes so a new stock always retries
     effect(() => {
-      const ok  = this.api.backendOk();
       const sym = this.symbol();
-      if (ok && sym) {
+      if (sym) untracked(() => { this.retried = false; });
+    });
+    // Auto-retry when backend comes back online AND load previously failed.
+    // loadFailed() is read *outside* untracked so the effect re-runs when it flips.
+    effect(() => {
+      const ok     = this.api.backendOk();
+      const sym    = this.symbol();
+      const failed = this.loadFailed();
+      if (ok && sym && failed) {
         untracked(() => {
-          if (this.loadFailed()) this.load(sym);
+          if (!this.retried) {
+            this.retried = true;
+            clearTimeout(this.autoRetryTimer);
+            this.autoRetryTimer = setTimeout(() => {
+              if (this.loadFailed()) this.load(sym);
+            }, 3000);
+          }
         });
       }
     });
@@ -151,6 +166,7 @@ export class StockDetailComponent implements OnInit, OnDestroy {
     this.destroy$.next(); this.destroy$.complete();
     this.history$.complete(); this.news$.complete();
     clearTimeout(this.flashTimer);
+    clearTimeout(this.autoRetryTimer);
   }
 
   load(sym: string) {
