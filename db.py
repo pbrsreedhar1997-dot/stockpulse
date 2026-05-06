@@ -37,7 +37,10 @@ elif DATABASE_URL and not DATABASE_URL.startswith('postgresql://'):
     )
     DATABASE_URL = 'postgresql://' + DATABASE_URL
 USE_PG = bool(DATABASE_URL)
-DB_PATH      = os.path.join(os.path.dirname(__file__), 'stockpulse.db')
+# On Render (and other read-only-overlay hosts) write the SQLite file to /tmp
+_tmp_db = '/tmp/stockpulse.db'
+_local_db = os.path.join(os.path.dirname(__file__), 'stockpulse.db')
+DB_PATH = _tmp_db if os.environ.get('RENDER') else _local_db
 
 # ── Table primary keys — needed to generate ON CONFLICT upsert clauses ────────
 _TABLE_PK = {
@@ -139,30 +142,45 @@ class _PGConn:
 # ── PostgreSQL connection pool ────────────────────────────────────────────────
 _pg_pool      = None
 _pg_pool_lock = threading.Lock()
+_pg_failed    = False   # set True after first unrecoverable connection failure
 
 
 def _get_pg_pool():
-    global _pg_pool
+    global _pg_pool, _pg_failed, USE_PG
+    if _pg_failed:
+        return None
     if _pg_pool is None:
         with _pg_pool_lock:
-            if _pg_pool is None:
-                import psycopg2.pool
-                dsn = DATABASE_URL
-                # Supabase (and any remote host) requires SSL
-                is_remote = 'localhost' not in dsn and '127.0.0.1' not in dsn
-                if is_remote and 'sslmode' not in dsn:
-                    dsn += ('&' if '?' in dsn else '?') + 'sslmode=require'
-                if 'connect_timeout' not in dsn:
-                    dsn += '&connect_timeout=10'
-                _pg_pool = psycopg2.pool.ThreadedConnectionPool(
-                    minconn=2, maxconn=20, dsn=dsn
-                )
-                log.info('PostgreSQL pool ready')
+            if _pg_pool is None and not _pg_failed:
+                try:
+                    import psycopg2.pool
+                    dsn = DATABASE_URL
+                    # Supabase (and any remote host) requires SSL
+                    is_remote = 'localhost' not in dsn and '127.0.0.1' not in dsn
+                    if is_remote and 'sslmode' not in dsn:
+                        dsn += ('&' if '?' in dsn else '?') + 'sslmode=require'
+                    if 'connect_timeout' not in dsn:
+                        dsn += '&connect_timeout=10'
+                    _pg_pool = psycopg2.pool.ThreadedConnectionPool(
+                        minconn=1, maxconn=20, dsn=dsn
+                    )
+                    log.info('PostgreSQL pool ready')
+                except Exception as e:
+                    log.error(
+                        'PostgreSQL unreachable (%s) — falling back to SQLite. '
+                        'Fix DATABASE_URL in Render environment variables.', e
+                    )
+                    _pg_failed = True
+                    USE_PG = False
+                    _init_sqlite()
     return _pg_pool
 
 
 def _get_pg_conn() -> _PGConn:
-    raw = _get_pg_pool().getconn()
+    pool = _get_pg_pool()
+    if pool is None:
+        raise RuntimeError('PostgreSQL unavailable')
+    raw = pool.getconn()
     # autocommit=False is the psycopg2 default; setting it here triggers
     # set_session() which raises ProgrammingError when a transaction is open
     # on a recycled pool connection — so we just leave it alone.
@@ -171,9 +189,19 @@ def _get_pg_conn() -> _PGConn:
 
 def _put_pg_conn(raw):
     try:
-        _get_pg_pool().putconn(raw)
+        pool = _get_pg_pool()
+        if pool:
+            pool.putconn(raw)
     except Exception:
         pass
+
+
+def _sqlite_conn():
+    """Open a plain SQLite connection (fallback path)."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA foreign_keys = ON')
+    return conn
 
 
 # ── Flask request-context helpers ─────────────────────────────────────────────
@@ -182,34 +210,36 @@ def get_db():
     from flask import g
     if USE_PG:
         if 'db' not in g:
-            wrapped, raw = _get_pg_conn()
-            g.db      = wrapped
-            g._db_raw = raw
+            try:
+                wrapped, raw = _get_pg_conn()
+                g.db      = wrapped
+                g._db_raw = raw
+            except Exception:
+                # PG unavailable — fall back to SQLite for this request
+                g.db = _sqlite_conn()
         return g.db
     else:
         if 'db' not in g:
-            g.db = sqlite3.connect(DB_PATH)
-            g.db.row_factory = sqlite3.Row
-            g.db.execute('PRAGMA foreign_keys = ON')
+            g.db = _sqlite_conn()
         return g.db
 
 
 def close_db(_=None):
     """Release the request's connection back to the pool (PG) or close (SQLite)."""
     from flask import g
-    if USE_PG:
-        raw = g.pop('_db_raw', None)
-        g.pop('db', None)
-        if raw:
-            try:
-                raw.rollback()  # discard any uncommitted transaction before recycling
-            except Exception:
-                pass
-            _put_pg_conn(raw)
-    else:
-        db = g.pop('db', None)
-        if db:
+    raw = g.pop('_db_raw', None)
+    db  = g.pop('db', None)
+    if raw:
+        try:
+            raw.rollback()
+        except Exception:
+            pass
+        _put_pg_conn(raw)
+    elif db:
+        try:
             db.close()
+        except Exception:
+            pass
 
 
 # ── Background-thread connection context manager ──────────────────────────────
@@ -223,14 +253,25 @@ def thread_connection():
             conn.commit()
     """
     if USE_PG:
-        wrapped, raw = _get_pg_conn()
+        try:
+            wrapped, raw = _get_pg_conn()
+        except Exception:
+            # PG unavailable — fall back to SQLite
+            conn = _sqlite_conn()
+            try:
+                yield conn
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            return
         try:
             yield wrapped
         finally:
             _put_pg_conn(raw)
     else:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = _sqlite_conn()
         try:
             yield conn
         finally:
