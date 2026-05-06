@@ -3,25 +3,23 @@ services:
     name: stockpulse
     runtime: python
     plan: free
-    buildCommand: pip install -r requirements.txt && npm --prefix client install && npm --prefix client run build
+    region: oregon
+    branch: main
+    buildCommand: pip install -r requirements.txt
     startCommand: gunicorn wsgi:app -c gunicorn.conf.py
     healthCheckPath: /api/ping
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.6"
-      - key: GROQ_API_KEY
-        sync: false
       - key: DATABASE_URL
+        sync: false
+      - key: GROQ_API_KEY
         sync: false
       - key: FINNHUB_API_KEY
         sync: false
-      - key: ALPHA_VANTAGE_KEY
-        sync: false
-      - key: TWELVE_DATA_KEY
+      - key: VAPID_CONTACT
         sync: false
       - key: VAPID_PUBLIC_KEY
         sync: false
       - key: VAPID_PRIVATE_KEY
-        sync: false
-      - key: VAPID_CONTACT
         sync: false
