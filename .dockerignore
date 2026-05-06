@@ -1,0 +1,14 @@
+client/node_modules/
+client/.angular/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+stockpulse.db
+stockpulse.db-wal
+stockpulse.db-shm
+stockpulse.env
+.git/
+.DS_Store
+static/dist/
