@@ -2,8 +2,10 @@
   "name": "stockpulse",
   "private": true,
   "scripts": {
+    "install:all": "npm --prefix client install && npm --prefix server install",
     "build": "npm --prefix client run build",
-    "dev": "npm --prefix client run dev",
-    "install:client": "npm --prefix client install"
+    "dev:client": "npm --prefix client run dev",
+    "dev:server": "npm --prefix server run dev",
+    "start": "node server/index.js"
   }
 }

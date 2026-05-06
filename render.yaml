@@ -1,25 +1,24 @@
 services:
   - type: web
     name: stockpulse
-    runtime: python
+    runtime: node
     plan: free
     region: oregon
     branch: main
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn wsgi:app -c gunicorn.conf.py
+    rootDir: .
+    buildCommand: npm install && npm --prefix client install && npm --prefix client run build && npm --prefix server install
+    startCommand: node server/index.js
     healthCheckPath: /api/ping
     envVars:
-      - key: PYTHON_VERSION
-        value: "3.11.6"
+      - key: NODE_VERSION
+        value: "20"
       - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
         sync: false
       - key: GROQ_API_KEY
         sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
       - key: FINNHUB_API_KEY
-        sync: false
-      - key: VAPID_CONTACT
-        sync: false
-      - key: VAPID_PUBLIC_KEY
-        sync: false
-      - key: VAPID_PRIVATE_KEY
         sync: false

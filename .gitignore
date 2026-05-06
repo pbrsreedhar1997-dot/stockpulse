@@ -16,9 +16,10 @@ venv/
 # macOS
 .DS_Store
 
-# Node / Angular
+# Node
 client/node_modules/
 client/.angular/
+server/node_modules/
 
 # Build output (committed to git for Render deployment)
 # static/dist is intentionally NOT ignored

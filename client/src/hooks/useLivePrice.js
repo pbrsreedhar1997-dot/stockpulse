@@ -1,39 +1,27 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
+import { useWebSocket } from '../contexts/WebSocketContext';
 import { useAppContext } from '../contexts/AppContext';
 
 export function useLivePrice(symbols) {
+  const { emit, on } = useWebSocket();
   const { dispatch } = useAppContext();
-  const esRef = useRef(null);
-  const retryRef = useRef(null);
 
   useEffect(() => {
-    if (!symbols || symbols.length === 0) return;
+    if (!symbols?.length) return;
 
-    const connect = () => {
-      const url = `/api/stream/prices?symbols=${symbols.join(',')}`;
-      const es = new EventSource(url);
-      esRef.current = es;
+    // Subscribe to live price stream
+    emit({ type: 'subscribe', symbols });
 
-      es.onmessage = (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          if (data.symbol && data.price) {
-            dispatch({ type: 'SET_QUOTE', payload: { symbol: data.symbol, data } });
-          }
-        } catch {}
-      };
-
-      es.onerror = () => {
-        es.close();
-        retryRef.current = setTimeout(connect, 30000);
-      };
-    };
-
-    connect();
+    // Handle incoming price updates
+    const unsub = on('price', (msg) => {
+      if (msg.symbol && msg.price != null) {
+        dispatch({ type: 'SET_QUOTE', payload: { symbol: msg.symbol, data: msg } });
+      }
+    });
 
     return () => {
-      esRef.current?.close();
-      clearTimeout(retryRef.current);
+      emit({ type: 'unsubscribe', symbols });
+      unsub();
     };
   }, [symbols?.join(',')]);
 }
