@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
 
 const initialState = {
+  backendOk: null,
   theme: localStorage.getItem('sp_theme') || 'dark',
   user: (() => { try { return JSON.parse(localStorage.getItem('sp_user')); } catch { return null; } })(),
   token: localStorage.getItem('sp_token') || null,
@@ -17,6 +18,8 @@ const initialState = {
 
 function reducer(state, action) {
   switch (action.type) {
+    case 'SET_BACKEND_OK':
+      return { ...state, backendOk: action.payload };
     case 'SET_THEME':
       return { ...state, theme: action.payload };
     case 'SET_USER':

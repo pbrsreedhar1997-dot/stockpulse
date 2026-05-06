@@ -151,6 +151,34 @@
   background: var(--bg);
 }
 
+.be-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  color: var(--text3);
+  white-space: nowrap;
+
+  &.pill--ok {
+    color: var(--green);
+    border-color: rgba(0, 212, 170, 0.35);
+    background: rgba(0, 212, 170, 0.08);
+  }
+
+  &.pill--waking {
+    color: #f59e0b;
+    border-color: rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.08);
+    animation: pulse-amber 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes pulse-amber {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 .empty-state {
   display: flex;
   flex-direction: column;

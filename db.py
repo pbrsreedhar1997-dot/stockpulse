@@ -29,6 +29,12 @@ DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
 if DATABASE_URL.startswith('postgres://'):
     DATABASE_URL = 'postgresql://' + DATABASE_URL[len('postgres://'):]
 elif DATABASE_URL and not DATABASE_URL.startswith('postgresql://'):
+    log.warning(
+        'DATABASE_URL does not start with postgresql:// (got: %s…). '
+        'Check your Render environment variable — it should be the full '
+        'postgresql://user:pass@host:port/dbname URI.',
+        DATABASE_URL[:30]
+    )
     DATABASE_URL = 'postgresql://' + DATABASE_URL
 USE_PG = bool(DATABASE_URL)
 DB_PATH      = os.path.join(os.path.dirname(__file__), 'stockpulse.db')

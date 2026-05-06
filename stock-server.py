@@ -783,14 +783,47 @@ def _screener_fetch_one(sym: str) -> dict | None:
         log.warning(f'Screener {sym}: {e}')
         return None
 
+def _reset_yf_crumb():
+    """Force yfinance to re-fetch cookie and crumb on next request."""
+    try:
+        from yfinance.data import YfData
+        d = YfData()
+        with d._cookie_lock:
+            d._crumb  = None
+            d._cookie = None
+        log.info('yfinance crumb reset')
+    except Exception as ex:
+        log.debug(f'crumb reset failed: {ex}')
+
+def _screener_fetch_one_with_retry(sym: str) -> dict | None:
+    """_screener_fetch_one wrapped with retry on rate-limit / crumb expiry."""
+    import random
+    for attempt in range(3):
+        result = _screener_fetch_one(sym)
+        if result is not None:
+            return result
+        # Inspect last warning: if we hit 401/rate-limit, wait and retry
+        # (yfinance logs the error; _screener_fetch_one always returns None on error)
+        # We use a simple heuristic: always sleep between retries for screener stocks
+        if attempt < 2:
+            wait = random.uniform(5, 12) * (attempt + 1)
+            time.sleep(wait)
+    return None
+
 def _run_value_picks() -> list:
-    from concurrent.futures import ThreadPoolExecutor
-    # Keep workers low — Render free tier has 0.1 CPU / 512 MB RAM
+    import random
+    # Sequential with per-stock delay to respect Yahoo Finance rate limits.
+    # Concurrent workers consistently trigger 429 on Render's shared IP.
     results = []
-    with ThreadPoolExecutor(max_workers=2) as ex:
-        for item in ex.map(_screener_fetch_one, INDIA_LARGE_CAP):
-            if item:
-                results.append(item)
+    for i, sym in enumerate(INDIA_LARGE_CAP):
+        if i > 0:
+            time.sleep(random.uniform(2.0, 4.0))
+        # Refresh crumb every 20 stocks to prevent 401 errors
+        if i % 20 == 0 and i > 0:
+            _reset_yf_crumb()
+        item = _screener_fetch_one_with_retry(sym)
+        if item:
+            results.append(item)
     results.sort(key=lambda x: x['decline_pct'], reverse=True)
     return results
 
@@ -822,7 +855,10 @@ def _run_screener_bg():
             _screener_running = False
 
 def _maybe_start_screener():
-    """Start background screener if cache is missing or stale."""
+    """Start background screener if cache is missing or stale.
+    Waits 3 minutes after startup so quote/profile API calls can finish first."""
+    # Delay screener on startup — don't race with cold-start quote fetches
+    time.sleep(180)
     try:
         with thread_connection() as conn:
             row = conn.execute(

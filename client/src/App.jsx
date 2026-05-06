@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useAppContext } from './contexts/AppContext';
 import { useWatchlist } from './hooks/useWatchlist';
 import { useStocks } from './hooks/useStocks';
@@ -13,6 +13,10 @@ import Search from './components/Search/Search';
 import Toast from './components/shared/Toast';
 import './App.scss';
 
+const PING_INTERVAL_MS  = 30000;
+const WAKE_RETRY_MS     = 5000;
+const WAKE_RETRY_LIMIT  = 24; // 24 × 5s = 2 min fast-retry window
+
 export default function App() {
   const { state, dispatch } = useAppContext();
   const { watchlist, syncFromServer } = useWatchlist();
@@ -22,15 +26,69 @@ export default function App() {
   const symbols = watchlist.map(s => s.symbol);
   useLivePrice(symbols);
 
+  // Backend health check — handles Render free tier cold start
+  const wakeRetries    = useRef(0);
+  const wakeRetryTimer = useRef(null);
+  const pingInterval   = useRef(null);
+
+  function refreshQuotes(syms) {
+    syms.forEach(sym => fetchQuote(sym));
+  }
+
+  function checkBackend(syms) {
+    fetch('/api/ping')
+      .then(r => r.json())
+      .then(json => {
+        const ok = !!json?.ok;
+        const prev = state.backendOk;
+        dispatch({ type: 'SET_BACKEND_OK', payload: ok });
+        if (ok) {
+          clearTimeout(wakeRetryTimer.current);
+          wakeRetries.current = 0;
+          // Trigger quote refresh on first successful ping (null→true) or recovery (false→true)
+          if (prev !== true) refreshQuotes(syms);
+        }
+      })
+      .catch(() => {
+        dispatch({ type: 'SET_BACKEND_OK', payload: false });
+      });
+  }
+
+  function scheduleWakeRetry(syms) {
+    if (wakeRetries.current >= WAKE_RETRY_LIMIT) return;
+    wakeRetries.current++;
+    wakeRetryTimer.current = setTimeout(() => {
+      if (state.backendOk !== true) {
+        checkBackend(syms);
+        scheduleWakeRetry(syms);
+      }
+    }, WAKE_RETRY_MS);
+  }
+
   useEffect(() => {
     syncFromServer();
   }, [state.token]);
 
   useEffect(() => {
-    symbols.forEach(sym => fetchQuote(sym));
+    if (symbols.length) {
+      symbols.forEach(sym => fetchQuote(sym));
+      checkBackend(symbols);
+      scheduleWakeRetry(symbols);
+    }
+    pingInterval.current = setInterval(() => checkBackend(symbols), PING_INTERVAL_MS);
+    return () => {
+      clearInterval(pingInterval.current);
+      clearTimeout(wakeRetryTimer.current);
+    };
   }, [watchlist.length]);
 
   const setView = (v) => dispatch({ type: 'SET_VIEW', payload: v });
+
+  const backendPill = state.backendOk === null
+    ? { label: '⟳ Waking up…', cls: 'pill--waking' }
+    : state.backendOk
+      ? { label: '● Live', cls: 'pill--ok' }
+      : { label: '⟳ Reconnecting…', cls: 'pill--waking' };
 
   return (
     <div className="app">
@@ -50,6 +108,8 @@ export default function App() {
         <div className="header__spacer" />
 
         <nav className="header__actions">
+          <span className={`be-pill ${backendPill.cls}`}>{backendPill.label}</span>
+
           <button
             className={`nav-btn ${state.view === 'stock' ? 'nav-btn--active' : ''}`}
             onClick={() => setView('stock')}
