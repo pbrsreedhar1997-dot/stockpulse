@@ -22,10 +22,9 @@ export function useApi() {
       }
 
       const json = await res.json();
-      // Unwrap {ok: true, data: ...} envelope used by Flask endpoints
-      if (json && typeof json === 'object' && 'ok' in json && 'data' in json) {
-        if (!json.ok) throw new Error(json.error || 'API error');
-        return json.data;
+      // Throw on explicit server-side errors ({ok: false, error: "..."})
+      if (json && typeof json === 'object' && json.ok === false) {
+        throw new Error(json.error || 'API error');
       }
       return json;
     } catch (err) {

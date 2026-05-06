@@ -26,8 +26,11 @@ export function useWatchlist() {
   const syncFromServer = useCallback(async () => {
     if (!state.token) return;
     try {
-      const data = await api.get('/api/watchlist');
-      if (data?.watchlist) dispatch({ type: 'SET_WATCHLIST', payload: data.watchlist });
+      const res = await api.get('/api/watchlist');
+      const list = res?.data;
+      if (Array.isArray(list) && list.length) {
+        dispatch({ type: 'SET_WATCHLIST', payload: list });
+      }
     } catch {}
   }, [api, dispatch, state.token]);
 

@@ -14,12 +14,12 @@ export function useScreener() {
 
     const poll = async (delay = 6000) => {
       try {
-        const data = await api.get('/api/screener/value-picks');
-        if (data.status === 'loading') {
+        const res = await api.get('/api/screener/value-picks');
+        if (res.status === 'loading') {
           pollRef.current = setTimeout(() => poll(Math.min(delay * 1.5, 30000)), delay);
           return;
         }
-        setStocks(data.stocks || []);
+        setStocks(Array.isArray(res.data) ? res.data : []);
         setLoading(false);
       } catch (e) {
         setError(e.message);
