@@ -1,0 +1,171 @@
+:root {
+  --bg: #0a0a14;
+  --bg2: #111127;
+  --card: #1a1a2e;
+  --card2: #16213e;
+  --border: rgba(255, 255, 255, 0.08);
+  --text: #e8e8f0;
+  --text2: #a0a0b8;
+  --accent: #00d4aa;
+  --accent2: #00b894;
+  --up: #00d4aa;
+  --down: #ff4d6d;
+  --warn: #ffd166;
+  --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  --radius: 12px;
+  --sidebar-w: 280px;
+}
+
+[data-theme='light'] {
+  --bg: #f0f2f5;
+  --bg2: #e4e7ed;
+  --card: #ffffff;
+  --card2: #f8f9fb;
+  --border: rgba(0, 0, 0, 0.1);
+  --text: #1a1a2e;
+  --text2: #6b7280;
+  --shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+input {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+
+  &--up {
+    background: rgba(0, 212, 170, 0.15);
+    color: var(--up);
+  }
+
+  &--down {
+    background: rgba(255, 77, 109, 0.15);
+    color: var(--down);
+  }
+
+  &--neutral {
+    background: rgba(160, 160, 184, 0.15);
+    color: var(--text2);
+  }
+
+  &--accent {
+    background: rgba(0, 212, 170, 0.15);
+    color: var(--accent);
+  }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--card) 25%, var(--card2) 50%, var(--card) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.up {
+  color: var(--up);
+}
+
+.down {
+  color: var(--down);
+}

@@ -2,8 +2,8 @@
   "name": "stockpulse",
   "private": true,
   "scripts": {
-    "build": "npm --prefix client run build -- --configuration production",
-    "dev": "npm --prefix client run start",
+    "build": "npm --prefix client run build",
+    "dev": "npm --prefix client run dev",
     "install:client": "npm --prefix client install"
   }
 }

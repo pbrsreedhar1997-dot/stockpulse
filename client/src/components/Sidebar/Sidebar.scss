@@ -1,0 +1,138 @@
+.sidebar {
+  width: var(--sidebar-w);
+  flex-shrink: 0;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+
+  &__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  &__title {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text2);
+  }
+
+  &__count {
+    font-size: 11px;
+    background: var(--card);
+    color: var(--text2);
+    padding: 2px 7px;
+    border-radius: 10px;
+  }
+
+  &__list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+  }
+
+  &__empty {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--text2);
+    font-size: 13px;
+    text-align: center;
+    padding: 20px;
+    opacity: 0.6;
+
+    div {
+      font-size: 28px;
+    }
+  }
+}
+
+.stock-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+  position: relative;
+  border-left: 2px solid transparent;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.04);
+
+    .stock-row__remove {
+      opacity: 1;
+    }
+  }
+
+  &--active {
+    background: rgba(0, 212, 170, 0.07);
+    border-left-color: var(--accent);
+  }
+
+  &__info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__symbol {
+    display: block;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text);
+  }
+
+  &__name {
+    display: block;
+    font-size: 11px;
+    color: var(--text2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__price {
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  &__value {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  &__change {
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  &__remove {
+    opacity: 0;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    color: var(--text2);
+    transition: opacity 0.15s, background 0.15s, color 0.15s;
+    flex-shrink: 0;
+
+    &:hover {
+      background: rgba(255, 77, 109, 0.15);
+      color: var(--down);
+    }
+  }
+}

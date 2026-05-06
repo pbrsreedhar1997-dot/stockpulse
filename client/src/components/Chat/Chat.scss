@@ -1,0 +1,232 @@
+.chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+  animation: fadeIn 0.2s ease;
+
+  &__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  &__title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+
+  &__sub {
+    font-size: 13px;
+    color: var(--text2);
+  }
+
+  &__clear {
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--text2);
+    background: var(--card);
+    border: 1px solid var(--border);
+    transition: all 0.15s;
+
+    &:hover {
+      color: var(--down);
+      border-color: var(--down);
+    }
+  }
+
+  &__messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  &__welcome {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    flex: 1;
+    gap: 12px;
+    padding: 40px;
+    color: var(--text);
+
+    h3 {
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    p {
+      font-size: 14px;
+      color: var(--text2);
+      max-width: 380px;
+      line-height: 1.6;
+    }
+  }
+
+  &__welcome-icon {
+    font-size: 48px;
+  }
+
+  &__quick-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-top: 8px;
+  }
+
+  &__quick-bar {
+    display: flex;
+    gap: 6px;
+    padding: 8px 24px;
+    border-top: 1px solid var(--border);
+    overflow-x: auto;
+
+    &::-webkit-scrollbar { display: none; }
+  }
+
+  &__input-area {
+    display: flex;
+    gap: 10px;
+    padding: 12px 24px 20px;
+    align-items: flex-end;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  &__textarea {
+    flex: 1;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 16px;
+    color: var(--text);
+    resize: none;
+    outline: none;
+    font-size: 14px;
+    line-height: 1.5;
+    max-height: 120px;
+    overflow-y: auto;
+    transition: border-color 0.15s;
+
+    &::placeholder { color: var(--text2); }
+    &:focus { border-color: var(--accent); }
+  }
+
+  &__send {
+    padding: 10px 18px;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #000;
+    font-weight: 600;
+    font-size: 14px;
+    transition: background 0.15s, opacity 0.15s;
+    white-space: nowrap;
+
+    &:hover { background: var(--accent2); }
+    &:disabled { opacity: 0.4; pointer-events: none; }
+
+    &--stop {
+      background: rgba(255, 77, 109, 0.15);
+      color: var(--down);
+      border: 1px solid rgba(255, 77, 109, 0.3);
+
+      &:hover { background: rgba(255, 77, 109, 0.25); }
+    }
+  }
+}
+
+.message {
+  display: flex;
+  gap: 12px;
+  max-width: 800px;
+  animation: fadeIn 0.2s ease;
+
+  &--user {
+    flex-direction: row-reverse;
+    align-self: flex-end;
+
+    .message__bubble {
+      background: rgba(0, 212, 170, 0.12);
+      border-color: rgba(0, 212, 170, 0.2);
+      border-bottom-right-radius: 4px;
+    }
+  }
+
+  &--assistant {
+    .message__bubble {
+      border-bottom-left-radius: 4px;
+    }
+  }
+
+  &__avatar {
+    font-size: 20px;
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--card);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  &__bubble {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 12px 16px;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text);
+    max-width: calc(100% - 52px);
+  }
+
+  &__cursor {
+    display: inline-block;
+    width: 2px;
+    height: 14px;
+    background: var(--accent);
+    animation: blink 1s step-end infinite;
+    vertical-align: middle;
+    margin-left: 2px;
+  }
+}
+
+.quick-btn {
+  padding: 7px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  transition: all 0.15s;
+  white-space: nowrap;
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  &--sm {
+    padding: 4px 10px;
+    font-size: 11px;
+  }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}

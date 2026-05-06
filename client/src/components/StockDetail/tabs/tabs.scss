@@ -1,0 +1,250 @@
+.tab-panel {
+  animation: fadeIn 0.2s ease;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.info-card {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 16px;
+
+  &__title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 14px;
+  }
+
+  &__rows {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+}
+
+.kv {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+
+  span {
+    color: var(--text2);
+  }
+
+  strong {
+    font-weight: 600;
+    color: var(--text);
+  }
+}
+
+.range-bar {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  position: relative;
+  margin: 12px 0 8px;
+
+  &__fill {
+    position: absolute;
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    top: 0;
+    left: 0;
+  }
+
+  &__dot {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    background: var(--accent);
+    border-radius: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    border: 2px solid var(--bg);
+  }
+}
+
+.range-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.news-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.news-item {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+  border: 1px solid var(--border);
+
+  &:hover {
+    background: var(--card2);
+    border-color: rgba(0, 212, 170, 0.2);
+  }
+
+  &__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+
+  &__title {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+    line-height: 1.4;
+    flex: 1;
+  }
+
+  &__badges {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  &__meta {
+    display: flex;
+    gap: 10px;
+    font-size: 11px;
+    color: var(--text2);
+  }
+
+  &__summary {
+    font-size: 13px;
+    color: var(--text2);
+    line-height: 1.5;
+    margin-top: 6px;
+  }
+}
+
+.news-filters {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.filter-btn {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text2);
+  background: var(--card);
+  border: 1px solid var(--border);
+  transition: all 0.15s;
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  &--active {
+    background: rgba(0, 212, 170, 0.12);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+}
+
+.fin-chart-wrap {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 16px;
+  height: 260px;
+  position: relative;
+}
+
+.perf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.perf-card {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 14px;
+  text-align: center;
+
+  &__label {
+    font-size: 11px;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }
+
+  &__value {
+    font-size: 20px;
+    font-weight: 700;
+  }
+}
+
+.returns-chart-wrap {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 16px;
+  height: 240px;
+}
+
+.insights-block {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+  line-height: 1.7;
+  font-size: 14px;
+  color: var(--text);
+
+  &__title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 10px;
+  }
+}
+
+.company-block {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 16px;
+
+  &__title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 14px;
+  }
+
+  &__desc {
+    font-size: 14px;
+    color: var(--text);
+    line-height: 1.7;
+  }
+}

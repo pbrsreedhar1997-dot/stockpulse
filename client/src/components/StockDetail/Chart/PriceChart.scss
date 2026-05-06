@@ -1,0 +1,46 @@
+.price-chart {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+
+  &__ranges {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 12px;
+  }
+
+  &__canvas-wrap {
+    height: 300px;
+    position: relative;
+  }
+
+  &__loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--card);
+    z-index: 1;
+  }
+}
+
+.range-btn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text2);
+  transition: background 0.15s, color 0.15s;
+
+  &:hover {
+    background: var(--card2);
+    color: var(--text);
+  }
+
+  &--active {
+    background: rgba(0, 212, 170, 0.15);
+    color: var(--accent);
+  }
+}

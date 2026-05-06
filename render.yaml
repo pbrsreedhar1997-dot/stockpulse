@@ -3,7 +3,7 @@ services:
     name: stockpulse
     runtime: python
     plan: free
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && npm --prefix client install && npm --prefix client run build
     startCommand: gunicorn wsgi:app -c gunicorn.conf.py
     healthCheckPath: /api/ping
     envVars:
