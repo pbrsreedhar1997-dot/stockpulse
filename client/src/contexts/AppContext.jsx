@@ -1,12 +1,24 @@
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
 
+const DEFAULT_WATCHLIST = [
+  { symbol: 'RELIANCE.NS', name: 'Reliance Industries', exchange: 'NSE' },
+  { symbol: 'TCS.NS', name: 'Tata Consultancy Services', exchange: 'NSE' },
+  { symbol: 'HDFCBANK.NS', name: 'HDFC Bank', exchange: 'NSE' },
+  { symbol: 'INFY.NS', name: 'Infosys', exchange: 'NSE' },
+  { symbol: 'BHARTIARTL.NS', name: 'Bharti Airtel', exchange: 'NSE' },
+];
+
+const _savedWatchlist = (() => {
+  try { const s = JSON.parse(localStorage.getItem('sp_watchlist')); return Array.isArray(s) && s.length ? s : null; } catch { return null; }
+})();
+
 const initialState = {
   backendOk: null,
   theme: localStorage.getItem('sp_theme') || 'dark',
   user: (() => { try { return JSON.parse(localStorage.getItem('sp_user')); } catch { return null; } })(),
   token: localStorage.getItem('sp_token') || null,
-  watchlist: (() => { try { return JSON.parse(localStorage.getItem('sp_watchlist')) || []; } catch { return []; } })(),
-  currentSymbol: null,
+  watchlist: _savedWatchlist ?? DEFAULT_WATCHLIST,
+  currentSymbol: sessionStorage.getItem('sp_sym') || null,
   quotes: {},
   profiles: {},
   financials: {},
@@ -34,6 +46,7 @@ function reducer(state, action) {
     case 'REMOVE_FROM_WATCHLIST':
       return { ...state, watchlist: state.watchlist.filter(s => s.symbol !== action.payload) };
     case 'SET_CURRENT_SYMBOL':
+      sessionStorage.setItem('sp_sym', action.payload || '');
       return { ...state, currentSymbol: action.payload };
     case 'SET_QUOTE':
       return { ...state, quotes: { ...state.quotes, [action.payload.symbol]: action.payload.data } };

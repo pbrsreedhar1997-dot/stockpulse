@@ -69,6 +69,13 @@ export default function App() {
     syncFromServer();
   }, [state.token]);
 
+  // Auto-select first watchlist stock when nothing is selected
+  useEffect(() => {
+    if (!state.currentSymbol && watchlist.length) {
+      dispatch({ type: 'SET_CURRENT_SYMBOL', payload: watchlist[0].symbol });
+    }
+  }, [watchlist.length, state.currentSymbol]);
+
   useEffect(() => {
     if (symbols.length) {
       symbols.forEach(sym => fetchQuote(sym));
