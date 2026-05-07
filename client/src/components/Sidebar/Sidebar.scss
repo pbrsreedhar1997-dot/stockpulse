@@ -118,6 +118,11 @@
     color: var(--text);
     font-family: 'JetBrains Mono', monospace;
     letter-spacing: -0.3px;
+    border-radius: 3px;
+    transition: color 0.15s;
+
+    &.flash-up   { animation: flash-up   0.7s ease-out forwards; }
+    &.flash-down { animation: flash-down 0.7s ease-out forwards; }
   }
 
   &__change {

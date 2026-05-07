@@ -133,6 +133,7 @@ export default function App() {
   const statusLabel = state.backendOk === null ? 'Waking…'
     : state.backendOk ? 'Live' : 'Reconnecting…';
   const statusCls = state.backendOk === true ? 'pill--ok' : 'pill--waking';
+  const isLive = state.backendOk === true;
 
   return (
     <div className="app">
@@ -149,7 +150,10 @@ export default function App() {
         <div className="header__spacer" />
 
         <nav className="header__actions">
-          <span className={`be-pill ${statusCls}`}>{statusLabel}</span>
+          <span className={`be-pill ${statusCls}`}>
+            {isLive && <span className="be-pill__dot" />}
+            {statusLabel}
+          </span>
 
           {(['stock', 'screener', 'chat']).map(v => (
             <button

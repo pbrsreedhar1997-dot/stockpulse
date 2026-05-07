@@ -56,6 +56,15 @@
     font-family: 'JetBrains Mono', monospace;
     letter-spacing: -0.5px;
     line-height: 1.15;
+    border-radius: 4px;
+    transition: color 0.15s;
+
+    &.price-flash--up {
+      animation: flash-up 0.7s ease-out forwards;
+    }
+    &.price-flash--down {
+      animation: flash-down 0.7s ease-out forwards;
+    }
   }
 
   &__change {
@@ -74,6 +83,16 @@
 
     &::-webkit-scrollbar { display: none; }
   }
+}
+
+@keyframes flash-up {
+  0%   { color: var(--up); background: rgba(0, 212, 170, 0.18); }
+  100% { color: var(--text); background: transparent; }
+}
+
+@keyframes flash-down {
+  0%   { color: var(--down); background: rgba(255, 69, 96, 0.18); }
+  100% { color: var(--text); background: transparent; }
 }
 
 .stat {

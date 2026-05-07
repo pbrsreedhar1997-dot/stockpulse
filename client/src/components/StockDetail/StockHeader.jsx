@@ -1,6 +1,5 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
-import { useWatchlist } from '../../hooks/useWatchlist';
 import './StockHeader.scss';
 
 function fmt(n, dec = 2) {
@@ -22,6 +21,22 @@ export default function StockHeader({ symbol }) {
   const p = state.profiles[symbol];
   const f = state.financials[symbol];
 
+  const prevPriceRef = useRef(null);
+  const [flash, setFlash] = useState('');
+
+  // Flash the price green/red when a live tick arrives with a new price
+  useEffect(() => {
+    if (q?.price == null) return;
+    if (prevPriceRef.current != null && prevPriceRef.current !== q.price) {
+      const cls = q.price > prevPriceRef.current ? 'price-flash--up' : 'price-flash--down';
+      setFlash(cls);
+      const t = setTimeout(() => setFlash(''), 700);
+      prevPriceRef.current = q.price;
+      return () => clearTimeout(t);
+    }
+    prevPriceRef.current = q.price;
+  }, [q?.price]);
+
   const up = q?.change_pct >= 0;
 
   const w52h  = f?.week52_high || q?.week52_high;
@@ -31,16 +46,16 @@ export default function StockHeader({ symbol }) {
   const mktCp = q?.mkt_cap || f?.market_cap;
 
   const stats = [
-    { label: 'Open',      value: q?.open      ? `₹${fmt(q.open)}`      : '—' },
-    { label: 'High',      value: q?.high      ? `₹${fmt(q.high)}`      : '—', cls: 'up' },
-    { label: 'Low',       value: q?.low       ? `₹${fmt(q.low)}`       : '—', cls: 'down' },
-    { label: 'Prev Close',value: q?.prev_close ? `₹${fmt(q.prev_close)}` : '—' },
-    { label: 'Volume',    value: q?.volume    ? `${(q.volume / 1e5).toFixed(2)}L` : '—' },
-    { label: 'Mkt Cap',   value: fmtCr(mktCp) },
-    { label: '52W High',  value: w52h ? `₹${fmt(w52h)}` : '—', cls: 'up' },
-    { label: '52W Low',   value: w52l ? `₹${fmt(w52l)}` : '—', cls: 'down' },
-    { label: 'P/E',       value: pe  != null ? `${fmt(pe)}x` : '—' },
-    { label: 'EPS',       value: eps != null ? `₹${fmt(eps)}` : '—' },
+    { label: 'Open',       value: q?.open       ? `₹${fmt(q.open)}`       : '—' },
+    { label: 'High',       value: q?.high       ? `₹${fmt(q.high)}`       : '—', cls: 'up' },
+    { label: 'Low',        value: q?.low        ? `₹${fmt(q.low)}`        : '—', cls: 'down' },
+    { label: 'Prev Close', value: q?.prev_close ? `₹${fmt(q.prev_close)}` : '—' },
+    { label: 'Volume',     value: q?.volume     ? `${(q.volume / 1e5).toFixed(2)}L` : '—' },
+    { label: 'Mkt Cap',    value: fmtCr(mktCp) },
+    { label: '52W High',   value: w52h ? `₹${fmt(w52h)}` : '—', cls: 'up' },
+    { label: '52W Low',    value: w52l ? `₹${fmt(w52l)}` : '—', cls: 'down' },
+    { label: 'P/E',        value: pe  != null ? `${fmt(pe)}x` : '—' },
+    { label: 'EPS',        value: eps != null ? `₹${fmt(eps)}` : '—' },
   ];
 
   return (
@@ -59,7 +74,7 @@ export default function StockHeader({ symbol }) {
           <h1 className="stock-header__name">{p?.name || symbol}</h1>
           <div className="stock-header__meta">
             <span className="badge badge--neutral">
-              {symbol.replace('.NS', '').replace('.BO', '')}
+              {symbol.replace(/\.(NS|BO)$/i, '')}
             </span>
             {p?.exchange && <span className="badge badge--neutral">{p.exchange}</span>}
             {p?.sector   && <span className="badge badge--accent">{p.sector}</span>}
@@ -69,7 +84,7 @@ export default function StockHeader({ symbol }) {
         <div className="stock-header__price-block">
           {q ? (
             <>
-              <div className="stock-header__price">₹{fmt(q.price)}</div>
+              <div className={`stock-header__price ${flash}`}>₹{fmt(q.price)}</div>
               <div className={`stock-header__change ${up ? 'up' : 'down'}`}>
                 {up ? '▲' : '▼'}&nbsp;
                 {up ? '+' : ''}{fmt(q.change)}&nbsp;

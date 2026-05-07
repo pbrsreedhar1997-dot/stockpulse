@@ -1,15 +1,27 @@
 import { WebSocket } from 'ws';
-import { getQuote } from './services/yahoo.js';
+import { getLivePrice } from './services/yahoo.js';
 import { streamChat } from './services/ai.js';
 import { query } from './db.js';
 import log from './log.js';
 
-const clients = new Map(); // ws → { symbols: Set<string>, userId: null|number }
-let priceTimer = null;
+const TICK_MS = 15000; // 15-second live price tick
+
+const clients    = new Map(); // ws → { symbols: Set<string>, userId: null|number }
+const lastPrices = new Map(); // symbol → last broadcast price
+let priceTimer   = null;
 
 function safeSend(ws, obj) {
   if (ws.readyState === WebSocket.OPEN) {
     try { ws.send(JSON.stringify(obj)); } catch {}
+  }
+}
+
+function broadcast(symbol, data) {
+  const msg = JSON.stringify({ type: 'price', symbol, ...data });
+  for (const [ws, info] of clients) {
+    if (info.symbols.has(symbol) && ws.readyState === WebSocket.OPEN) {
+      ws.send(msg);
+    }
   }
 }
 
@@ -22,15 +34,20 @@ function startPriceTick() {
 
     for (const symbol of allSymbols) {
       try {
-        const data = await getQuote(symbol);
-        if (!data) continue;
-        const msg = JSON.stringify({ type: 'price', symbol, ...data });
-        for (const [ws, info] of clients) {
-          if (info.symbols.has(symbol) && ws.readyState === WebSocket.OPEN) ws.send(msg);
+        const data = await getLivePrice(symbol);
+        if (!data?.price) continue;
+
+        const prev = lastPrices.get(symbol);
+        // Only broadcast when price actually changes (or first time)
+        if (prev !== data.price) {
+          lastPrices.set(symbol, data.price);
+          broadcast(symbol, data);
         }
-      } catch {}
+      } catch (e) {
+        log.warn(`Live price tick failed for ${symbol}: ${e.message}`);
+      }
     }
-  }, 30000);
+  }, TICK_MS);
 }
 
 async function resolveToken(token) {
@@ -47,7 +64,7 @@ export async function handleWsConnection(ws) {
   clients.set(ws, info);
   log.info(`WS connected (clients: ${clients.size})`);
 
-  safeSend(ws, { type: 'connected', version: '3.0.0' });
+  safeSend(ws, { type: 'connected', version: '3.1.0' });
   startPriceTick();
 
   ws.on('message', async (raw) => {
@@ -58,14 +75,20 @@ export async function handleWsConnection(ws) {
       case 'subscribe': {
         const syms = (msg.symbols || []).map(s => String(s).toUpperCase()).filter(Boolean);
         syms.forEach(s => info.symbols.add(s));
+
+        // Push current price immediately on subscribe
         for (const sym of syms) {
           try {
-            const data = await getQuote(sym);
-            if (data) safeSend(ws, { type: 'price', symbol: sym, ...data });
+            const data = await getLivePrice(sym);
+            if (data?.price) {
+              lastPrices.set(sym, data.price);
+              safeSend(ws, { type: 'price', symbol: sym, ...data });
+            }
           } catch {}
         }
         break;
       }
+
       case 'unsubscribe':
         (msg.symbols || []).forEach(s => info.symbols.delete(String(s).toUpperCase()));
         break;
@@ -84,6 +107,7 @@ export async function handleWsConnection(ws) {
         }).catch(e  => safeSend(ws, { type: 'chat_error', id, error: e.message }));
         break;
       }
+
       case 'ping':
         safeSend(ws, { type: 'pong' });
         break;
@@ -93,7 +117,10 @@ export async function handleWsConnection(ws) {
   ws.on('close', () => {
     clients.delete(ws);
     log.info(`WS disconnected (clients: ${clients.size})`);
-    if (!clients.size) { clearInterval(priceTimer); priceTimer = null; }
+    if (!clients.size) {
+      clearInterval(priceTimer);
+      priceTimer = null;
+    }
   });
 
   ws.on('error', err => log.error('WS error:', err.message));
