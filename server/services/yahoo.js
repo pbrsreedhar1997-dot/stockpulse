@@ -420,16 +420,56 @@ export async function search(q) {
   const hit = await cacheGet(key);
   if (hit) return hit;
 
+  const mapRow = r => ({
+    symbol:   r.symbol,
+    name:     r.shortname || r.longname || r.symbol,
+    exchange: r.exchDisp  || r.exchange || '',
+    type:     r.quoteType || 'EQUITY',
+  });
+
+  // 1. yahoo-finance2 SDK
   const res = await yf.search(q, { newsCount: 0 }, OPT).catch(() => null);
-  const results = (res?.quotes || [])
+  let results = (res?.quotes || [])
     .filter(r => r.quoteType === 'EQUITY' || r.quoteType === 'ETF')
     .slice(0, 10)
-    .map(r => ({
-      symbol:   r.symbol,
-      name:     r.shortname || r.longname || r.symbol,
-      exchange: r.exchDisp  || r.exchange || '',
-      type:     r.quoteType || 'EQUITY',
-    }));
+    .map(mapRow);
+
+  // 2. Direct Yahoo Finance search API (more reliable on cloud IPs)
+  if (!results.length) {
+    try {
+      const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&lang=en-US&region=IN&quotesCount=10&newsCount=0&enableFuzzyQuery=true&enableNavLinks=false`;
+      const r = await fetch(url, { signal: AbortSignal.timeout(10000), headers: CHART_HEADERS });
+      if (r.ok) {
+        const json = await r.json();
+        results = (json?.finance?.result?.[0]?.quotes || [])
+          .filter(r => r.quoteType === 'EQUITY' || r.quoteType === 'ETF')
+          .slice(0, 10)
+          .map(mapRow);
+      }
+    } catch (e) {
+      log.warn(`Direct search API failed for "${q}": ${e.message}`);
+    }
+  }
+
+  // 3. NSE search autocomplete (Indian stocks only)
+  if (!results.length) {
+    try {
+      const url = `https://www.nseindia.com/api/search-autocomplete?q=${encodeURIComponent(q)}`;
+      const r = await fetch(url, {
+        signal: AbortSignal.timeout(8000),
+        headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json', 'Referer': 'https://www.nseindia.com' },
+      });
+      if (r.ok) {
+        const json = await r.json();
+        results = (json?.data || [])
+          .filter(d => d.symbol)
+          .slice(0, 10)
+          .map(d => ({ symbol: d.symbol + '.NS', name: d.symbol_info || d.symbol, exchange: 'NSE', type: 'EQUITY' }));
+      }
+    } catch (e) {
+      log.warn(`NSE search failed for "${q}": ${e.message}`);
+    }
+  }
 
   await cacheSet(key, results, 86400);
   return results;

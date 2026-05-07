@@ -1,6 +1,6 @@
 import Groq from 'groq-sdk';
 import { GROQ_API_KEY, ANTHROPIC_API_KEY } from '../config.js';
-import { getQuote, getProfile, getFinancials, getNews, getHistory } from './yahoo.js';
+import { getQuote, getProfile, getFinancials, getNews, getHistory, search as searchSymbol } from './yahoo.js';
 import log from '../log.js';
 
 const groqClient = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
@@ -623,6 +623,56 @@ function extractSymbolsFromQuestion(question) {
   return [...found].slice(0, 2);
 }
 
+// Extract potential company names from free text for search fallback
+function extractCandidateNames(question) {
+  const candidates = [];
+
+  // Quoted phrases first (highest confidence)
+  for (const m of question.matchAll(/"([^"]+)"|'([^']+)'/g)) {
+    candidates.push(m[1] || m[2]);
+  }
+
+  // Multi-word sequences: 2–4 words starting with a capital (e.g. "Apollo Micro Systems")
+  for (const m of question.matchAll(/\b([A-Z][a-z]{1,}(?:\s+(?:[A-Z][a-z]{1,}|[A-Z]{2,}|&)){1,3})\b/g)) {
+    candidates.push(m[1]);
+  }
+
+  // Single capitalized words > 4 chars that aren't common English words or sentence starters
+  const SKIP = new Set(['Give', 'What', 'How', 'Tell', 'Show', 'Which', 'Does', 'Can', 'Will', 'Is', 'Are', 'Please', 'When', 'Why', 'Analyse', 'Analyze', 'Price', 'Stock', 'Share', 'Market', 'For', 'The', 'This', 'That', 'Their', 'About', 'News', 'Risk', 'Risks', 'Full', 'Latest']);
+  for (const m of question.matchAll(/\b([A-Z][a-zA-Z]{3,})\b/g)) {
+    if (!SKIP.has(m[1]) && !candidates.some(c => c.includes(m[1]))) candidates.push(m[1]);
+  }
+
+  return [...new Set(candidates)].slice(0, 3);
+}
+
+// Async symbol resolver: static map first, then Yahoo/NSE search fallback
+async function resolveSymbolsFromQuestion(question) {
+  // 1. Fast path — static NSE_MAP
+  const mapped = extractSymbolsFromQuestion(question);
+  if (mapped.length) return mapped;
+
+  // 2. Search fallback for unrecognised stocks
+  const candidates = extractCandidateNames(question);
+  for (const candidate of candidates) {
+    try {
+      const results = await searchSymbol(candidate);
+      // Prefer NSE (.NS) stocks; accept BSE (.BO) as fallback
+      const ns = results.filter(r => r.symbol?.endsWith('.NS'));
+      const bo = results.filter(r => r.symbol?.endsWith('.BO'));
+      const hit = ns[0] || bo[0];
+      if (hit) {
+        log.info(`Resolved "${candidate}" → ${hit.symbol} via search`);
+        return [hit.symbol];
+      }
+    } catch (e) {
+      log.warn(`resolveSymbolsFromQuestion search failed for "${candidate}": ${e.message}`);
+    }
+  }
+
+  return [];
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // RESPONSE DEPTH — determines token budget based on question intent
 // ─────────────────────────────────────────────────────────────────────────────
@@ -652,8 +702,7 @@ export async function streamChat({ question, symbols = [], history = [], onDelta
 
   try {
     const depth    = responseDepth(question);
-    // Extract symbols from question text; fall back to any passed-in symbols
-    const extracted = extractSymbolsFromQuestion(question);
+    const extracted = await resolveSymbolsFromQuestion(question);
     const symsToUse = extracted.length ? extracted : symbols;
     const context  = symsToUse.length ? await buildRagContext(symsToUse) : '';
     const messages = [
@@ -686,7 +735,7 @@ async function streamAnthropic({ question, symbols, history, onDelta, onDone, on
     const { default: Anthropic } = await import('@anthropic-ai/sdk');
     const client   = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
     const depth    = responseDepth(question);
-    const extracted = extractSymbolsFromQuestion(question);
+    const extracted = await resolveSymbolsFromQuestion(question);
     const symsToUse = extracted.length ? extracted : symbols;
     const context  = symsToUse.length ? await buildRagContext(symsToUse) : '';
     const messages = [
