@@ -17,6 +17,8 @@ export default function OverviewTab({ symbol }) {
 
   const w52h = f?.week52_high || q?.week52_high;
   const w52l = f?.week52_low  || q?.week52_low;
+  const pe   = f?.pe_ratio    ?? q?.pe_ratio;
+  const eps  = f?.eps         ?? q?.eps;
 
   useEffect(() => {
     if (!f) fetchFinancials(symbol);
@@ -30,8 +32,8 @@ export default function OverviewTab({ symbol }) {
         <div className="info-card">
           <h3 className="info-card__title">Key Metrics</h3>
           <div className="info-card__rows">
-            <div className="kv"><span>P/E Ratio</span><strong>{fmt(f?.pe_ratio)}x</strong></div>
-            <div className="kv"><span>EPS (TTM)</span><strong>₹{fmt(f?.eps)}</strong></div>
+            <div className="kv"><span>P/E Ratio</span><strong>{pe != null ? `${fmt(pe)}x` : '—'}</strong></div>
+            <div className="kv"><span>EPS (TTM)</span><strong>{eps != null ? `₹${fmt(eps)}` : '—'}</strong></div>
             <div className="kv">
               <span>Gross Margin</span>
               <strong className={f?.gross_margin > 40 ? 'up' : ''}>

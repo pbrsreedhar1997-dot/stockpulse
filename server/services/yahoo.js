@@ -4,6 +4,7 @@ import { get as cacheGet, set as cacheSet } from '../cache.js';
 import { quoteTtl } from '../market.js';
 import log from '../log.js';
 import { avQuote, avOverview, avFinancials } from './alphavantage.js';
+import { nseQuote, nseProfile, nseFinancials } from './nse.js';
 
 const yf = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
@@ -97,8 +98,18 @@ export async function getQuote(symbol) {
     return chartResult;
   }
 
-  // 3. Last resort: Alpha Vantage
-  log.info(`Chart API failed for ${symbol} — trying Alpha Vantage`);
+  // 3. NSE India API (Indian stocks only)
+  if (symbol.endsWith('.NS') || symbol.endsWith('.BO')) {
+    log.info(`Chart API failed for ${symbol} — trying NSE India`);
+    const nseResult = await nseQuote(symbol).catch(() => null);
+    if (nseResult) {
+      await cacheSet(key, nseResult, quoteTtl(symbol));
+      return nseResult;
+    }
+  }
+
+  // 4. Last resort: Alpha Vantage
+  log.info(`Trying Alpha Vantage for ${symbol}`);
   const avResult = await avQuote(symbol).catch(() => null);
   if (avResult) {
     await cacheSet(key, avResult, quoteTtl(symbol));
@@ -144,31 +155,37 @@ export async function getProfile(symbol) {
     return result;
   }
 
-  // Yahoo blocked — build profile from chart API + Alpha Vantage
-  log.info(`Yahoo profile blocked for ${symbol} — using chart API + AV`);
+  // Yahoo blocked — try NSE India (Indian stocks), then AV, then chart API name
+  log.info(`Yahoo profile blocked for ${symbol} — using fallbacks`);
 
-  const [chartRes, avRes] = await Promise.allSettled([
+  const isIndian = symbol.endsWith('.NS') || symbol.endsWith('.BO');
+
+  const [chartRes, nseRes, avRes] = await Promise.allSettled([
     getQuoteFromChartApi(symbol),
+    isIndian ? nseProfile(symbol) : Promise.resolve(null),
     avOverview(symbol),
   ]);
 
   const chart = chartRes.status === 'fulfilled' ? chartRes.value : null;
+  const nse   = nseRes.status   === 'fulfilled' ? nseRes.value   : null;
   const av    = avRes.status    === 'fulfilled' ? avRes.value    : null;
 
-  const name     = chart?.name || av?.name || symbol;
+  const name     = nse?.name    || chart?.name || av?.name    || symbol;
   const currency = chart?.currency || av?.currency || 'INR';
+  const sector   = nse?.sector   || av?.sector   || null;
+  const industry = nse?.industry || av?.industry || null;
   const host     = av?.website ? av.website.replace(/^https?:\/\//, '').split('/')[0] : null;
 
   const result = {
     name,
-    sector:      av?.sector   || null,
-    industry:    av?.industry || null,
-    exchange:    av?.exchange || null,
+    sector,
+    industry,
+    exchange:    nse?.exchange  || av?.exchange  || null,
     currency,
-    website:     av?.website  || null,
+    website:     av?.website    || null,
     description: av?.description || null,
     employees:   av?.employees   || null,
-    country:     av?.country     || null,
+    country:     nse?.country   || av?.country   || null,
     logo_url:    host ? `https://logo.clearbit.com/${host}` : null,
   };
 
@@ -214,13 +231,25 @@ export async function getFinancials(symbol) {
     return result;
   }
 
-  // Yahoo blocked — fall back to Alpha Vantage
-  log.info(`Yahoo financials blocked for ${symbol} — using Alpha Vantage`);
+  // Yahoo blocked — try NSE India first (P/E, EPS), then Alpha Vantage
+  log.info(`Yahoo financials blocked for ${symbol} — using fallbacks`);
+  const isIndian = symbol.endsWith('.NS') || symbol.endsWith('.BO');
+
+  if (isIndian) {
+    const nseResult = await nseFinancials(symbol).catch(e => {
+      log.warn(`NSE financials failed for ${symbol}: ${e.message}`);
+      return null;
+    });
+    if (nseResult?.pe_ratio != null) {
+      await cacheSet(key, nseResult, 21600);
+      return nseResult;
+    }
+  }
+
   const avResult = await avFinancials(symbol).catch(e => {
     log.warn(`AV financials failed for ${symbol}: ${e.message}`);
     return null;
   });
-
   if (avResult) {
     await cacheSet(key, avResult, 21600);
     return avResult;
@@ -231,22 +260,42 @@ export async function getFinancials(symbol) {
 }
 
 // ── History ───────────────────────────────────────────────────────────────────
-const RANGE_DAYS = { '1d': 5, '5d': 10, '1wk': 7, '1mo': 30, '3mo': 90, '6mo': 180, '1y': 365, '5y': 1825, max: 3650 };
+const RANGE_DAYS = { '5d': 10, '1wk': 7, '1mo': 30, '3mo': 90, '6mo': 180, '1y': 365, '5y': 1825, max: 3650 };
 
 export async function getHistory(symbol, range = '1mo') {
-  const key = `hist4:${symbol}:${range}`;
+  const key = `hist5:${symbol}:${range}`;
   const hit = await cacheGet(key);
   if (hit) return hit;
 
-  const days    = RANGE_DAYS[range] || 30;
-  const period2 = new Date();
-  const period1 = new Date(period2.getTime() - days * 86400000);
+  let rows;
 
-  const rows = await yf.historical(symbol, {
-    period1:  period1.toISOString().split('T')[0],
-    period2:  period2.toISOString().split('T')[0],
-    interval: '1d',
-  }, OPT).catch(() => null);
+  if (range === '1d') {
+    // Live intraday: 5m bars for today only (chart API works on cloud — no crumb needed)
+    const now      = new Date();
+    const period2  = now.toISOString().split('T')[0];
+    const period1  = new Date(now.getTime() - 86400000).toISOString().split('T')[0];
+    rows = await yf.historical(symbol, { period1, period2, interval: '5m' }, OPT).catch(() => null);
+    // Keep only today's bars (filter out yesterday's spillover)
+    if (Array.isArray(rows)) {
+      const todayUTC = now.toISOString().split('T')[0];
+      rows = rows.filter(r => r.date?.toISOString?.().split('T')[0] === todayUTC || new Date(r.date).getTime() > now.getTime() - 86400000 * 0.5);
+    }
+  } else if (range === '5d') {
+    // 5-day: 30m bars for intraday detail across the week
+    const now     = new Date();
+    const period2 = now.toISOString().split('T')[0];
+    const period1 = new Date(now.getTime() - 10 * 86400000).toISOString().split('T')[0];
+    rows = await yf.historical(symbol, { period1, period2, interval: '30m' }, OPT).catch(() => null);
+  } else {
+    const days    = RANGE_DAYS[range] || 30;
+    const period2 = new Date();
+    const period1 = new Date(period2.getTime() - days * 86400000);
+    rows = await yf.historical(symbol, {
+      period1:  period1.toISOString().split('T')[0],
+      period2:  period2.toISOString().split('T')[0],
+      interval: '1d',
+    }, OPT).catch(() => null);
+  }
 
   if (!Array.isArray(rows)) return null;
 
@@ -259,7 +308,8 @@ export async function getHistory(symbol, range = '1mo') {
     volume: r.volume || 0,
   }));
 
-  await cacheSet(key, result, 300);
+  const ttl = range === '1d' ? 60 : range === '5d' ? 120 : 300;
+  await cacheSet(key, result, ttl);
   return result;
 }
 

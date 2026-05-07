@@ -72,10 +72,12 @@ export default function PriceChart({ symbol }) {
     const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
     const textColor = isDark ? '#a0a0b8' : '#6b7280';
 
-    const xUnit = rng === '1d' ? 'hour'
-      : rng === '5d' ? 'day'
+    const xUnit = rng === '1d'  ? 'minute'
+      : rng === '5d'  ? 'hour'
       : rng === '1mo' || rng === '3mo' ? 'week'
       : 'month';
+
+    const xStepSize = rng === '1d' ? 30 : rng === '5d' ? 4 : undefined;
 
     let dataset, tooltipCb, chartTypeName;
     if (type === 'line') {
@@ -131,9 +133,9 @@ export default function PriceChart({ symbol }) {
         scales: {
           x: {
             type: 'time',
-            time: { unit: xUnit },
+            time: { unit: xUnit, ...(xStepSize ? { stepSize: xStepSize } : {}) },
             grid: { color: gridColor },
-            ticks: { color: textColor, maxTicksLimit: 8 },
+            ticks: { color: textColor, maxTicksLimit: rng === '1d' ? 10 : 8 },
           },
           y: {
             position: 'right',
