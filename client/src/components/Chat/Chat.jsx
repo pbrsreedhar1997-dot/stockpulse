@@ -4,12 +4,12 @@ import { useAppContext } from '../../contexts/AppContext';
 import './Chat.scss';
 
 const QUICK_ACTIONS = [
-  { label: '📊 Analyze', question: 'Give me a comprehensive fundamental analysis of this stock.' },
-  { label: '📈 Bullish?', question: 'What are the key bullish catalysts for this stock?' },
-  { label: '⚠️ Risks', question: 'What are the main risks and bearish factors for this stock?' },
-  { label: '💰 Valuation', question: 'Is this stock overvalued or undervalued based on its fundamentals?' },
-  { label: '📰 News Impact', question: 'How does the recent news impact the stock outlook?' },
-  { label: '🎯 Price Target', question: 'What is a reasonable 12-month price target for this stock?' },
+  { label: '📊 Full Analysis', question: 'Run a full RAG analysis on this stock — fundamentals, technicals, news sentiment, ensemble score, and 30-day prediction with bear/base/bull price targets.' },
+  { label: '📈 Technical Setup', question: 'Analyse the technical setup: MA cross, RSI, MACD, Bollinger Bands, volume trend. Is this bullish or bearish right now?' },
+  { label: '💰 Fundamentals', question: 'Evaluate the fundamental score: P/E vs sector, margins, ROE, debt, revenue growth. Is this company financially strong?' },
+  { label: '📰 News Sentiment', question: 'Score the news sentiment with decay weighting. What themes dominate and how does it affect the outlook?' },
+  { label: '⚠️ Top Risks', question: 'List the top 3 bearish risks and catalysts that could push this stock lower. Include contrarian view if the signal is bullish.' },
+  { label: '🎯 Price Targets', question: 'Give me bear, base, and bull case 30-day price targets with confidence levels and the key catalysts for each scenario.' },
 ];
 
 function parseMarkdown(text) {
@@ -73,8 +73,8 @@ export default function Chat() {
         {messages.length === 0 ? (
           <div className="chat__welcome">
             <div className="chat__welcome-icon">🤖</div>
-            <h3>Ask me about any stock</h3>
-            <p>I'll analyze fundamentals, technicals, news, and give you a data-driven assessment.</p>
+            <h3>RAG Stock Analyst</h3>
+            <p>Powered by live market data. I compute RSI, MACD, Bollinger Bands, score fundamentals, decay-weight news sentiment, and run an ensemble prediction before responding.</p>
             <div className="chat__quick-actions">
               {QUICK_ACTIONS.map(a => (
                 <button key={a.label} className="quick-btn" onClick={() => submit(a.question)}>
