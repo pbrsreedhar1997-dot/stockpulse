@@ -8,41 +8,38 @@
     gap: 8px;
     background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 8px;
     padding: 0 12px;
-    transition: border-color 0.15s;
+    transition: border-color 0.13s;
 
-    &:focus-within {
-      border-color: var(--accent);
-    }
+    &:focus-within { border-color: var(--accent); }
   }
 
   &__icon {
-    font-size: 14px;
+    font-size: 13px;
     flex-shrink: 0;
+    opacity: 0.5;
   }
 
   &__input {
     flex: 1;
-    height: 36px;
+    height: 34px;
     background: none;
     border: none;
     outline: none;
     color: var(--text);
     font-size: 13px;
 
-    &::placeholder {
-      color: var(--text2);
-    }
+    &::placeholder { color: var(--text3); }
   }
 
   &__spinner {
-    width: 14px;
-    height: 14px;
-    border: 2px solid var(--border);
+    width: 13px;
+    height: 13px;
+    border: 2px solid var(--border2);
     border-top-color: var(--accent);
     border-radius: 50%;
-    animation: spin 0.8s linear infinite;
+    animation: spin 0.7s linear infinite;
     flex-shrink: 0;
   }
 
@@ -52,32 +49,33 @@
     left: 0;
     right: 0;
     background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
     overflow: hidden;
     box-shadow: var(--shadow);
     z-index: 200;
-    animation: fadeIn 0.15s ease;
+    animation: fadeIn 0.13s ease;
   }
 
   &__item {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 14px;
+    padding: 9px 14px;
     cursor: pointer;
     transition: background 0.1s;
+    border-bottom: 1px solid var(--border);
 
-    &:hover {
-      background: var(--card2);
-    }
+    &:last-child { border-bottom: none; }
+    &:hover { background: var(--card2); }
   }
 
   &__item-symbol {
-    font-weight: 600;
-    font-size: 13px;
+    font-weight: 700;
+    font-size: 12px;
     color: var(--text);
-    min-width: 80px;
+    min-width: 76px;
+    font-family: 'JetBrains Mono', monospace;
   }
 
   &__item-name {
@@ -90,8 +88,10 @@
   }
 
   &__item-exchange {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--accent);
-    font-weight: 500;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
   }
 }

@@ -11,24 +11,28 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 16px 10px;
+    padding: 13px 16px 11px;
     border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
   }
 
   &__title {
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 10px;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: var(--text2);
+    letter-spacing: 1.2px;
+    color: var(--text3);
   }
 
   &__count {
-    font-size: 11px;
+    font-size: 10px;
+    font-weight: 700;
     background: var(--card);
-    color: var(--text2);
+    color: var(--text3);
     padding: 2px 7px;
     border-radius: 10px;
+    border: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace;
   }
 
   &__list {
@@ -43,40 +47,38 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 10px;
-    color: var(--text2);
-    font-size: 13px;
+    gap: 12px;
+    color: var(--text3);
+    font-size: 12px;
     text-align: center;
-    padding: 20px;
-    opacity: 0.6;
+    padding: 24px;
 
-    div {
-      font-size: 28px;
-    }
+    p { line-height: 1.5; }
   }
 }
 
+/* ── Watchlist row ─────────────────────────────────────────────────────────── */
 .stock-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 9px 12px 9px 14px;
   cursor: pointer;
   transition: background 0.1s;
-  position: relative;
   border-left: 2px solid transparent;
+  position: relative;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(255, 255, 255, 0.025);
 
-    .stock-row__remove {
-      opacity: 1;
-    }
+    .stock-row__remove { opacity: 1; }
   }
 
   &--active {
-    background: rgba(0, 212, 170, 0.07);
+    background: var(--accent-glow);
     border-left-color: var(--accent);
+
+    .stock-row__symbol { color: var(--accent); }
   }
 
   &__info {
@@ -86,18 +88,22 @@
 
   &__symbol {
     display: block;
-    font-weight: 600;
-    font-size: 13px;
+    font-weight: 700;
+    font-size: 12px;
     color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.3px;
+    transition: color 0.1s;
   }
 
   &__name {
     display: block;
-    font-size: 11px;
-    color: var(--text2);
+    font-size: 10.5px;
+    color: var(--text3);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    margin-top: 1px;
   }
 
   &__price {
@@ -107,31 +113,36 @@
 
   &__value {
     display: block;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: -0.3px;
   }
 
   &__change {
-    font-size: 11px;
-    font-weight: 500;
+    font-size: 10.5px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    text-align: right;
   }
 
   &__remove {
     opacity: 0;
-    width: 20px;
-    height: 20px;
+    width: 18px;
+    height: 18px;
     border-radius: 4px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 16px;
-    color: var(--text2);
-    transition: opacity 0.15s, background 0.15s, color 0.15s;
+    font-size: 15px;
+    color: var(--text3);
+    transition: opacity 0.12s, background 0.12s, color 0.12s;
     flex-shrink: 0;
+    line-height: 1;
 
     &:hover {
-      background: rgba(255, 77, 109, 0.15);
+      background: var(--down-dim);
       color: var(--down);
     }
   }

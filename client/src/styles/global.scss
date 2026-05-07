@@ -1,69 +1,72 @@
+/* ── Design Tokens ─────────────────────────────────────────────────────────── */
 :root {
-  --bg: #0a0a14;
-  --bg2: #111127;
-  --card: #1a1a2e;
-  --card2: #16213e;
-  --border: rgba(255, 255, 255, 0.08);
-  --text: #e8e8f0;
-  --text2: #a0a0b8;
-  --accent: #00d4aa;
-  --accent2: #00b894;
-  --up: #00d4aa;
-  --down: #ff4d6d;
-  --warn: #ffd166;
-  --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
-  --radius: 12px;
-  --sidebar-w: 280px;
+  --bg:          #07090F;
+  --bg2:         #0B0E16;
+  --card:        #0F1520;
+  --card2:       #141C2B;
+  --card3:       #1B2438;
+  --border:      rgba(99, 130, 195, 0.11);
+  --border2:     rgba(99, 130, 195, 0.22);
+  --text:        #EDF0F8;
+  --text2:       #8696AE;
+  --text3:       #526070;
+  --accent:      #E8A838;
+  --accent2:     #D09528;
+  --accent-dim:  rgba(232, 168, 56, 0.14);
+  --accent-glow: rgba(232, 168, 56, 0.08);
+  --up:          #00C896;
+  --up-dim:      rgba(0, 200, 150, 0.13);
+  --down:        #FF4560;
+  --down-dim:    rgba(255, 69, 96, 0.13);
+  --warn:        #F59E0B;
+  --shadow:      0 8px 32px rgba(0, 0, 0, 0.55);
+  --shadow-sm:   0 2px 12px rgba(0, 0, 0, 0.35);
+  --radius:      10px;
+  --radius-sm:   6px;
+  --sidebar-w:   268px;
+  --header-h:    52px;
 }
 
 [data-theme='light'] {
-  --bg: #f0f2f5;
-  --bg2: #e4e7ed;
-  --card: #ffffff;
-  --card2: #f8f9fb;
-  --border: rgba(0, 0, 0, 0.1);
-  --text: #1a1a2e;
-  --text2: #6b7280;
-  --shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --bg:          #F0F3FA;
+  --bg2:         #E5EAF5;
+  --card:        #FFFFFF;
+  --card2:       #F5F7FC;
+  --card3:       #EBF0F9;
+  --border:      rgba(99, 130, 195, 0.14);
+  --border2:     rgba(99, 130, 195, 0.28);
+  --text:        #0D1424;
+  --text2:       #4A5E7A;
+  --text3:       #8696AE;
+  --shadow:      0 4px 20px rgba(13, 20, 36, 0.09);
+  --shadow-sm:   0 2px 8px rgba(13, 20, 36, 0.06);
+  --up-dim:      rgba(0, 200, 150, 0.10);
+  --down-dim:    rgba(255, 69, 96, 0.10);
+  --accent-dim:  rgba(232, 168, 56, 0.12);
+  --accent-glow: rgba(232, 168, 56, 0.06);
 }
 
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
+/* ── Reset ─────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-html,
-body,
-#root {
+html, body, #root {
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
   background: var(--bg);
   color: var(--text);
   font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 3px;
-}
+::-webkit-scrollbar        { width: 4px; height: 4px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: var(--border2); border-radius: 2px; }
 
 a {
   color: var(--accent);
   text-decoration: none;
-
-  &:hover {
-    text-decoration: underline;
-  }
+  &:hover { text-decoration: underline; }
 }
 
 button {
@@ -75,97 +78,80 @@ button {
   color: inherit;
 }
 
-input {
+input, textarea, select {
   font-family: inherit;
   font-size: inherit;
 }
 
+/* ── Number font utility ───────────────────────────────────────────────────── */
+.num { font-family: 'JetBrains Mono', 'Courier New', monospace; }
+
+/* ── Colour helpers ────────────────────────────────────────────────────────── */
+.up   { color: var(--up); }
+.down { color: var(--down); }
+
+/* ── Badges ────────────────────────────────────────────────────────────────── */
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
   padding: 2px 8px;
-  border-radius: 20px;
+  border-radius: 4px;
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
 
-  &--up {
-    background: rgba(0, 212, 170, 0.15);
-    color: var(--up);
-  }
-
-  &--down {
-    background: rgba(255, 77, 109, 0.15);
-    color: var(--down);
-  }
-
-  &--neutral {
-    background: rgba(160, 160, 184, 0.15);
-    color: var(--text2);
-  }
-
-  &--accent {
-    background: rgba(0, 212, 170, 0.15);
-    color: var(--accent);
-  }
+  &--up      { background: var(--up-dim);      color: var(--up);     }
+  &--down    { background: var(--down-dim);    color: var(--down);   }
+  &--neutral { background: rgba(134,150,174,0.12); color: var(--text2); }
+  &--accent  { background: var(--accent-dim);  color: var(--accent); }
 }
 
+/* ── Skeleton ──────────────────────────────────────────────────────────────── */
 .skeleton {
   background: linear-gradient(90deg, var(--card) 25%, var(--card2) 50%, var(--card) 75%);
   background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
+  animation: shimmer 1.4s ease-in-out infinite;
   border-radius: 4px;
 }
 
+/* ── Spinner ───────────────────────────────────────────────────────────────── */
+.spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+/* ── Animations ────────────────────────────────────────────────────────────── */
 @keyframes shimmer {
-  0% {
-    background-position: 200% 0;
-  }
-  100% {
-    background-position: -200% 0;
-  }
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes slideIn {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(0);
-  }
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 @keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+  to { transform: rotate(360deg); }
 }
 
-.spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-.up {
-  color: var(--up);
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-.down {
-  color: var(--down);
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
 }

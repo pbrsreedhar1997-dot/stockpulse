@@ -81,7 +81,7 @@ export default function InsightsTab({ symbol }) {
   return (
     <div className="tab-panel">
       <div className="insights-block">
-        <div className="insights-block__title">AI Analysis</div>
+        <div className="insights-block__label">AI Analysis</div>
         {loading ? (
           <span className="spinner" />
         ) : (

@@ -13,9 +13,39 @@ import Search from './components/Search/Search';
 import Toast from './components/shared/Toast';
 import './App.scss';
 
-const PING_INTERVAL_MS  = 30000;
-const WAKE_RETRY_MS     = 5000;
-const WAKE_RETRY_LIMIT  = 24; // 24 × 5s = 2 min fast-retry window
+const PING_INTERVAL_MS = 30000;
+const WAKE_RETRY_MS    = 5000;
+const WAKE_RETRY_LIMIT = 24;
+
+const SunIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/>
+    <line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/>
+    <line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+  </svg>
+);
+
+const MoonIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+  </svg>
+);
+
+const ChartIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/>
+    <polyline points="16 7 22 7 22 13"/>
+  </svg>
+);
+
+const EmptyIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="3" width="18" height="18" rx="3"/>
+    <path d="M7 16l3-4 3 3 3-5"/>
+  </svg>
+);
 
 export default function App() {
   const { state, dispatch } = useAppContext();
@@ -23,13 +53,12 @@ export default function App() {
   const { fetchQuote } = useStocks();
   const { logout } = useAuth();
 
-  const symbols = watchlist.map(s => s.symbol);
-  useLivePrice(symbols);
-
-  // Backend health check — handles Render free tier cold start
+  const symbols        = watchlist.map(s => s.symbol);
   const wakeRetries    = useRef(0);
   const wakeRetryTimer = useRef(null);
   const pingInterval   = useRef(null);
+
+  useLivePrice(symbols);
 
   function refreshQuotes(syms) {
     syms.forEach(sym => fetchQuote(sym));
@@ -39,19 +68,16 @@ export default function App() {
     fetch('/api/ping')
       .then(r => r.json())
       .then(json => {
-        const ok = !!json?.ok;
+        const ok   = !!json?.ok;
         const prev = state.backendOk;
         dispatch({ type: 'SET_BACKEND_OK', payload: ok });
         if (ok) {
           clearTimeout(wakeRetryTimer.current);
           wakeRetries.current = 0;
-          // Trigger quote refresh on first successful ping (null→true) or recovery (false→true)
           if (prev !== true) refreshQuotes(syms);
         }
       })
-      .catch(() => {
-        dispatch({ type: 'SET_BACKEND_OK', payload: false });
-      });
+      .catch(() => dispatch({ type: 'SET_BACKEND_OK', payload: false }));
   }
 
   function scheduleWakeRetry(syms) {
@@ -65,11 +91,8 @@ export default function App() {
     }, WAKE_RETRY_MS);
   }
 
-  useEffect(() => {
-    syncFromServer();
-  }, [state.token]);
+  useEffect(() => { syncFromServer(); }, [state.token]);
 
-  // Auto-select first watchlist stock when nothing is selected
   useEffect(() => {
     if (!state.currentSymbol && watchlist.length) {
       dispatch({ type: 'SET_CURRENT_SYMBOL', payload: watchlist[0].symbol });
@@ -89,23 +112,20 @@ export default function App() {
     };
   }, [watchlist.length]);
 
-  const setView = (v) => dispatch({ type: 'SET_VIEW', payload: v });
+  const setView = v => dispatch({ type: 'SET_VIEW', payload: v });
+  const toggleTheme = () =>
+    dispatch({ type: 'SET_THEME', payload: state.theme === 'dark' ? 'light' : 'dark' });
 
-  const backendPill = state.backendOk === null
-    ? { label: '⟳ Waking up…', cls: 'pill--waking' }
-    : state.backendOk
-      ? { label: '● Live', cls: 'pill--ok' }
-      : { label: '⟳ Reconnecting…', cls: 'pill--waking' };
+  const statusLabel = state.backendOk === null ? 'Waking…'
+    : state.backendOk ? 'Live' : 'Reconnecting…';
+  const statusCls = state.backendOk === true ? 'pill--ok' : 'pill--waking';
 
   return (
     <div className="app">
       <header className="header">
         <div className="header__logo">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
-            <polyline points="16 7 22 7 22 13" />
-          </svg>
-          StockPulse
+          <div className="header__logo-mark"><ChartIcon /></div>
+          <span>StockPulse</span>
         </div>
 
         <div className="header__search-wrap">
@@ -115,33 +135,20 @@ export default function App() {
         <div className="header__spacer" />
 
         <nav className="header__actions">
-          <span className={`be-pill ${backendPill.cls}`}>{backendPill.label}</span>
+          <span className={`be-pill ${statusCls}`}>{statusLabel}</span>
 
-          <button
-            className={`nav-btn ${state.view === 'stock' ? 'nav-btn--active' : ''}`}
-            onClick={() => setView('stock')}
-          >
-            Dashboard
-          </button>
-          <button
-            className={`nav-btn ${state.view === 'screener' ? 'nav-btn--active' : ''}`}
-            onClick={() => setView('screener')}
-          >
-            Value Picks
-          </button>
-          <button
-            className={`nav-btn ${state.view === 'chat' ? 'nav-btn--active' : ''}`}
-            onClick={() => setView('chat')}
-          >
-            AI Chat
-          </button>
+          {(['stock', 'screener', 'chat']).map(v => (
+            <button
+              key={v}
+              className={`nav-btn ${state.view === v ? 'nav-btn--active' : ''}`}
+              onClick={() => setView(v)}
+            >
+              {v === 'stock' ? 'Dashboard' : v === 'screener' ? 'Value Picks' : 'AI Chat'}
+            </button>
+          ))}
 
-          <button
-            className="icon-btn"
-            onClick={() => dispatch({ type: 'SET_THEME', payload: state.theme === 'dark' ? 'light' : 'dark' })}
-            title="Toggle theme"
-          >
-            {state.theme === 'dark' ? '☀️' : '🌙'}
+          <button className="icon-btn" onClick={toggleTheme} title="Toggle theme">
+            {state.theme === 'dark' ? <SunIcon /> : <MoonIcon />}
           </button>
 
           {state.user ? (
@@ -149,20 +156,16 @@ export default function App() {
               <div className="user-chip__avatar">
                 {state.user.name?.[0]?.toUpperCase() || 'U'}
               </div>
-              {state.user.name?.split(' ')[0]}
+              <span>{state.user.name?.split(' ')[0]}</span>
             </div>
           ) : (
             <>
-              <button
-                className="auth-btn auth-btn--login"
-                onClick={() => dispatch({ type: 'TOGGLE_AUTH_MODAL' })}
-              >
+              <button className="auth-btn auth-btn--login"
+                onClick={() => dispatch({ type: 'TOGGLE_AUTH_MODAL' })}>
                 Log in
               </button>
-              <button
-                className="auth-btn auth-btn--signup"
-                onClick={() => dispatch({ type: 'TOGGLE_AUTH_MODAL' })}
-              >
+              <button className="auth-btn auth-btn--signup"
+                onClick={() => dispatch({ type: 'TOGGLE_AUTH_MODAL' })}>
                 Sign up
               </button>
             </>
@@ -172,22 +175,21 @@ export default function App() {
 
       <div className="body">
         <Sidebar />
-
         <main className="main-content">
           {state.view === 'screener' && <Screener />}
-          {state.view === 'chat' && <Chat />}
+          {state.view === 'chat'     && <Chat />}
           {state.view === 'stock' && (
-            state.currentSymbol ? (
-              <StockDetail symbol={state.currentSymbol} />
-            ) : (
-              <div className="empty-state">
-                <div className="empty-state__icon">📈</div>
-                <div className="empty-state__title">Welcome to StockPulse</div>
-                <div className="empty-state__sub">
-                  Search for a stock above or add one from the watchlist to get started.
+            state.currentSymbol
+              ? <StockDetail symbol={state.currentSymbol} />
+              : (
+                <div className="empty-state">
+                  <div className="empty-state__icon"><EmptyIcon /></div>
+                  <div className="empty-state__title">Welcome to StockPulse</div>
+                  <div className="empty-state__sub">
+                    Search for a stock or select one from your watchlist to get started.
+                  </div>
                 </div>
-              </div>
-            )
+              )
           )}
         </main>
       </div>
