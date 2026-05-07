@@ -1,4 +1,8 @@
 /* ── Layout ────────────────────────────────────────────────────────────────── */
+:root {
+  --mobile-nav-h: 58px;
+}
+
 .app {
   display: flex;
   flex-direction: column;
@@ -32,7 +36,7 @@
 }
 
 .stock-right-panel {
-  width: 220px;
+  width: 240px;
   flex-shrink: 0;
   border-left: 1px solid var(--border);
   background: var(--bg2);
@@ -76,19 +80,45 @@
 .srp-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  padding: 8px 14px;
+  gap: 5px;
+  padding: 7px 10px;
   cursor: pointer;
   border-left: 2px solid transparent;
   transition: background 0.1s;
 
-  &:hover { background: rgba(255,255,255,0.025); }
+  &:hover {
+    background: rgba(255,255,255,0.025);
+    .srp-row__order { opacity: 1; }
+  }
 
   &--active {
     background: var(--accent-glow);
     border-left-color: var(--accent);
     .srp-row__sym { color: var(--accent); }
+  }
+
+  &__order {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    opacity: 0;
+    transition: opacity 0.12s;
+    flex-shrink: 0;
+  }
+
+  &__mv {
+    width: 14px;
+    height: 14px;
+    font-size: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 2px;
+    color: var(--text3);
+    transition: background 0.1s, color 0.1s;
+
+    &:hover:not(:disabled) { background: var(--accent-dim); color: var(--accent); }
+    &:disabled { opacity: 0.2; cursor: default; }
   }
 
   &__info {
@@ -122,7 +152,7 @@
 
   &__val {
     display: block;
-    font-size: 11.5px;
+    font-size: 11px;
     font-weight: 600;
     font-family: 'JetBrains Mono', monospace;
     color: var(--text);
@@ -131,7 +161,7 @@
 
   &__chg {
     display: block;
-    font-size: 10px;
+    font-size: 9.5px;
     font-weight: 600;
     font-family: 'JetBrains Mono', monospace;
     text-align: right;
@@ -151,7 +181,6 @@
   z-index: 100;
   position: relative;
 
-  /* Subtle bottom accent line */
   &::after {
     content: '';
     position: absolute;
@@ -203,6 +232,8 @@
     max-width: 360px;
     position: relative;
     margin-left: 4px;
+
+    &--desktop { display: block; }
   }
 
   &__spacer { flex: 1; }
@@ -255,6 +286,8 @@
 }
 
 /* ── Auth buttons ──────────────────────────────────────────────────────────── */
+.auth-btns { display: flex; align-items: center; gap: 4px; }
+
 .auth-btn {
   padding: 5px 12px;
   border-radius: var(--radius-sm);
@@ -304,6 +337,8 @@
     justify-content: center;
     box-shadow: 0 0 8px rgba(232,168,56,0.3);
   }
+
+  &__name { white-space: nowrap; }
 }
 
 /* ── Status pill ───────────────────────────────────────────────────────────── */
@@ -412,11 +447,7 @@
     align-items: center;
     justify-content: center;
 
-    svg {
-      width: 28px;
-      height: 28px;
-      color: var(--text3);
-    }
+    svg { width: 28px; height: 28px; color: var(--text3); }
   }
 
   &__title {
@@ -432,4 +463,149 @@
     max-width: 280px;
     line-height: 1.65;
   }
+}
+
+/* ── Mobile bottom navigation ──────────────────────────────────────────────── */
+.mobile-nav {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: var(--mobile-nav-h);
+  background: var(--bg2);
+  border-top: 1px solid var(--border);
+  z-index: 200;
+  align-items: stretch;
+
+  &__tab {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    color: var(--text3);
+    font-size: 10px;
+    font-weight: 500;
+    transition: color 0.13s, background 0.13s;
+    position: relative;
+
+    svg { width: 20px; height: 20px; }
+
+    &:active { background: rgba(255,255,255,0.04); }
+
+    &--active {
+      color: var(--accent);
+
+      &::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 20%;
+        right: 20%;
+        height: 2px;
+        background: var(--accent);
+        border-radius: 0 0 2px 2px;
+      }
+    }
+  }
+}
+
+/* ── Mobile search overlay ─────────────────────────────────────────────────── */
+.mob-search-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(6px);
+  z-index: 300;
+  display: flex;
+  align-items: flex-start;
+  padding-top: calc(var(--header-h) + 8px);
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.mob-search-box {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: fadeIn 0.15s ease;
+}
+
+.mob-search-cancel {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ── Responsive — hide/show ────────────────────────────────────────────────── */
+
+/* Mobile search icon: hidden on desktop */
+.mob-search-btn { display: none; }
+
+/* ── Tablet ≤900px: hide right panel ──────────────────────────────────────── */
+@media (max-width: 900px) {
+  .stock-right-panel { display: none; }
+}
+
+/* ── Mobile ≤768px: bottom nav + simplified header ────────────────────────── */
+@media (max-width: 768px) {
+  .app { padding-bottom: var(--mobile-nav-h); }
+
+  /* Show mobile nav */
+  .mobile-nav { display: flex; }
+
+  /* Hide desktop nav buttons */
+  .nav-btn--desktop { display: none; }
+
+  /* Show mobile search button */
+  .mob-search-btn { display: flex; }
+
+  /* Hide desktop search bar */
+  .header__search-wrap--desktop { display: none; }
+
+  /* Hide "Sign up" text button on mobile, keep icon-only auth */
+  .auth-btn--signup { display: none; }
+  .auth-btn--login  { display: none; }
+
+  /* Tighter header */
+  .header {
+    padding: 0 10px 0 12px;
+    gap: 6px;
+  }
+
+  .header__logo span { font-size: 14px; }
+
+  /* Status pill shorter on mobile */
+  .be-pill {
+    font-size: 10px;
+    padding: 2px 7px 2px 6px;
+    gap: 4px;
+  }
+
+  /* User chip: just avatar on mobile */
+  .user-chip__name { display: none; }
+  .user-chip { padding: 3px 5px; }
+
+  /* Tab content padding reduced */
+  .tab-content { padding: 14px; }
+
+  /* Main content scrolls above bottom nav */
+  .main-content { padding-bottom: 0; }
+}
+
+/* ── Small mobile ≤480px ───────────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  .header__logo span { display: none; }
+
+  .tab-bar { padding: 0 10px; }
+  .tab-bar__tab { padding: 11px 10px; font-size: 12px; }
+
+  .tab-content { padding: 10px; }
 }

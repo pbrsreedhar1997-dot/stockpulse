@@ -236,3 +236,47 @@
   font-size: 10.5px;
   font-weight: 600;
 }
+
+/* ── Mobile responsive ─────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .screener {
+    padding: 14px;
+
+    &__header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    &__title  { font-size: 17px; }
+    &__sub    { font-size: 11.5px; }
+  }
+
+  /* Make table horizontally scrollable */
+  .sc-table-wrap { overflow-x: auto; }
+
+  .sc-table {
+    min-width: 600px;
+    font-size: 12px;
+
+    th { padding: 8px 10px; font-size: 9px; }
+  }
+
+  .sc-row td { padding: 8px 10px; }
+
+  .sc-td--name { max-width: 130px; font-size: 11px; }
+
+  /* Hide sector column on mobile */
+  .sc-td--sector,
+  th:last-child { display: none; }
+}
+
+@media (max-width: 480px) {
+  .screener { padding: 10px; }
+
+  .screener__toolbar { gap: 6px; }
+
+  .sc-chip { padding: 3px 8px; font-size: 10.5px; }
+
+  .sc-table { min-width: 520px; }
+}

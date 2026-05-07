@@ -238,3 +238,62 @@
     font-size: 11px;
   }
 }
+
+/* ── Mobile responsive ─────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .chat {
+    &__header  { padding: 14px 16px 12px; }
+    &__title   { font-size: 16px; }
+    &__sub     { font-size: 11.5px; }
+
+    &__messages { padding: 14px 14px; gap: 12px; }
+
+    &__welcome {
+      padding: 28px 16px;
+      gap: 12px;
+
+      h3 { font-size: 16px; }
+      p  { font-size: 12.5px; }
+    }
+
+    &__quick-actions { gap: 6px; }
+
+    &__quick-bar { padding: 6px 12px; gap: 5px; }
+
+    &__input-area { padding: 10px 12px 14px; gap: 8px; }
+
+    &__textarea { font-size: 15px; padding: 10px 12px; }
+
+    &__send { padding: 10px 14px; font-size: 13px; }
+  }
+
+  .message {
+    gap: 8px;
+
+    &__bubble {
+      padding: 9px 12px;
+      font-size: 13px;
+    }
+
+    &__avatar {
+      width: 28px;
+      height: 28px;
+      font-size: 14px;
+    }
+  }
+
+  .quick-btn {
+    padding: 6px 11px;
+    font-size: 11.5px;
+  }
+}
+
+@media (max-width: 480px) {
+  .chat__messages { padding: 10px; }
+  .chat__header { padding: 12px 12px 10px; }
+  .chat__input-area { padding: 8px 10px 12px; }
+
+  /* Full-width message bubbles on very small screens */
+  .message { max-width: 100%; }
+  .message__bubble { max-width: calc(100% - 38px); }
+}

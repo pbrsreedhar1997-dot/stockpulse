@@ -142,3 +142,32 @@
     font-weight: 700;
   }
 }
+
+/* ── Mobile responsive ─────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .price-chart {
+    &__canvas-wrap { height: 280px; }
+    &__vol-wrap    { height: 58px; }
+
+    &__toolbar {
+      padding: 9px 12px 8px;
+      gap: 6px;
+    }
+
+    &__stats-bar { padding: 0 2px; }
+
+    &__stat {
+      padding: 6px 10px;
+      span   { font-size: 8.5px; }
+      strong { font-size: 11px; }
+    }
+  }
+
+  .range-btn { padding: 4px 8px; font-size: 11px; }
+  .period-chg { font-size: 11px; padding: 2px 7px; }
+}
+
+@media (max-width: 480px) {
+  .price-chart__canvas-wrap { height: 240px; }
+  .range-btn { padding: 3px 7px; font-size: 10.5px; }
+}

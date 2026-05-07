@@ -46,6 +46,16 @@ function reducer(state, action) {
       return { ...state, watchlist: [...state.watchlist, action.payload] };
     case 'REMOVE_FROM_WATCHLIST':
       return { ...state, watchlist: state.watchlist.filter(s => s.symbol !== action.payload) };
+    case 'MOVE_WATCHLIST_ITEM': {
+      const { symbol, direction } = action.payload;
+      const idx = state.watchlist.findIndex(s => s.symbol === symbol);
+      if (idx === -1) return state;
+      const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+      if (swapIdx < 0 || swapIdx >= state.watchlist.length) return state;
+      const next = [...state.watchlist];
+      [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
+      return { ...state, watchlist: next };
+    }
     case 'SET_CURRENT_SYMBOL':
       sessionStorage.setItem('sp_sym', action.payload || '');
       return { ...state, currentSymbol: action.payload };
