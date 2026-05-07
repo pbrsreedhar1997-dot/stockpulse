@@ -56,13 +56,11 @@ export function useChat() {
     setMessages(prev => [...prev, userMsg, assistantMsg]);
     setStreaming(true);
 
-    const symbols = state.currentSymbol
-      ? [state.currentSymbol]
-      : state.watchlist.slice(0, 3).map(s => s.symbol);
     const history = messagesRef.current.slice(-8).map(m => ({ role: m.role, content: m.content }));
 
-    emit({ type: 'chat', id, question, symbols, history, token: state.token });
-  }, [streaming, state.currentSymbol, state.watchlist, state.token, emit]);
+    // No auto-injection of selected stock — server extracts symbols from the question text
+    emit({ type: 'chat', id, question, symbols: [], history, token: state.token });
+  }, [streaming, state.token, emit]);
 
   const stop = useCallback(() => {
     if (chatIdRef.current) {

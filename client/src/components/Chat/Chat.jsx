@@ -1,15 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useChat } from '../../hooks/useChat';
-import { useAppContext } from '../../contexts/AppContext';
 import './Chat.scss';
 
 const QUICK_ACTIONS = [
-  { label: '📊 Full Analysis',   question: 'Give me a full analysis — fundamentals, technicals, news sentiment, ensemble score, and bear/base/bull price targets.' },
-  { label: '📈 Technical Setup', question: 'What is the technical setup? Cover MA cross, RSI, MACD, Bollinger Bands, and volume trend.' },
-  { label: '💰 Fundamentals',    question: 'How are the fundamentals? P/E, margins, ROE, debt levels, and revenue growth.' },
-  { label: '📰 News Sentiment',  question: 'What does the recent news say? Summarise sentiment and the key themes.' },
-  { label: '⚠️ Key Risks',       question: 'What are the top risks that could push the price down?' },
-  { label: '🎯 Price Targets',   question: 'What are the bear, base, and bull case price targets for the next 30 days?' },
+  { label: '📊 Analyse Reliance',  question: 'Give me a full analysis of Reliance — fundamentals, technicals, news sentiment, ensemble score, and bear/base/bull price targets.' },
+  { label: '📈 TCS Technical',     question: 'What is the technical setup for TCS? Cover MA cross, RSI, MACD, Bollinger Bands, and volume trend.' },
+  { label: '💰 HDFC Bank Fundamentals', question: 'How are HDFC Bank fundamentals? P/E, margins, ROE, debt levels, and revenue growth.' },
+  { label: '📰 Infosys News',      question: 'What does the recent news say about Infosys? Summarise sentiment and key themes.' },
+  { label: '⚠️ Adani Risks',       question: 'What are the top risks for Adani Enterprises?' },
+  { label: '🎯 SBI Price Targets', question: 'What are the bear, base, and bull case price targets for SBI for the next 30 days?' },
 ];
 
 function parseMarkdown(text) {
@@ -25,7 +24,6 @@ function parseMarkdown(text) {
 }
 
 export default function Chat() {
-  const { state } = useAppContext();
   const { messages, streaming, send, stop, clear } = useChat();
   const [input, setInput] = useState('');
   const messagesEndRef = useRef(null);
@@ -49,20 +47,12 @@ export default function Chat() {
     }
   };
 
-  const currentStock = state.currentSymbol
-    ? state.watchlist.find(s => s.symbol === state.currentSymbol) || { symbol: state.currentSymbol }
-    : null;
-
   return (
     <div className="chat">
       <div className="chat__header">
         <div>
           <h2 className="chat__title">AI Stock Analyst</h2>
-          <p className="chat__sub">
-            {currentStock
-              ? <>Active: <strong>{currentStock.symbol.replace(/\.(NS|BO)$/i, '')}</strong>{currentStock.name ? ` — ${currentStock.name}` : ''}</>
-              : 'Select a stock first, then ask anything about it'}
-          </p>
+          <p className="chat__sub">Ask about any NSE/BSE stock by name or ticker — e.g. "Analyse Reliance" or "What is TCS PE ratio?"</p>
         </div>
         {messages.length > 0 && (
           <button className="chat__clear" onClick={clear}>Clear chat</button>
@@ -73,15 +63,9 @@ export default function Chat() {
         {messages.length === 0 ? (
           <div className="chat__welcome">
             <div className="chat__welcome-icon">🤖</div>
-            <h3>
-              {currentStock
-                ? `Ask me anything about ${currentStock.symbol.replace(/\.(NS|BO)$/i, '')}`
-                : 'AI Stock Analyst'}
-            </h3>
+            <h3>AI Stock Analyst</h3>
             <p>
-              {currentStock
-                ? 'I already have the live price, technicals (RSI, MACD, Bollinger Bands), fundamentals, and news sentiment loaded. Just ask.'
-                : 'Select a stock from the Stock tab first. I\'ll have its live data, technicals, and news ready for your questions.'}
+              Just mention a stock by name or ticker and I'll pull live price, technicals (RSI, MACD, Bollinger Bands), fundamentals, and news sentiment automatically.
             </p>
             <div className="chat__quick-actions">
               {QUICK_ACTIONS.map(a => (

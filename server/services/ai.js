@@ -8,32 +8,25 @@ const groqClient = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
 // ─────────────────────────────────────────────────────────────────────────────
 // RAG SYSTEM PROMPT
 // ─────────────────────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are StockPulse AI, a financial analyst assistant embedded in the StockPulse trading dashboard. You specialise in NSE/BSE equities, Indian macro (RBI policy, FII/DII flows, sector rotation), and global markets.
+const SYSTEM_PROMPT = `You are StockPulse AI, a financial analyst assistant for the StockPulse trading app. You specialise in NSE/BSE equities, Indian macro (RBI policy, FII/DII flows, sector rotation), and global markets.
 
-ACTIVE STOCK CONTEXT:
-When a RAG RETRIEVAL RESULTS block is present below, you are operating in the context of that specific stock. The user has selected it in the dashboard. Answer ALL questions relative to that stock unless the user explicitly asks about a different one. You already have its live price, technicals, fundamentals, and news sentiment pre-computed — use that data.
+BEHAVIOUR:
+- Respond naturally to greetings and general questions (keep it brief, 1–3 lines).
+- When stock data is provided in a RAG RETRIEVAL RESULTS block, answer the user's question using that data. Be specific — use the actual numbers, scores, and signals from the context.
+- If no stock data is provided, answer from general financial knowledge and tell the user to mention a specific stock if they want live analysis.
+- Match response length to the question: short question → concise answer. "Full analysis" → detailed breakdown.
+- Never say buy/sell/hold — frame as probability estimates and analysis.
+- **Bold** key numbers. Use bullet points for lists. Keep answers useful, not padded.
 
-RESPONSE STYLE — match depth to the question:
-- "hi" / "hello" / "how are you" → Brief greeting. Mention the active stock name and offer to help (1–2 lines).
-- "what's the price?" / "RSI?" / "PE?" → Answer that one thing concisely using the context data.
-- "analyse" / "full analysis" / "give me a breakdown" → Use the full RAG framework (see below).
-- General market / macro questions → Answer from knowledge, reference the stock if relevant.
-
-FULL ANALYSIS STRUCTURE (use only when asked for analysis/breakdown):
-  1. Ensemble Score & Direction (BULLISH/NEUTRAL/BEARISH + confidence %)
-  2. Fundamentals — key metrics + score/100
-  3. Technicals — MA cross, RSI, MACD, Bollinger %B + score/100
-  4. News Sentiment — dominant themes + score/100
-  5. Prediction — bear / base / bull price targets with rationale
-  6. Top 3 bullish catalysts | Top 3 bearish risks
-  7. Contrarian perspective (always include, even for strong signals)
-  8. Macro regime comment for Indian stocks (RBI, FII/DII, sector)
-
-RULES:
-- Use specific numbers from the provided context. Never fabricate prices or metrics.
-- If data is sparse or confidence < 40%, say so and qualify the output.
-- Never say buy/sell/hold — frame as probability estimates.
-- **Bold** key numbers. Keep answers useful, not padded.`;
+FULL ANALYSIS STRUCTURE (use only when asked for a full breakdown):
+  1. **Ensemble Score** — BULLISH / NEUTRAL / BEARISH + confidence %
+  2. **Fundamentals** — key metrics + score/100
+  3. **Technicals** — MA cross, RSI, MACD, Bollinger %B + score/100
+  4. **News Sentiment** — themes + score/100
+  5. **Price Targets** — bear / base / bull with rationale
+  6. Top 3 catalysts | Top 3 risks
+  7. Contrarian perspective
+  8. Macro regime (for Indian stocks: RBI, FII/DII, sector context)`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TECHNICAL INDICATORS  (computed from 252-day OHLCV)
@@ -433,8 +426,205 @@ ${sentiment.scored?.length ? sentiment.scored.map(a =>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SYMBOL EXTRACTOR  — parses question text to find NSE/BSE stock mentions
+// ─────────────────────────────────────────────────────────────────────────────
+const NSE_MAP = {
+  // Nifty 50 + large caps — name/alias → symbol
+  'reliance': 'RELIANCE.NS', 'ril': 'RELIANCE.NS',
+  'tcs': 'TCS.NS', 'tata consultancy': 'TCS.NS',
+  'hdfc bank': 'HDFCBANK.NS', 'hdfcbank': 'HDFCBANK.NS', 'hdfc': 'HDFCBANK.NS',
+  'infosys': 'INFY.NS', 'infy': 'INFY.NS',
+  'icici bank': 'ICICIBANK.NS', 'icicibank': 'ICICIBANK.NS', 'icici': 'ICICIBANK.NS',
+  'hindunilvr': 'HINDUNILVR.NS', 'hul': 'HINDUNILVR.NS', 'hindustan unilever': 'HINDUNILVR.NS',
+  'bajaj finance': 'BAJFINANCE.NS', 'bajfinance': 'BAJFINANCE.NS',
+  'bajaj finserv': 'BAJAJFINSV.NS', 'bajajfinsv': 'BAJAJFINSV.NS',
+  'larsen': 'LT.NS', 'l&t': 'LT.NS', 'lt': 'LT.NS',
+  'kotak': 'KOTAKBANK.NS', 'kotakbank': 'KOTAKBANK.NS', 'kotak bank': 'KOTAKBANK.NS', 'kotak mahindra': 'KOTAKBANK.NS',
+  'asian paints': 'ASIANPAINT.NS', 'asianpaint': 'ASIANPAINT.NS',
+  'wipro': 'WIPRO.NS',
+  'hcl tech': 'HCLTECH.NS', 'hcltech': 'HCLTECH.NS', 'hcl technologies': 'HCLTECH.NS',
+  'axis bank': 'AXISBANK.NS', 'axisbank': 'AXISBANK.NS',
+  'itc': 'ITC.NS',
+  'sbi': 'SBIN.NS', 'state bank': 'SBIN.NS', 'sbin': 'SBIN.NS',
+  'maruti': 'MARUTI.NS', 'maruti suzuki': 'MARUTI.NS',
+  'ultratech': 'ULTRACEMCO.NS', 'ultracemco': 'ULTRACEMCO.NS', 'ultratech cement': 'ULTRACEMCO.NS',
+  'titan': 'TITAN.NS',
+  'nestle': 'NESTLEIND.NS', 'nestleind': 'NESTLEIND.NS', 'nestle india': 'NESTLEIND.NS',
+  'ntpc': 'NTPC.NS',
+  'power grid': 'POWERGRID.NS', 'powergrid': 'POWERGRID.NS',
+  'ongc': 'ONGC.NS',
+  'm&m': 'M&M.NS', 'mahindra': 'M&M.NS', 'mahindra and mahindra': 'M&M.NS',
+  'sun pharma': 'SUNPHARMA.NS', 'sunpharma': 'SUNPHARMA.NS',
+  'divis': 'DIVISLAB.NS', 'divislab': 'DIVISLAB.NS', "divi's": 'DIVISLAB.NS',
+  'dr reddy': 'DRREDDY.NS', 'drreddy': 'DRREDDY.NS', "dr. reddy's": 'DRREDDY.NS',
+  'cipla': 'CIPLA.NS',
+  'britannia': 'BRITANNIA.NS',
+  'bajaj auto': 'BAJAJ-AUTO.NS',
+  'hero motocorp': 'HEROMOTOCO.NS', 'heromotoco': 'HEROMOTOCO.NS', 'hero moto': 'HEROMOTOCO.NS',
+  'eicher': 'EICHERMOT.NS', 'eichermot': 'EICHERMOT.NS', 'royal enfield': 'EICHERMOT.NS',
+  'tata motors': 'TATAMOTORS.NS', 'tatamotors': 'TATAMOTORS.NS',
+  'tata steel': 'TATASTEEL.NS', 'tatasteel': 'TATASTEEL.NS',
+  'jswsteel': 'JSWSTEEL.NS', 'jsw steel': 'JSWSTEEL.NS', 'jsw': 'JSWSTEEL.NS',
+  'hindalco': 'HINDALCO.NS',
+  'vedanta': 'VEDL.NS', 'vedl': 'VEDL.NS',
+  'coal india': 'COALINDIA.NS', 'coalindia': 'COALINDIA.NS',
+  'bhel': 'BHEL.NS',
+  'bpcl': 'BPCL.NS',
+  'iocl': 'IOC.NS', 'ioc': 'IOC.NS', 'indian oil': 'IOC.NS',
+  'gail': 'GAIL.NS',
+  'indusind bank': 'INDUSINDBK.NS', 'indusindbk': 'INDUSINDBK.NS', 'indusind': 'INDUSINDBK.NS',
+  'shree cement': 'SHREECEM.NS', 'shreecem': 'SHREECEM.NS',
+  'dmart': 'DMART.NS', 'avenue supermarts': 'DMART.NS',
+  'siemens': 'SIEMENS.NS',
+  'havells': 'HAVELLS.NS',
+  'pidilite': 'PIDILITIND.NS', 'pidilitind': 'PIDILITIND.NS', 'fevicol': 'PIDILITIND.NS',
+  'page industries': 'PAGEIND.NS', 'pageind': 'PAGEIND.NS', 'jockey': 'PAGEIND.NS',
+  'mrf': 'MRF.NS',
+  'bosch': 'BOSCHLTD.NS', 'boschltd': 'BOSCHLTD.NS',
+  'abb': 'ABB.NS',
+  'godrej consumer': 'GODREJCP.NS', 'godrejcp': 'GODREJCP.NS', 'gcpl': 'GODREJCP.NS',
+  'dabur': 'DABUR.NS',
+  'marico': 'MARICO.NS',
+  'colgate': 'COLPAL.NS', 'colpal': 'COLPAL.NS', 'colgate palmolive': 'COLPAL.NS',
+  'emami': 'EMAMILTD.NS',
+  'zomato': 'ZOMATO.NS',
+  'nykaa': 'NYKAA.NS', 'fsn': 'NYKAA.NS',
+  'paytm': 'PAYTM.NS', 'one97': 'PAYTM.NS',
+  'policybazaar': 'POLICYBZR.NS', 'policybzr': 'POLICYBZR.NS',
+  'irctc': 'IRCTC.NS',
+  'adani ports': 'ADANIPORTS.NS', 'adaniports': 'ADANIPORTS.NS',
+  'adani enterprises': 'ADANIENT.NS', 'adanient': 'ADANIENT.NS',
+  'adani green': 'ADANIGREEN.NS', 'adanigreen': 'ADANIGREEN.NS',
+  'adani power': 'ADANIPOWER.NS',
+  'adani total gas': 'ATGL.NS', 'atgl': 'ATGL.NS',
+  'tata power': 'TATAPOWER.NS', 'tatapower': 'TATAPOWER.NS',
+  'tata consumer': 'TATACONSUM.NS', 'tataconsum': 'TATACONSUM.NS',
+  'tech mahindra': 'TECHM.NS', 'techm': 'TECHM.NS',
+  'mphasis': 'MPHASIS.NS',
+  'persistent': 'PERSISTENT.NS', 'persistent systems': 'PERSISTENT.NS',
+  'coforge': 'COFORGE.NS',
+  'ltimindtree': 'LTIM.NS', 'ltim': 'LTIM.NS', 'lti': 'LTIM.NS',
+  'tanla': 'TANLA.NS',
+  'dixon': 'DIXON.NS', 'dixon technologies': 'DIXON.NS',
+  'amber enterprises': 'AMBER.NS',
+  'blue dart': 'BLUEDART.NS', 'bluedart': 'BLUEDART.NS',
+  'indigo': 'INDIGO.NS', 'interglobe': 'INDIGO.NS',
+  'spicejet': 'SPICEJET.NS',
+  'pnb': 'PNB.NS', 'punjab national bank': 'PNB.NS',
+  'bank of baroda': 'BANKBARODA.NS', 'bankbaroda': 'BANKBARODA.NS', 'bob': 'BANKBARODA.NS',
+  'canara bank': 'CANBK.NS', 'canbk': 'CANBK.NS',
+  'union bank': 'UNIONBANK.NS', 'unionbank': 'UNIONBANK.NS',
+  'federal bank': 'FEDERALBNK.NS', 'federalbnk': 'FEDERALBNK.NS',
+  'bandhan bank': 'BANDHANBNK.NS', 'bandhanbnk': 'BANDHANBNK.NS',
+  'idfc first': 'IDFCFIRSTB.NS', 'idfcfirstb': 'IDFCFIRSTB.NS', 'idfc': 'IDFCFIRSTB.NS',
+  'yes bank': 'YESBANK.NS', 'yesbank': 'YESBANK.NS',
+  'motherson': 'MOTHERSON.NS', 'samvardhana motherson': 'MOTHERSON.NS',
+  'balkrisind': 'BALKRISIND.NS', 'balkrishna': 'BALKRISIND.NS', 'bkt': 'BALKRISIND.NS',
+  'astral': 'ASTRAL.NS', 'astral poly': 'ASTRAL.NS',
+  'polycab': 'POLYCAB.NS',
+  'cg power': 'CGPOWER.NS', 'cgpower': 'CGPOWER.NS',
+  'bharat electronics': 'BEL.NS', 'bel': 'BEL.NS',
+  'hal': 'HAL.NS', 'hindustan aeronautics': 'HAL.NS',
+  'bharat forge': 'BHARATFORG.NS', 'bharatforg': 'BHARATFORG.NS',
+  'cummins': 'CUMMINSIND.NS', 'cumminsind': 'CUMMINSIND.NS',
+  'thermax': 'THERMAX.NS',
+  'voltas': 'VOLTAS.NS',
+  'whirlpool': 'WHIRLPOOL.NS',
+  'crompton': 'CROMPTON.NS', 'crompton greaves': 'CROMPTON.NS',
+  'orient electric': 'ORIENTELEC.NS',
+  'escorts': 'ESCORTS.NS', 'escorts kubota': 'ESCORTS.NS',
+  'tractors india': 'TIL.NS',
+  'kpit': 'KPITTECH.NS', 'kpittech': 'KPITTECH.NS',
+  'trent': 'TRENT.NS', 'westside': 'TRENT.NS',
+  'vedant fashions': 'MANYAVAR.NS', 'manyavar': 'MANYAVAR.NS',
+  'metro brands': 'METROBRAND.NS',
+  'avenue': 'DMART.NS',
+  'star health': 'STARHEALTH.NS',
+  'hdfc life': 'HDFCLIFE.NS', 'hdfclife': 'HDFCLIFE.NS',
+  'sbi life': 'SBILIFE.NS', 'sbilife': 'SBILIFE.NS',
+  'lic': 'LICI.NS', 'lici': 'LICI.NS', 'life insurance': 'LICI.NS',
+  'general insurance': 'GICRE.NS', 'gicre': 'GICRE.NS',
+  'icici lombard': 'ICICIGI.NS', 'icicigi': 'ICICIGI.NS',
+  'new india': 'NIACL.NS', 'niacl': 'NIACL.NS',
+  'irb infra': 'IRB.NS', 'irb': 'IRB.NS',
+  'container corp': 'CONCOR.NS', 'concor': 'CONCOR.NS',
+  'apl apollo': 'APLAPOLLO.NS',
+  'jindal steel': 'JSWSTEEL.NS',
+  'nmdc': 'NMDC.NS',
+  'hindustan zinc': 'HINDZINC.NS', 'hindzinc': 'HINDZINC.NS',
+  'godrej properties': 'GODREJPROP.NS', 'godrejprop': 'GODREJPROP.NS',
+  'dlf': 'DLF.NS',
+  'oberoi realty': 'OBEROIRLTY.NS', 'oberoirlty': 'OBEROIRLTY.NS',
+  'prestige': 'PRESTIGE.NS', 'prestige estates': 'PRESTIGE.NS',
+  'brigade': 'BRIGADE.NS', 'brigade enterprises': 'BRIGADE.NS',
+  'suntv': 'SUNTV.NS', 'sun tv': 'SUNTV.NS',
+  'zee entertainment': 'ZEEL.NS', 'zeel': 'ZEEL.NS', 'zee': 'ZEEL.NS',
+  'pvr inox': 'PVRINOX.NS', 'pvrinox': 'PVRINOX.NS', 'pvr': 'PVRINOX.NS', 'inox': 'PVRINOX.NS',
+  'nazara': 'NAZARA.NS',
+  'aptus value': 'APTUS.NS',
+  'home first': 'HOMEFIRST.NS',
+  'aavas financiers': 'AAVAS.NS', 'aavas': 'AAVAS.NS',
+  'five star': 'FIVESTAR.NS',
+  'manappuram': 'MANAPPURAM.NS', 'muthoot': 'MUTHOOTFIN.NS', 'muthootfin': 'MUTHOOTFIN.NS',
+  'chola': 'CHOLAFIN.NS', 'cholafin': 'CHOLAFIN.NS', 'cholamandalam': 'CHOLAFIN.NS',
+  'shriram finance': 'SHRIRAMFIN.NS', 'shriramfin': 'SHRIRAMFIN.NS',
+  'piramal': 'PIRAMALENT.NS', 'piramalent': 'PIRAMALENT.NS',
+  'alkem': 'ALKEM.NS', 'alkem labs': 'ALKEM.NS',
+  'lupin': 'LUPIN.NS',
+  'gland pharma': 'GLAND.NS', 'gland': 'GLAND.NS',
+  'biocon': 'BIOCON.NS',
+  'laurus': 'LAURUSLABS.NS', 'lauruslabs': 'LAURUSLABS.NS',
+  'natco': 'NATCOPHARM.NS',
+  'indiamart': 'INDIAMART.NS',
+  'just dial': 'JUSTDIAL.NS', 'justdial': 'JUSTDIAL.NS',
+  'info edge': 'NAUKRI.NS', 'naukri': 'NAUKRI.NS',
+  'cartrade': 'CARTRADE.NS',
+  'devyani': 'DEVYANI.NS', 'kfc india': 'DEVYANI.NS',
+  'jubilant food': 'JUBLFOOD.NS', 'jublfood': 'JUBLFOOD.NS', 'dominos': 'JUBLFOOD.NS',
+  'westlife': 'WESTLIFE.NS', 'mcdonald india': 'WESTLIFE.NS',
+  'campus activewear': 'CAMPUS.NS',
+  'vedant': 'MANYAVAR.NS',
+  'bse': 'BSE.NS', 'bombay stock exchange': 'BSE.NS',
+  'cdsl': 'CDSL.NS', 'central depository': 'CDSL.NS',
+  'msei': 'BSE.NS',
+  'mcx': 'MCX.NS', 'multi commodity': 'MCX.NS',
+};
+
+// Sorted by length descending so longer phrases match before shorter ones
+const NSE_PHRASES = Object.keys(NSE_MAP).sort((a, b) => b.length - a.length);
+
+function extractSymbolsFromQuestion(question) {
+  const q = question.toLowerCase();
+  const found = new Set();
+
+  // 1. Explicit .NS/.BO ticker patterns (e.g. "RELIANCE.NS", "TCS.NS")
+  const tickerRe = /\b([A-Z]{2,}(?:-[A-Z]+)?)\.(NS|BO)\b/gi;
+  for (const m of question.matchAll(tickerRe)) {
+    found.add(`${m[1].toUpperCase()}.${m[2].toUpperCase()}`);
+  }
+
+  // 2. Plain uppercase tickers (e.g. "RELIANCE", "TCS", "HDFCBANK")
+  const upperRe = /\b([A-Z]{3,}(?:-[A-Z]+)?)\b/g;
+  for (const m of question.matchAll(upperRe)) {
+    const candidate = m[1].toUpperCase() + '.NS';
+    if (NSE_MAP[m[1].toLowerCase()]) {
+      found.add(NSE_MAP[m[1].toLowerCase()]);
+    }
+  }
+
+  // 3. Company name / common alias matching
+  for (const phrase of NSE_PHRASES) {
+    if (q.includes(phrase) && !found.has(NSE_MAP[phrase])) {
+      found.add(NSE_MAP[phrase]);
+      if (found.size >= 2) break;
+    }
+  }
+
+  return [...found].slice(0, 2);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RESPONSE DEPTH — determines token budget based on question intent
-// Stock context is ALWAYS fetched when a symbol is selected.
 // ─────────────────────────────────────────────────────────────────────────────
 const DEEP_KEYWORDS = [
   'analys', 'breakdown', 'comprehensive', 'full', 'complete', 'detail',
@@ -462,7 +652,10 @@ export async function streamChat({ question, symbols = [], history = [], onDelta
 
   try {
     const depth    = responseDepth(question);
-    const context  = symbols.length ? await buildRagContext(symbols) : '';
+    // Extract symbols from question text; fall back to any passed-in symbols
+    const extracted = extractSymbolsFromQuestion(question);
+    const symsToUse = extracted.length ? extracted : symbols;
+    const context  = symsToUse.length ? await buildRagContext(symsToUse) : '';
     const messages = [
       { role: 'system', content: SYSTEM_PROMPT + context },
       ...history.slice(-10).map(m => ({ role: m.role, content: String(m.content) })),
@@ -493,7 +686,9 @@ async function streamAnthropic({ question, symbols, history, onDelta, onDone, on
     const { default: Anthropic } = await import('@anthropic-ai/sdk');
     const client   = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
     const depth    = responseDepth(question);
-    const context  = symbols.length ? await buildRagContext(symbols) : '';
+    const extracted = extractSymbolsFromQuestion(question);
+    const symsToUse = extracted.length ? extracted : symbols;
+    const context  = symsToUse.length ? await buildRagContext(symsToUse) : '';
     const messages = [
       ...history.slice(-10).map(m => ({ role: m.role, content: String(m.content) })),
       { role: 'user', content: question },
