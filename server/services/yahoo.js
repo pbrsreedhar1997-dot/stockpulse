@@ -3,6 +3,7 @@ import Parser from 'rss-parser';
 import { get as cacheGet, set as cacheSet } from '../cache.js';
 import { quoteTtl } from '../market.js';
 import log from '../log.js';
+import { avQuote, avOverview, avFinancials } from './alphavantage.js';
 
 const yf = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
@@ -15,38 +16,102 @@ function safeNum(v) {
   return isFinite(n) ? n : null;
 }
 
+// ── Yahoo Finance Chart API (no crumb needed — works on cloud servers) ────────
+// This endpoint is what yf.historical() uses and is NOT blocked by Yahoo.
+async function getQuoteFromChartApi(symbol) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=5m&includePrePost=false`;
+  const r = await fetch(url, {
+    signal: AbortSignal.timeout(12000),
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+  });
+  if (!r.ok) throw new Error(`Chart API HTTP ${r.status}`);
+  const json = await r.json();
+  const result = json?.chart?.result?.[0];
+  if (!result) throw new Error('No chart result');
+
+  const meta  = result.meta || {};
+  const price = safeNum(meta.regularMarketPrice);
+  if (!price) throw new Error('No price in chart meta');
+
+  const prevClose = safeNum(meta.chartPreviousClose || meta.previousClose);
+  const change    = prevClose ? price - prevClose : null;
+  const changePct = prevClose ? ((price - prevClose) / prevClose) * 100 : null;
+
+  // Get today's open from first intraday bar
+  const opens = result.indicators?.quote?.[0]?.open || [];
+  const open  = safeNum(opens.find(v => v != null));
+
+  return {
+    price,
+    open,
+    high:        safeNum(meta.regularMarketDayHigh),
+    low:         safeNum(meta.regularMarketDayLow),
+    prev_close:  prevClose,
+    change,
+    change_pct:  changePct,
+    volume:      safeNum(meta.regularMarketVolume),
+    mkt_cap:     null,
+    currency:    meta.currency || 'INR',
+    name:        meta.longName || meta.shortName || symbol,
+    week52_high: safeNum(meta.fiftyTwoWeekHigh),
+    week52_low:  safeNum(meta.fiftyTwoWeekLow),
+  };
+}
+
 // ── Quote ─────────────────────────────────────────────────────────────────────
 export async function getQuote(symbol) {
-  const key = `q3:${symbol}`;
+  const key = `q4:${symbol}`;
   const hit = await cacheGet(key);
   if (hit) return hit;
 
-  const d = await yf.quote(symbol, {}, OPT);
-  if (!d || d.regularMarketPrice == null) return null;
+  // 1. Try yahoo-finance2 (works locally and on some servers)
+  const d = await yf.quote(symbol, {}, OPT).catch(() => null);
+  if (d?.regularMarketPrice != null) {
+    const result = {
+      price:       safeNum(d.regularMarketPrice),
+      open:        safeNum(d.regularMarketOpen),
+      high:        safeNum(d.regularMarketDayHigh),
+      low:         safeNum(d.regularMarketDayLow),
+      prev_close:  safeNum(d.regularMarketPreviousClose),
+      change:      safeNum(d.regularMarketChange),
+      change_pct:  safeNum(d.regularMarketChangePercent),
+      volume:      safeNum(d.regularMarketVolume),
+      mkt_cap:     safeNum(d.marketCap),
+      currency:    d.currency || 'INR',
+      name:        d.longName || d.shortName || symbol,
+      week52_high: safeNum(d.fiftyTwoWeekHigh),
+      week52_low:  safeNum(d.fiftyTwoWeekLow),
+    };
+    await cacheSet(key, result, quoteTtl(symbol));
+    return result;
+  }
 
-  const result = {
-    price:       safeNum(d.regularMarketPrice),
-    open:        safeNum(d.regularMarketOpen),
-    high:        safeNum(d.regularMarketDayHigh),
-    low:         safeNum(d.regularMarketDayLow),
-    prev_close:  safeNum(d.regularMarketPreviousClose),
-    change:      safeNum(d.regularMarketChange),
-    change_pct:  safeNum(d.regularMarketChangePercent),
-    volume:      safeNum(d.regularMarketVolume),
-    mkt_cap:     safeNum(d.marketCap),
-    currency:    d.currency || 'INR',
-    name:        d.longName || d.shortName || symbol,
-    week52_high: safeNum(d.fiftyTwoWeekHigh),
-    week52_low:  safeNum(d.fiftyTwoWeekLow),
-  };
+  // 2. Fallback: Yahoo Finance chart API (same CDN as historical, not blocked)
+  log.info(`Yahoo quote blocked for ${symbol} — using chart API`);
+  const chartResult = await getQuoteFromChartApi(symbol).catch(e => {
+    log.warn(`Chart API failed for ${symbol}: ${e.message}`);
+    return null;
+  });
+  if (chartResult) {
+    await cacheSet(key, chartResult, quoteTtl(symbol));
+    return chartResult;
+  }
 
-  await cacheSet(key, result, quoteTtl(symbol));
-  return result;
+  // 3. Last resort: Alpha Vantage
+  log.info(`Chart API failed for ${symbol} — trying Alpha Vantage`);
+  const avResult = await avQuote(symbol).catch(() => null);
+  if (avResult) {
+    await cacheSet(key, avResult, quoteTtl(symbol));
+    return avResult;
+  }
+
+  log.warn(`All quote sources failed for ${symbol}`);
+  return null;
 }
 
 // ── Profile ───────────────────────────────────────────────────────────────────
 export async function getProfile(symbol) {
-  const key = `profile3:${symbol}`;
+  const key = `profile4:${symbol}`;
   const hit = await cacheGet(key);
   if (hit) return hit;
 
@@ -55,23 +120,55 @@ export async function getProfile(symbol) {
     yf.quoteSummary(symbol, { modules: ['assetProfile', 'price'] }, OPT),
   ]);
 
-  const q  = qRes.status   === 'fulfilled' ? qRes.value   : {};
+  const q  = qRes.status   === 'fulfilled' ? (qRes.value   || {}) : {};
   const ap = sumRes.status === 'fulfilled' ? (sumRes.value?.assetProfile || {}) : {};
   const pr = sumRes.status === 'fulfilled' ? (sumRes.value?.price        || {}) : {};
 
-  const website = ap.website || null;
-  const host    = website ? website.replace(/^https?:\/\//, '').split('/')[0] : null;
+  const hasName = pr.longName || q.longName || q.shortName;
+  if (hasName) {
+    const website = ap.website || null;
+    const host    = website ? website.replace(/^https?:\/\//, '').split('/')[0] : null;
+    const result = {
+      name:        pr.longName || q.longName || q.shortName || symbol,
+      sector:      ap.sector   || null,
+      industry:    ap.industry || null,
+      exchange:    q.fullExchangeName || q.exchange || null,
+      currency:    q.currency || 'INR',
+      website,
+      description: ap.longBusinessSummary || null,
+      employees:   safeNum(ap.fullTimeEmployees),
+      country:     ap.country || null,
+      logo_url:    host ? `https://logo.clearbit.com/${host}` : null,
+    };
+    await cacheSet(key, result, 86400);
+    return result;
+  }
+
+  // Yahoo blocked — build profile from chart API + Alpha Vantage
+  log.info(`Yahoo profile blocked for ${symbol} — using chart API + AV`);
+
+  const [chartRes, avRes] = await Promise.allSettled([
+    getQuoteFromChartApi(symbol),
+    avOverview(symbol),
+  ]);
+
+  const chart = chartRes.status === 'fulfilled' ? chartRes.value : null;
+  const av    = avRes.status    === 'fulfilled' ? avRes.value    : null;
+
+  const name     = chart?.name || av?.name || symbol;
+  const currency = chart?.currency || av?.currency || 'INR';
+  const host     = av?.website ? av.website.replace(/^https?:\/\//, '').split('/')[0] : null;
 
   const result = {
-    name:        pr.longName || q.longName || q.shortName || symbol,
-    sector:      ap.sector   || null,
-    industry:    ap.industry || null,
-    exchange:    q.fullExchangeName || q.exchange || null,
-    currency:    q.currency || 'INR',
-    website,
-    description: ap.longBusinessSummary || null,
-    employees:   safeNum(ap.fullTimeEmployees),
-    country:     ap.country || null,
+    name,
+    sector:      av?.sector   || null,
+    industry:    av?.industry || null,
+    exchange:    av?.exchange || null,
+    currency,
+    website:     av?.website  || null,
+    description: av?.description || null,
+    employees:   av?.employees   || null,
+    country:     av?.country     || null,
     logo_url:    host ? `https://logo.clearbit.com/${host}` : null,
   };
 
@@ -81,7 +178,7 @@ export async function getProfile(symbol) {
 
 // ── Financials ────────────────────────────────────────────────────────────────
 export async function getFinancials(symbol) {
-  const key = `fin4:${symbol}`;
+  const key = `fin5:${symbol}`;
   const hit = await cacheGet(key);
   if (hit) return hit;
 
@@ -89,35 +186,48 @@ export async function getFinancials(symbol) {
     modules: ['financialData', 'defaultKeyStatistics', 'summaryDetail'],
   }, OPT).catch(() => null);
 
-  if (!sum) return null;
+  if (sum) {
+    const fd = sum.financialData        || {};
+    const ks = sum.defaultKeyStatistics || {};
+    const sd = sum.summaryDetail        || {};
+    const pct = n => n != null ? Math.round(n * 1000) / 10 : null;
 
-  const fd = sum.financialData        || {};
-  const ks = sum.defaultKeyStatistics || {};
-  const sd = sum.summaryDetail        || {};
+    const result = {
+      market_cap:      safeNum(sd.marketCap),
+      revenue_ttm:     safeNum(fd.totalRevenue),
+      gross_margin:    pct(safeNum(fd.grossMargins)),
+      net_margin:      pct(safeNum(fd.profitMargins)),
+      pe_ratio:        safeNum(sd.trailingPE),
+      eps:             safeNum(ks.trailingEps),
+      dividend_yield:  pct(safeNum(sd.dividendYield)),
+      beta:            safeNum(ks.beta),
+      week52_high:     safeNum(sd.fiftyTwoWeekHigh),
+      week52_low:      safeNum(sd.fiftyTwoWeekLow),
+      avg_volume:      safeNum(sd.averageVolume),
+      price_to_book:   safeNum(ks.priceToBook),
+      debt_to_equity:  safeNum(fd.debtToEquity),
+      return_on_equity: pct(safeNum(fd.returnOnEquity)),
+      revenue_growth:  pct(safeNum(fd.revenueGrowth)),
+      earnings_growth: pct(safeNum(fd.earningsGrowth)),
+    };
+    await cacheSet(key, result, 21600);
+    return result;
+  }
 
-  const pct = n => n != null ? Math.round(n * 1000) / 10 : null;
+  // Yahoo blocked — fall back to Alpha Vantage
+  log.info(`Yahoo financials blocked for ${symbol} — using Alpha Vantage`);
+  const avResult = await avFinancials(symbol).catch(e => {
+    log.warn(`AV financials failed for ${symbol}: ${e.message}`);
+    return null;
+  });
 
-  const result = {
-    market_cap:      safeNum(sd.marketCap),
-    revenue_ttm:     safeNum(fd.totalRevenue),
-    gross_margin:    pct(safeNum(fd.grossMargins)),
-    net_margin:      pct(safeNum(fd.profitMargins)),
-    pe_ratio:        safeNum(sd.trailingPE),
-    eps:             safeNum(ks.trailingEps),
-    dividend_yield:  pct(safeNum(sd.dividendYield)),
-    beta:            safeNum(ks.beta),
-    week52_high:     safeNum(sd.fiftyTwoWeekHigh),
-    week52_low:      safeNum(sd.fiftyTwoWeekLow),
-    avg_volume:      safeNum(sd.averageVolume),
-    price_to_book:   safeNum(ks.priceToBook),
-    debt_to_equity:  safeNum(fd.debtToEquity),
-    return_on_equity: pct(safeNum(fd.returnOnEquity)),
-    revenue_growth:  pct(safeNum(fd.revenueGrowth)),
-    earnings_growth: pct(safeNum(fd.earningsGrowth)),
-  };
+  if (avResult) {
+    await cacheSet(key, avResult, 21600);
+    return avResult;
+  }
 
-  await cacheSet(key, result, 21600);
-  return result;
+  log.warn(`All financials sources failed for ${symbol}`);
+  return null;
 }
 
 // ── History ───────────────────────────────────────────────────────────────────
