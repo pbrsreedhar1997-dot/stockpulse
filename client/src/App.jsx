@@ -4,11 +4,10 @@ import { useWatchlist } from './hooks/useWatchlist';
 import { useStocks } from './hooks/useStocks';
 import { useLivePrice } from './hooks/useLivePrice';
 import { useAuth } from './hooks/useAuth';
-import Sidebar from './components/Sidebar/Sidebar';
 import StockDetail from './components/StockDetail/StockDetail';
 import Screener from './components/Screener/Screener';
 import Chat from './components/Chat/Chat';
-import Portfolio from './components/Portfolio/Portfolio';
+import WatchlistPortfolio from './components/WatchlistPortfolio/WatchlistPortfolio';
 import AuthModal from './components/Auth/AuthModal';
 import Search from './components/Search/Search';
 import Toast from './components/shared/Toast';
@@ -162,10 +161,10 @@ export default function App() {
           </span>
 
           {([
-            { v: 'stock',     label: 'Dashboard'   },
-            { v: 'screener',  label: 'Value Picks'  },
-            { v: 'portfolio', label: 'Portfolio'    },
-            { v: 'chat',      label: 'AI Chat'      },
+            { v: 'stock',    label: 'Stock'              },
+            { v: 'mylist',   label: 'Watchlist & Portfolio' },
+            { v: 'screener', label: 'Value Picks'         },
+            { v: 'chat',     label: 'AI Chat'             },
           ]).map(({ v, label }) => (
             <button
               key={v}
@@ -203,11 +202,10 @@ export default function App() {
       </header>
 
       <div className="body">
-        <Sidebar />
         <main className="main-content">
-          {state.view === 'screener'  && <Screener />}
-          {state.view === 'portfolio' && <Portfolio />}
-          {state.view === 'chat'      && <Chat />}
+          {state.view === 'screener' && <Screener />}
+          {state.view === 'mylist'   && <WatchlistPortfolio />}
+          {state.view === 'chat'     && <Chat />}
           {state.view === 'stock' && (
             state.currentSymbol
               ? <StockDetail symbol={state.currentSymbol} />

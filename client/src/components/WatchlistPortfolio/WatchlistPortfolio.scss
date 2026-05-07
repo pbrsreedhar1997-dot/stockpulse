@@ -1,0 +1,150 @@
+.mylist {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+
+  &__badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--accent-dim);
+    color: var(--accent);
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 10px;
+    padding: 1px 6px;
+    margin-left: 6px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  &__content {
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  &__empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 80px 40px;
+    text-align: center;
+
+    &-icon { font-size: 40px; }
+
+    &-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    &-sub {
+      font-size: 13px;
+      color: var(--text2);
+      max-width: 280px;
+      line-height: 1.6;
+    }
+  }
+}
+
+.wl-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 8px 0;
+}
+
+.wl-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: background 0.1s;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.025);
+
+    .wl-row__rm { opacity: 1; }
+  }
+
+  &--active {
+    background: var(--accent-glow);
+    border-left-color: var(--accent);
+
+    .wl-row__symbol { color: var(--accent); }
+  }
+
+  &__info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__symbol {
+    display: block;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.3px;
+    transition: color 0.1s;
+  }
+
+  &__name {
+    display: block;
+    font-size: 11.5px;
+    color: var(--text3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-top: 2px;
+  }
+
+  &__right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  &__price {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: -0.3px;
+
+    &.flash-up   { animation: flash-up   0.7s ease-out forwards; }
+    &.flash-down { animation: flash-down 0.7s ease-out forwards; }
+  }
+
+  &__chg {
+    font-size: 12px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    min-width: 56px;
+    text-align: right;
+  }
+
+  &__rm {
+    opacity: 0;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    line-height: 1;
+    color: var(--text3);
+    transition: opacity 0.12s, background 0.12s, color 0.12s;
+    flex-shrink: 0;
+
+    &:hover {
+      background: var(--down-dim);
+      color: var(--down);
+    }
+  }
+}

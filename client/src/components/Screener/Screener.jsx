@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { useScreener } from '../../hooks/useScreener';
-import { useWatchlist } from '../../hooks/useWatchlist';
 import { useAppContext } from '../../contexts/AppContext';
 import './Screener.scss';
 
@@ -22,7 +21,6 @@ const SORT_OPTS = [
 
 export default function Screener() {
   const { stocks, loading, error, load, refresh } = useScreener();
-  const { add } = useWatchlist();
   const { dispatch } = useAppContext();
   const [sector, setSector] = useState('All');
   const [sortBy, setSortBy] = useState('decline_pct');
@@ -45,8 +43,7 @@ export default function Screener() {
     else { setSortBy(field); setSortDir('desc'); }
   };
 
-  const pickStock = async (stock) => {
-    await add(stock.symbol, stock.name, stock.exchange || 'NSE');
+  const pickStock = (stock) => {
     dispatch({ type: 'SET_CURRENT_SYMBOL', payload: stock.symbol });
     dispatch({ type: 'SET_VIEW', payload: 'stock' });
   };
