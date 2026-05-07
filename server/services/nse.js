@@ -49,7 +49,7 @@ function safe(v) {
 
 // ── Quote ─────────────────────────────────────────────────────────────────────
 export async function nseQuote(symbol) {
-  const ckey = `nseq2:${symbol}`;
+  const ckey = `nseq3:${symbol}`;
   const hit = await cacheGet(ckey);
   if (hit) return hit;
 
@@ -58,33 +58,36 @@ export async function nseQuote(symbol) {
 
   const d = await nseGet(`/api/quote-equity?symbol=${encodeURIComponent(nse)}`);
 
-  const pi = d?.priceInfo      || {};
-  const wh = pi.weekHighLow    || {};
+  const pi = d?.priceInfo       || {};
+  const wh = pi.weekHighLow     || {};
   const ih = pi.intraDayHighLow || {};
-  const md = d?.metadata       || {};
+  const md = d?.metadata        || {};
+  const si = d?.securityInfo    || {};
 
   const price    = safe(pi.lastPrice);
   if (!price) return null;
 
-  const prevClose = safe(pi.previousClose);
-  const change    = safe(pi.change)  ?? (prevClose ? price - prevClose : null);
-  const changePct = safe(pi.pChange) ?? (prevClose ? ((price - prevClose) / prevClose) * 100 : null);
+  const prevClose  = safe(pi.previousClose);
+  const change     = safe(pi.change)  ?? (prevClose ? price - prevClose : null);
+  const changePct  = safe(pi.pChange) ?? (prevClose ? ((price - prevClose) / prevClose) * 100 : null);
 
-  const pe  = safe(md.pdSymbolPe);
-  const eps = (price && pe) ? Math.round((price / pe) * 100) / 100 : null;
+  const pe         = safe(md.pdSymbolPe);
+  const eps        = (price && pe) ? Math.round((price / pe) * 100) / 100 : null;
+  const issuedSize = safe(si.issuedSize);
+  const mktCap     = (price && issuedSize) ? price * issuedSize : null;
 
   const result = {
     price,
-    open:        safe(pi.open)    || price,
-    high:        safe(ih.max)     || price,
-    low:         safe(ih.min)     || price,
+    open:        safe(pi.open) || price,
+    high:        safe(ih.max)  || price,
+    low:         safe(ih.min)  || price,
     prev_close:  prevClose,
     change,
     change_pct:  changePct,
     volume:      safe(pi.totalTradedVolume) || null,
-    mkt_cap:     null,
+    mkt_cap:     mktCap,
     currency:    'INR',
-    name:        md.companyName   || symbol,
+    name:        md.companyName || symbol,
     week52_high: safe(wh.max),
     week52_low:  safe(wh.min),
     pe_ratio:    pe,
@@ -130,7 +133,7 @@ export async function nseProfile(symbol) {
 
 // ── Financials ────────────────────────────────────────────────────────────────
 export async function nseFinancials(symbol) {
-  const ckey = `nsef2:${symbol}`;
+  const ckey = `nsef3:${symbol}`;
   const hit = await cacheGet(ckey);
   if (hit) return hit;
 
@@ -139,18 +142,21 @@ export async function nseFinancials(symbol) {
 
   const d = await nseGet(`/api/quote-equity?symbol=${encodeURIComponent(nse)}`);
 
-  const pi = d?.priceInfo   || {};
-  const wh = pi.weekHighLow || {};
-  const md = d?.metadata    || {};
+  const pi = d?.priceInfo    || {};
+  const wh = pi.weekHighLow  || {};
+  const md = d?.metadata     || {};
+  const si = d?.securityInfo || {};
 
   if (!md.symbol) return null;
 
-  const price = safe(pi.lastPrice);
-  const pe    = safe(md.pdSymbolPe);
-  const eps   = (price && pe) ? Math.round((price / pe) * 100) / 100 : null;
+  const price      = safe(pi.lastPrice);
+  const pe         = safe(md.pdSymbolPe);
+  const eps        = (price && pe) ? Math.round((price / pe) * 100) / 100 : null;
+  const issuedSize = safe(si.issuedSize);
+  const mktCap     = (price && issuedSize) ? price * issuedSize : null;
 
   const result = {
-    market_cap:       null,
+    market_cap:       mktCap,
     revenue_ttm:      null,
     gross_margin:     null,
     net_margin:       null,

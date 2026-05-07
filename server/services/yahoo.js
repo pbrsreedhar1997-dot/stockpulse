@@ -61,7 +61,7 @@ async function getQuoteFromChartApi(symbol) {
 
 // ── Quote ─────────────────────────────────────────────────────────────────────
 export async function getQuote(symbol) {
-  const key = `q4:${symbol}`;
+  const key = `q5:${symbol}`;
   const hit = await cacheGet(key);
   if (hit) return hit;
 
@@ -87,24 +87,30 @@ export async function getQuote(symbol) {
     return result;
   }
 
-  // 2. Fallback: Yahoo Finance chart API (same CDN as historical, not blocked)
+  // 2. Fallback: Yahoo Finance chart API + NSE for market cap (parallel)
   log.info(`Yahoo quote blocked for ${symbol} — using chart API`);
-  const chartResult = await getQuoteFromChartApi(symbol).catch(e => {
-    log.warn(`Chart API failed for ${symbol}: ${e.message}`);
-    return null;
-  });
+  const isIndian = symbol.endsWith('.NS') || symbol.endsWith('.BO');
+  const [chartResult, nseForMktCap] = await Promise.all([
+    getQuoteFromChartApi(symbol).catch(e => {
+      log.warn(`Chart API failed for ${symbol}: ${e.message}`);
+      return null;
+    }),
+    isIndian ? nseQuote(symbol).catch(() => null) : Promise.resolve(null),
+  ]);
   if (chartResult) {
+    if (nseForMktCap?.mkt_cap) chartResult.mkt_cap = nseForMktCap.mkt_cap;
+    if (!chartResult.pe_ratio && nseForMktCap?.pe_ratio) chartResult.pe_ratio = nseForMktCap.pe_ratio;
+    if (!chartResult.eps && nseForMktCap?.eps) chartResult.eps = nseForMktCap.eps;
     await cacheSet(key, chartResult, quoteTtl(symbol));
     return chartResult;
   }
 
-  // 3. NSE India API (Indian stocks only)
-  if (symbol.endsWith('.NS') || symbol.endsWith('.BO')) {
+  // 3. NSE India API (Indian stocks only) — full fallback
+  if (isIndian) {
     log.info(`Chart API failed for ${symbol} — trying NSE India`);
-    const nseResult = await nseQuote(symbol).catch(() => null);
-    if (nseResult) {
-      await cacheSet(key, nseResult, quoteTtl(symbol));
-      return nseResult;
+    if (nseForMktCap) {
+      await cacheSet(key, nseForMktCap, quoteTtl(symbol));
+      return nseForMktCap;
     }
   }
 
@@ -240,7 +246,7 @@ export async function getFinancials(symbol) {
       log.warn(`NSE financials failed for ${symbol}: ${e.message}`);
       return null;
     });
-    if (nseResult?.pe_ratio != null) {
+    if (nseResult?.pe_ratio != null || nseResult?.market_cap != null) {
       await cacheSet(key, nseResult, 21600);
       return nseResult;
     }
