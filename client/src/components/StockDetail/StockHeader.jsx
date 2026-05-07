@@ -24,6 +24,9 @@ export default function StockHeader({ symbol }) {
 
   const up = q?.change_pct >= 0;
 
+  const w52h = f?.week52_high || q?.week52_high;
+  const w52l = f?.week52_low  || q?.week52_low;
+
   const stats = [
     { label: 'Open',      value: q?.open      ? `₹${fmt(q.open)}`      : '—' },
     { label: 'High',      value: q?.high      ? `₹${fmt(q.high)}`      : '—', cls: 'up' },
@@ -31,8 +34,8 @@ export default function StockHeader({ symbol }) {
     { label: 'Prev Close',value: q?.prev_close ? `₹${fmt(q.prev_close)}` : '—' },
     { label: 'Volume',    value: q?.volume    ? `${(q.volume / 1e5).toFixed(2)}L` : '—' },
     { label: 'Mkt Cap',   value: fmtCr(q?.mkt_cap || f?.market_cap) },
-    { label: '52W High',  value: f?.week52_high ? `₹${fmt(f.week52_high)}` : '—', cls: 'up' },
-    { label: '52W Low',   value: f?.week52_low  ? `₹${fmt(f.week52_low)}`  : '—', cls: 'down' },
+    { label: '52W High',  value: w52h ? `₹${fmt(w52h)}` : '—', cls: 'up' },
+    { label: '52W Low',   value: w52l ? `₹${fmt(w52l)}` : '—', cls: 'down' },
     { label: 'P/E',       value: fmt(f?.pe_ratio) },
     { label: 'EPS',       value: f?.eps != null ? `₹${fmt(f.eps)}` : '—' },
   ];

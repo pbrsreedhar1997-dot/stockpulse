@@ -15,6 +15,9 @@ export default function OverviewTab({ symbol }) {
   const q = state.quotes[symbol];
   const f = state.financials[symbol];
 
+  const w52h = f?.week52_high || q?.week52_high;
+  const w52l = f?.week52_low  || q?.week52_low;
+
   useEffect(() => {
     if (!f) fetchFinancials(symbol);
   }, [symbol]);
@@ -51,26 +54,26 @@ export default function OverviewTab({ symbol }) {
 
         <div className="info-card">
           <h3 className="info-card__title">52-Week Range</h3>
-          {f?.week52_high && f?.week52_low && q?.price ? (
+          {w52h && w52l && q?.price ? (
             <>
               <div className="range-bar">
                 <div
                   className="range-bar__fill"
                   style={{
-                    width: `${((q.price - f.week52_low) / (f.week52_high - f.week52_low)) * 100}%`,
+                    width: `${((q.price - w52l) / (w52h - w52l)) * 100}%`,
                   }}
                 />
                 <div
                   className="range-bar__dot"
                   style={{
-                    left: `${((q.price - f.week52_low) / (f.week52_high - f.week52_low)) * 100}%`,
+                    left: `${((q.price - w52l) / (w52h - w52l)) * 100}%`,
                   }}
                 />
               </div>
               <div className="range-labels">
-                <span className="down">₹{fmt(f.week52_low)}</span>
+                <span className="down">₹{fmt(w52l)}</span>
                 <span>Current: ₹{fmt(q.price)}</span>
-                <span className="up">₹{fmt(f.week52_high)}</span>
+                <span className="up">₹{fmt(w52h)}</span>
               </div>
             </>
           ) : (
