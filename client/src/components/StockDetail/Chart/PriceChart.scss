@@ -4,10 +4,23 @@
   padding: 16px;
   margin-bottom: 16px;
 
+  &__controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+
   &__ranges {
     display: flex;
     gap: 4px;
-    margin-bottom: 12px;
+  }
+
+  &__type-toggle {
+    display: flex;
+    gap: 4px;
   }
 
   &__canvas-wrap {

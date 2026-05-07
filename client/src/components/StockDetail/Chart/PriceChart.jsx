@@ -6,6 +6,9 @@ import {
   TimeScale,
   Tooltip,
   Legend,
+  LineController,
+  LineElement,
+  PointElement,
 } from 'chart.js';
 import { CandlestickController, CandlestickElement, OhlcController, OhlcElement } from 'chartjs-chart-financial';
 import 'chartjs-adapter-date-fns';
@@ -13,15 +16,11 @@ import { useStocks } from '../../../hooks/useStocks';
 import './PriceChart.scss';
 
 Chart.register(
-  CategoryScale,
-  LinearScale,
-  TimeScale,
-  Tooltip,
-  Legend,
-  CandlestickController,
-  CandlestickElement,
-  OhlcController,
-  OhlcElement
+  CategoryScale, LinearScale, TimeScale,
+  Tooltip, Legend,
+  LineController, LineElement, PointElement,
+  CandlestickController, CandlestickElement,
+  OhlcController, OhlcElement,
 );
 
 const RANGES = [
@@ -37,60 +36,83 @@ export default function PriceChart({ symbol }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
   const [range, setRange] = useState('1mo');
+  const [chartType, setChartType] = useState('candlestick');
   const [loading, setLoading] = useState(false);
+  const [candles, setCandles] = useState(null);
   const { fetchHistory } = useStocks();
 
   useEffect(() => {
-    loadChart();
+    let cancelled = false;
+    setLoading(true);
+    setCandles(null);
+    fetchHistory(symbol, range)
+      .then(data => {
+        if (!cancelled && data?.candles?.length) setCandles(data.candles);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [symbol, range]);
+
+  useEffect(() => {
+    chartRef.current?.destroy();
+    chartRef.current = null;
+    if (!candles?.length || !canvasRef.current) return;
+    drawChart(candles, chartType, range);
     return () => {
       chartRef.current?.destroy();
       chartRef.current = null;
     };
-  }, [symbol, range]);
+  }, [candles, chartType]);
 
-  async function loadChart() {
-    setLoading(true);
-    chartRef.current?.destroy();
-    try {
-      const data = await fetchHistory(symbol, range);
-      if (!data?.candles?.length) return;
-      drawChart(data.candles);
-    } catch (e) {
-      console.error('Chart error', e);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function drawChart(candles) {
+  function drawChart(data, type, rng) {
     if (!canvasRef.current) return;
     const ctx = canvasRef.current.getContext('2d');
-
-    const ohlcData = candles.map(c => ({
-      x: new Date(c.t).getTime(),
-      o: c.o,
-      h: c.h,
-      l: c.l,
-      c: c.c,
-    }));
-
     const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
     const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
     const textColor = isDark ? '#a0a0b8' : '#6b7280';
 
+    const xUnit = rng === '1d' ? 'hour'
+      : rng === '5d' ? 'day'
+      : rng === '1mo' || rng === '3mo' ? 'week'
+      : 'month';
+
+    let dataset, tooltipCb, chartTypeName;
+    if (type === 'line') {
+      const gradient = ctx.createLinearGradient(0, 0, 0, 280);
+      gradient.addColorStop(0, 'rgba(0,212,170,0.25)');
+      gradient.addColorStop(1, 'rgba(0,212,170,0)');
+      dataset = {
+        label: symbol,
+        data: data.map(c => ({ x: c.t, y: c.c })),
+        borderColor: '#00d4aa',
+        borderWidth: 2,
+        backgroundColor: gradient,
+        fill: true,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        tension: 0.2,
+      };
+      tooltipCb = { label: c => `₹${c.raw.y?.toFixed(2)}` };
+      chartTypeName = 'line';
+    } else {
+      dataset = {
+        label: symbol,
+        data: data.map(c => ({ x: c.t, o: c.o, h: c.h, l: c.l, c: c.c })),
+        color: { up: '#00d4aa', down: '#ff4d6d', unchanged: '#a0a0b8' },
+      };
+      tooltipCb = {
+        label(c) {
+          const { o, h, l, c: cl } = c.raw;
+          return [`O: ₹${o?.toFixed(2)}`, `H: ₹${h?.toFixed(2)}`, `L: ₹${l?.toFixed(2)}`, `C: ₹${cl?.toFixed(2)}`];
+        },
+      };
+      chartTypeName = 'candlestick';
+    }
+
     chartRef.current = new Chart(ctx, {
-      type: 'candlestick',
-      data: {
-        datasets: [{
-          label: symbol,
-          data: ohlcData,
-          color: {
-            up: '#00d4aa',
-            down: '#ff4d6d',
-            unchanged: '#a0a0b8',
-          },
-        }],
-      },
+      type: chartTypeName,
+      data: { datasets: [dataset] },
       options: {
         responsive: true,
         maintainAspectRatio: false,
@@ -103,20 +125,13 @@ export default function PriceChart({ symbol }) {
             borderWidth: 1,
             titleColor: textColor,
             bodyColor: textColor,
-            callbacks: {
-              label(ctx) {
-                const { o, h, l, c } = ctx.raw;
-                return [`O: ₹${o?.toFixed(2)}`, `H: ₹${h?.toFixed(2)}`, `L: ₹${l?.toFixed(2)}`, `C: ₹${c?.toFixed(2)}`];
-              },
-            },
+            callbacks: tooltipCb,
           },
         },
         scales: {
           x: {
             type: 'time',
-            time: {
-              unit: range === '1d' ? 'hour' : range === '5d' ? 'day' : range === '1mo' || range === '3mo' ? 'week' : 'month',
-            },
+            time: { unit: xUnit },
             grid: { color: gridColor },
             ticks: { color: textColor, maxTicksLimit: 8 },
           },
@@ -135,16 +150,34 @@ export default function PriceChart({ symbol }) {
 
   return (
     <div className="price-chart">
-      <div className="price-chart__ranges">
-        {RANGES.map(r => (
+      <div className="price-chart__controls">
+        <div className="price-chart__ranges">
+          {RANGES.map(r => (
+            <button
+              key={r.value}
+              className={`range-btn ${range === r.value ? 'range-btn--active' : ''}`}
+              onClick={() => setRange(r.value)}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+        <div className="price-chart__type-toggle">
           <button
-            key={r.value}
-            className={`range-btn ${range === r.value ? 'range-btn--active' : ''}`}
-            onClick={() => setRange(r.value)}
+            className={`range-btn ${chartType === 'candlestick' ? 'range-btn--active' : ''}`}
+            onClick={() => setChartType('candlestick')}
+            title="Candlestick chart"
           >
-            {r.label}
+            Candles
           </button>
-        ))}
+          <button
+            className={`range-btn ${chartType === 'line' ? 'range-btn--active' : ''}`}
+            onClick={() => setChartType('line')}
+            title="Line chart"
+          >
+            Line
+          </button>
+        </div>
       </div>
       <div className="price-chart__canvas-wrap">
         {loading && <div className="price-chart__loading"><span className="spinner" /></div>}

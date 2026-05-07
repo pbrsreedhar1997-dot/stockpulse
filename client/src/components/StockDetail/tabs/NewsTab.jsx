@@ -5,7 +5,7 @@ import './tabs.scss';
 const CATEGORIES = ['all', 'results', 'contract', 'acquisition', 'partnership', 'general'];
 
 function timeAgo(dt) {
-  const diff = Date.now() - new Date(dt).getTime();
+  const diff = Date.now() - (dt * 1000);
   const m = Math.floor(diff / 60000);
   if (m < 60) return `${m}m ago`;
   const h = Math.floor(m / 60);

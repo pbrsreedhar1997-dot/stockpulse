@@ -81,7 +81,7 @@ export async function getProfile(symbol) {
 
 // ── Financials ────────────────────────────────────────────────────────────────
 export async function getFinancials(symbol) {
-  const key = `fin3:${symbol}`;
+  const key = `fin4:${symbol}`;
   const hit = await cacheGet(key);
   if (hit) return hit;
 
@@ -95,23 +95,25 @@ export async function getFinancials(symbol) {
   const ks = sum.defaultKeyStatistics || {};
   const sd = sum.summaryDetail        || {};
 
+  const pct = n => n != null ? Math.round(n * 1000) / 10 : null;
+
   const result = {
     market_cap:      safeNum(sd.marketCap),
     revenue_ttm:     safeNum(fd.totalRevenue),
-    gross_margin:    safeNum(fd.grossMargins),
-    net_margin:      safeNum(fd.profitMargins),
+    gross_margin:    pct(safeNum(fd.grossMargins)),
+    net_margin:      pct(safeNum(fd.profitMargins)),
     pe_ratio:        safeNum(sd.trailingPE),
     eps:             safeNum(ks.trailingEps),
-    dividend_yield:  safeNum(sd.dividendYield),
+    dividend_yield:  pct(safeNum(sd.dividendYield)),
     beta:            safeNum(ks.beta),
     week52_high:     safeNum(sd.fiftyTwoWeekHigh),
     week52_low:      safeNum(sd.fiftyTwoWeekLow),
     avg_volume:      safeNum(sd.averageVolume),
     price_to_book:   safeNum(ks.priceToBook),
     debt_to_equity:  safeNum(fd.debtToEquity),
-    return_on_equity: safeNum(fd.returnOnEquity),
-    revenue_growth:  safeNum(fd.revenueGrowth),
-    earnings_growth: safeNum(fd.earningsGrowth),
+    return_on_equity: pct(safeNum(fd.returnOnEquity)),
+    revenue_growth:  pct(safeNum(fd.revenueGrowth)),
+    earnings_growth: pct(safeNum(fd.earningsGrowth)),
   };
 
   await cacheSet(key, result, 21600);
@@ -153,11 +155,12 @@ export async function getHistory(symbol, range = '1mo') {
 
 // ── News ──────────────────────────────────────────────────────────────────────
 export async function getNews(symbol) {
-  const key = `news3:${symbol}`;
+  const key = `news4:${symbol}`;
   const hit = await cacheGet(key);
   if (hit) return hit;
 
-  const url = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(symbol)}&region=US&lang=en-US`;
+  const ticker = symbol.replace(/\.(NS|BO|BSE|NSE)$/i, '');
+  const url = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(ticker)}&region=IN&lang=en-IN`;
   let articles = [];
   try {
     const feed = await rss.parseURL(url);
@@ -201,7 +204,7 @@ export async function search(q) {
 
 // ── Performance ───────────────────────────────────────────────────────────────
 export async function getPerformance(symbol) {
-  const key = `perf3:${symbol}`;
+  const key = `perf4:${symbol}`;
   const hit = await cacheGet(key);
   if (hit) return hit;
 
@@ -223,11 +226,13 @@ export async function getPerformance(symbol) {
     (byYear[y] = byYear[y] || []).push(r.close);
   });
 
-  const annual_returns = {};
-  for (const [yr, prices] of Object.entries(byYear)) {
-    if (prices.length >= 2)
-      annual_returns[yr] = ((prices[prices.length - 1] - prices[0]) / prices[0]) * 100;
-  }
+  const annual_returns = Object.entries(byYear)
+    .filter(([, prices]) => prices.length >= 2)
+    .map(([yr, prices]) => ({
+      year: parseInt(yr),
+      return_pct: ((prices[prices.length - 1] - prices[0]) / prices[0]) * 100,
+    }))
+    .sort((a, b) => a.year - b.year);
 
   const oneYearAgo = new Date(now.getTime() - 365 * 86400000);
   let cagr_1y = null;
