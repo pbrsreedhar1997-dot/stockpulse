@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
-import { useWatchlist } from '../../hooks/useWatchlist';
 import { useStocks } from '../../hooks/useStocks';
 import './Search.scss';
 
@@ -76,7 +75,6 @@ const NSE_STOCKS = [
 
 export default function Search() {
   const { dispatch } = useAppContext();
-  const { add } = useWatchlist();
   const { fetchQuote, fetchProfile, search: apiSearch } = useStocks();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
@@ -121,10 +119,9 @@ export default function Search() {
     }, 400);
   }, [query]);
 
-  const pick = async (stock) => {
+  const pick = (stock) => {
     setQuery('');
     setOpen(false);
-    await add(stock.symbol, stock.name || stock.symbol, stock.exchange || 'NSE');
     dispatch({ type: 'SET_CURRENT_SYMBOL', payload: stock.symbol });
     dispatch({ type: 'SET_VIEW', payload: 'stock' });
     fetchQuote(stock.symbol);

@@ -13,17 +13,17 @@ function fmtCr(n) {
 }
 
 const SORT_OPTS = [
-  { label: 'Decline %', value: 'decline_pct' },
-  { label: 'P/E', value: 'pe_ratio' },
-  { label: 'Gross Margin', value: 'gross_margin' },
-  { label: 'Market Cap', value: 'mkt_cap_cr' },
+  { label: 'Below 52W High', value: 'decline_pct' },
+  { label: 'P/E Ratio',      value: 'pe_ratio'    },
+  { label: 'Market Cap',     value: 'mkt_cap_cr'  },
+  { label: 'Today %',        value: 'change_pct'  },
 ];
 
 export default function Screener() {
   const { stocks, loading, error, load, refresh } = useScreener();
   const { dispatch } = useAppContext();
-  const [sector, setSector] = useState('All');
-  const [sortBy, setSortBy] = useState('decline_pct');
+  const [sector, setSector]   = useState('All');
+  const [sortBy, setSortBy]   = useState('decline_pct');
   const [sortDir, setSortDir] = useState('desc');
 
   useEffect(() => { load(); }, []);
@@ -33,14 +33,14 @@ export default function Screener() {
   const filtered = stocks
     .filter(s => sector === 'All' || s.sector === sector)
     .sort((a, b) => {
-      const av = a[sortBy] || 0;
-      const bv = b[sortBy] || 0;
+      const av = a[sortBy] ?? (sortDir === 'desc' ? -Infinity : Infinity);
+      const bv = b[sortBy] ?? (sortDir === 'desc' ? -Infinity : Infinity);
       return sortDir === 'desc' ? bv - av : av - bv;
     });
 
   const toggleSort = (field) => {
     if (sortBy === field) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
-    else { setSortBy(field); setSortDir('desc'); }
+    else { setSortBy(field); setSortDir(field === 'pe_ratio' ? 'asc' : 'desc'); }
   };
 
   const pickStock = (stock) => {
@@ -53,35 +53,37 @@ export default function Screener() {
       <div className="screener__header">
         <div>
           <h2 className="screener__title">Value Picks</h2>
-          <p className="screener__sub">Large-cap NSE stocks ≥10% below 52W high with positive EPS</p>
+          <p className="screener__sub">
+            Nifty 100 stocks trading ≥10% below their 52-week high with positive earnings.
+            Click any row to review the stock.
+          </p>
         </div>
         <button className="screener__refresh" onClick={refresh} disabled={loading}>
           {loading ? <span className="spinner" /> : '↻ Refresh'}
         </button>
       </div>
 
-      <div className="screener__controls">
+      <div className="screener__toolbar">
         <div className="screener__sectors">
           {sectors.map(s => (
             <button
               key={s}
-              className={`filter-btn ${sector === s ? 'filter-btn--active' : ''}`}
+              className={`sc-chip ${sector === s ? 'sc-chip--active' : ''}`}
               onClick={() => setSector(s)}
-            >
-              {s}
-            </button>
+            >{s}</button>
           ))}
         </div>
 
         <div className="screener__sort">
-          <span style={{ color: 'var(--text2)', fontSize: 12 }}>Sort by:</span>
+          <span className="screener__sort-label">Sort:</span>
           {SORT_OPTS.map(o => (
             <button
               key={o.value}
-              className={`filter-btn ${sortBy === o.value ? 'filter-btn--active' : ''}`}
+              className={`sc-chip ${sortBy === o.value ? 'sc-chip--active' : ''}`}
               onClick={() => toggleSort(o.value)}
             >
-              {o.label} {sortBy === o.value ? (sortDir === 'desc' ? '↓' : '↑') : ''}
+              {o.label}
+              {sortBy === o.value && <span className="sc-sort-arrow">{sortDir === 'desc' ? ' ↓' : ' ↑'}</span>}
             </button>
           ))}
         </div>
@@ -92,53 +94,68 @@ export default function Screener() {
       {loading && stocks.length === 0 ? (
         <div className="screener__loading">
           <span className="spinner" />
-          <p>Scanning stocks for value opportunities…</p>
+          <p>Scanning {'>'}90 large-cap stocks for value opportunities…</p>
         </div>
       ) : filtered.length === 0 ? (
-        <div className="screener__empty">No stocks match filters</div>
+        <div className="screener__empty">No stocks match the current filters.</div>
       ) : (
-        <div className="screener__grid">
-          {filtered.map(stock => (
-            <div key={stock.symbol} className="stock-card" onClick={() => pickStock(stock)}>
-              <div className="stock-card__header">
-                <div>
-                  <div className="stock-card__symbol">{stock.symbol.replace('.NS', '').replace('.BO', '')}</div>
-                  <div className="stock-card__name">{stock.name}</div>
-                </div>
-                <div className="badge badge--down" title="Below 52W High">
-                  -{fmt(stock.decline_pct)}%
-                </div>
-              </div>
+        <div className="sc-table-wrap">
+          <table className="sc-table">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Company</th>
+                <th className="sc-th--num">Price</th>
+                <th className="sc-th--num" title="Today's price change">Today</th>
+                <th className="sc-th--num" title="% below 52-week high — lower means more upside potential">
+                  52W Below ↓
+                </th>
+                <th className="sc-th--num">52W High</th>
+                <th className="sc-th--num">P/E</th>
+                <th className="sc-th--num">Mkt Cap</th>
+                <th>Sector</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(stock => {
+                const todayUp  = (stock.change_pct ?? 0) >= 0;
+                const hasTodayChg = stock.change_pct != null;
+                const peColor  = stock.pe_ratio < 15 ? 'up' : stock.pe_ratio > 45 ? 'down' : '';
 
-              <div className="stock-card__price">
-                <span>₹{fmt(stock.price)}</span>
-                {stock.sector && <span className="badge badge--accent">{stock.sector}</span>}
-              </div>
-
-              <div className="stock-card__stats">
-                <div className="kv">
-                  <span>P/E</span>
-                  <strong className={stock.pe_ratio < 15 ? 'up' : stock.pe_ratio > 40 ? 'down' : ''}>
-                    {fmt(stock.pe_ratio)}
-                  </strong>
-                </div>
-                <div className="kv">
-                  <span>Gross Margin</span>
-                  <strong className={stock.gross_margin > 40 ? 'up' : ''}>
-                    {stock.gross_margin ? fmt(stock.gross_margin) + '%' : '—'}
-                  </strong>
-                </div>
-                <div className="kv">
-                  <span>Mkt Cap</span>
-                  <strong>{fmtCr(stock.mkt_cap_cr * 1e7)}</strong>
-                </div>
-                <div className="kv">
-                  <span>52W High</span>
-                  <strong>₹{fmt(stock.week52_high)}</strong>
-                </div>
-              </div>
-            </div>
-          ))}
+                return (
+                  <tr key={stock.symbol} className="sc-row" onClick={() => pickStock(stock)}>
+                    <td className="sc-td--symbol">
+                      {stock.symbol.replace(/\.(NS|BO)$/i, '')}
+                    </td>
+                    <td className="sc-td--name">{stock.name}</td>
+                    <td className="sc-td--num">₹{fmt(stock.price)}</td>
+                    <td className="sc-td--num">
+                      {hasTodayChg ? (
+                        <span className={`sc-chg ${todayUp ? 'sc-chg--up' : 'sc-chg--down'}`}>
+                          {todayUp ? '+' : ''}{fmt(stock.change_pct)}%
+                        </span>
+                      ) : '—'}
+                    </td>
+                    <td className="sc-td--num">
+                      <span className="sc-below">
+                        -{fmt(stock.decline_pct)}%
+                      </span>
+                    </td>
+                    <td className="sc-td--num sc-dim">₹{fmt(stock.week52_high)}</td>
+                    <td className={`sc-td--num ${peColor}`}>
+                      {stock.pe_ratio ? `${fmt(stock.pe_ratio)}x` : '—'}
+                    </td>
+                    <td className="sc-td--num sc-dim">
+                      {stock.mkt_cap_cr ? fmtCr(stock.mkt_cap_cr * 1e7) : '—'}
+                    </td>
+                    <td className="sc-td--sector">
+                      {stock.sector ? <span className="sc-sector">{stock.sector}</span> : '—'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

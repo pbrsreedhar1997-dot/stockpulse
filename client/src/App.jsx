@@ -49,6 +49,55 @@ const EmptyIcon = () => (
   </svg>
 );
 
+function StockRightPanel() {
+  const { state, dispatch } = useAppContext();
+  const { watchlist, quotes, currentSymbol } = state;
+
+  const pick = (symbol) => {
+    dispatch({ type: 'SET_CURRENT_SYMBOL', payload: symbol });
+  };
+
+  if (watchlist.length === 0) return null;
+
+  return (
+    <aside className="stock-right-panel">
+      <div className="stock-right-panel__header">
+        <span>Watchlist</span>
+        <span className="stock-right-panel__count">{watchlist.length}</span>
+      </div>
+      <div className="stock-right-panel__list">
+        {watchlist.map(s => {
+          const q   = quotes[s.symbol];
+          const up  = (q?.change_pct ?? 0) >= 0;
+          const active = s.symbol === currentSymbol;
+          return (
+            <div
+              key={s.symbol}
+              className={`srp-row ${active ? 'srp-row--active' : ''}`}
+              onClick={() => pick(s.symbol)}
+            >
+              <div className="srp-row__info">
+                <span className="srp-row__sym">{s.symbol.replace(/\.(NS|BO)$/i, '')}</span>
+                <span className="srp-row__name">{s.name}</span>
+              </div>
+              {q ? (
+                <div className="srp-row__price">
+                  <span className="srp-row__val">₹{q.price?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  <span className={`srp-row__chg ${up ? 'up' : 'down'}`}>
+                    {up ? '+' : ''}{q.change_pct?.toFixed(2)}%
+                  </span>
+                </div>
+              ) : (
+                <div className="skeleton" style={{ width: 60, height: 14 }} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </aside>
+  );
+}
+
 export default function App() {
   const { state, dispatch } = useAppContext();
   const { watchlist, syncFromServer } = useWatchlist();
@@ -208,7 +257,14 @@ export default function App() {
           {state.view === 'chat'     && <Chat />}
           {state.view === 'stock' && (
             state.currentSymbol
-              ? <StockDetail symbol={state.currentSymbol} />
+              ? (
+                <div className="stock-layout">
+                  <div className="stock-layout__main">
+                    <StockDetail symbol={state.currentSymbol} />
+                  </div>
+                  <StockRightPanel />
+                </div>
+              )
               : (
                 <div className="empty-state">
                   <div className="empty-state__icon"><EmptyIcon /></div>

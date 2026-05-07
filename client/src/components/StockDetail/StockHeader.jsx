@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
+import { useWatchlist } from '../../hooks/useWatchlist';
 import { usePortfolio } from '../../hooks/usePortfolio';
 import './StockHeader.scss';
 
@@ -78,9 +79,17 @@ export default function StockHeader({ symbol }) {
   const q = state.quotes[symbol];
   const p = state.profiles[symbol];
   const f = state.financials[symbol];
+  const { add: addToWatchlist, remove: removeFromWatchlist } = useWatchlist();
   const { getHolding, addHolding, updateHolding } = usePortfolio();
   const holding = getHolding(symbol);
   const [showModal, setShowModal] = useState(false);
+
+  const inWatchlist = state.watchlist.some(s => s.symbol === symbol);
+
+  function toggleWatchlist() {
+    if (inWatchlist) removeFromWatchlist(symbol);
+    else addToWatchlist(symbol, p?.name || symbol, p?.exchange || 'NSE');
+  }
 
   async function handleSave(data) {
     if (holding) await updateHolding(symbol, data);
@@ -175,27 +184,32 @@ export default function StockHeader({ symbol }) {
         ))}
       </div>
 
-      {state.user && (
-        <div className="stock-header__portfolio-bar">
+      <div className="stock-header__actions-bar">
+        <button
+          className={`sh-wl-btn ${inWatchlist ? 'sh-wl-btn--added' : ''}`}
+          onClick={toggleWatchlist}
+        >
+          {inWatchlist ? '★ In Watchlist' : '☆ Add to Watchlist'}
+        </button>
+
           {holding ? (
-            <div className="sh-holding-pill">
-              <span className="sh-holding-pill__label">Your Holding:</span>
-              <span>{holding.shares} shares @ ₹{holding.avg_price?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-              {holding.pnl != null && (
-                <span className={holding.pnl >= 0 ? 'up' : 'down'}>
-                  {holding.pnl >= 0 ? '+' : ''}₹{holding.pnl?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  &nbsp;({holding.pnl_pct >= 0 ? '+' : ''}{holding.pnl_pct?.toFixed(2)}%)
-                </span>
-              )}
-              <button className="sh-pf-btn sh-pf-btn--edit" onClick={() => setShowModal(true)}>Edit</button>
-            </div>
-          ) : (
-            <button className="sh-pf-btn sh-pf-btn--add" onClick={() => setShowModal(true)}>
-              + Add to Portfolio
-            </button>
-          )}
-        </div>
-      )}
+          <div className="sh-holding-pill">
+            <span className="sh-holding-pill__label">Your Holding:</span>
+            <span>{holding.shares} shares @ ₹{holding.avg_price?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            {holding.pnl != null && (
+              <span className={holding.pnl >= 0 ? 'up' : 'down'}>
+                {holding.pnl >= 0 ? '+' : ''}₹{holding.pnl?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                &nbsp;({holding.pnl_pct >= 0 ? '+' : ''}{holding.pnl_pct?.toFixed(2)}%)
+              </span>
+            )}
+            <button className="sh-pf-btn sh-pf-btn--edit" onClick={() => setShowModal(true)}>Edit</button>
+          </div>
+        ) : state.user ? (
+          <button className="sh-pf-btn sh-pf-btn--add" onClick={() => setShowModal(true)}>
+            + Add to Portfolio
+          </button>
+        ) : null}
+      </div>
 
       {showModal && (
         <QuickAddModal

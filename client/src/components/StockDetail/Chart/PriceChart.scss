@@ -16,6 +16,7 @@
 
   &__ranges, &__type-toggle {
     display: flex;
+    align-items: center;
     gap: 2px;
   }
 
@@ -99,6 +100,25 @@
     color: var(--text3);
     z-index: 1;
     pointer-events: none;
+  }
+}
+
+.period-chg {
+  font-size: 11.5px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 3px 9px;
+  border-radius: 5px;
+  margin-left: 6px;
+
+  &--up {
+    color: var(--up);
+    background: rgba(0, 200, 150, 0.12);
+  }
+
+  &--down {
+    color: var(--down);
+    background: rgba(255, 69, 96, 0.12);
   }
 }
 

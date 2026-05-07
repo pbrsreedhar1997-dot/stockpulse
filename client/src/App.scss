@@ -18,6 +18,126 @@
   background: var(--bg);
 }
 
+/* ── Stock layout (main + right panel) ─────────────────────────────────────── */
+.stock-layout {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+
+  &__main {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+  }
+}
+
+.stock-right-panel {
+  width: 220px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg2);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+
+  &__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px 10px;
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.1px;
+    color: var(--text3);
+    flex-shrink: 0;
+  }
+
+  &__count {
+    background: var(--card);
+    color: var(--text3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1px 7px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  &__list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+
+    &::-webkit-scrollbar { width: 4px; }
+    &::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+  }
+}
+
+.srp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: background 0.1s;
+
+  &:hover { background: rgba(255,255,255,0.025); }
+
+  &--active {
+    background: var(--accent-glow);
+    border-left-color: var(--accent);
+    .srp-row__sym { color: var(--accent); }
+  }
+
+  &__info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__sym {
+    display: block;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    transition: color 0.1s;
+  }
+
+  &__name {
+    display: block;
+    font-size: 9.5px;
+    color: var(--text3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-top: 1px;
+  }
+
+  &__price {
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  &__val {
+    display: block;
+    font-size: 11.5px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text);
+    letter-spacing: -0.2px;
+  }
+
+  &__chg {
+    display: block;
+    font-size: 10px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    text-align: right;
+  }
+}
+
 /* ── Header ────────────────────────────────────────────────────────────────── */
 .header {
   display: flex;

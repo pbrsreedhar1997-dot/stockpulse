@@ -84,9 +84,9 @@ export default function PriceChart({ symbol }) {
     const upColor  = '#00c896';
     const downColor = '#ff4560';
 
-    const xUnit     = rng === '1d' ? 'minute' : rng === '5d' ? 'hour' : rng === '1mo' || rng === '3mo' ? 'week' : 'month';
-    const xStepSize = rng === '1d' ? 30 : rng === '5d' ? 4 : undefined;
-    const maxTicks  = rng === '1d' ? 10 : 8;
+    const xUnit     = rng === '1d' ? 'minute' : rng === '5d' ? 'day' : rng === '1mo' || rng === '3mo' ? 'week' : 'month';
+    const xStepSize = rng === '1d' ? 30 : undefined;
+    const maxTicks  = rng === '1d' ? 10 : rng === '5d' ? 5 : 8;
 
     const isUp  = data[data.length - 1].c >= data[0].c;
     const accent = isUp ? upColor : downColor;
@@ -115,7 +115,7 @@ export default function PriceChart({ symbol }) {
       tooltipCbs = {
         title: items => {
           const d = new Date(items[0].raw.x);
-          return rng === '1d' || rng === '5d'
+          return rng === '1d'
             ? d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
             : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: rng === '5y' ? '2-digit' : undefined });
         },
@@ -135,7 +135,7 @@ export default function PriceChart({ symbol }) {
           const x = items[0]?.raw?.x;
           if (!x) return '';
           const d = new Date(x);
-          return rng === '1d' || rng === '5d'
+          return rng === '1d'
             ? d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
             : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: rng === '5y' ? '2-digit' : undefined });
         },
@@ -264,6 +264,11 @@ export default function PriceChart({ symbol }) {
               onClick={() => setRange(r.value)}
             >{r.label}</button>
           ))}
+          {stats && (
+            <span className={`period-chg ${stats.chgPct >= 0 ? 'period-chg--up' : 'period-chg--down'}`}>
+              {stats.chgPct >= 0 ? '+' : ''}{stats.chgPct?.toFixed(2)}%
+            </span>
+          )}
         </div>
         <div className="price-chart__type-toggle">
           <button className={`range-btn ${chartType === 'candlestick' ? 'range-btn--active' : ''}`}

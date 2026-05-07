@@ -93,17 +93,18 @@ export async function upstoxHistory(symbol, range = '1y') {
   const toDate   = new Date();
   const fromDate = new Date();
 
-  const rangeMap = { '1d': 1, '5d': 5, '1mo': 30, '3mo': 90, '6mo': 180, '1y': 365, '2y': 730, '5y': 1825 };
+  const rangeMap = { '1d': 1, '5d': 7, '1mo': 30, '3mo': 90, '6mo': 180, '1y': 365, '2y': 730, '5y': 1825 };
   const days = rangeMap[range] || 365;
   fromDate.setDate(fromDate.getDate() - days);
 
   const fmt = d => d.toISOString().slice(0, 10);
-  const unit = range === '1d' || range === '5d' ? '30minute' : 'day';
 
   let url;
-  if (unit === '30minute') {
-    url = `https://api.upstox.com/v2/historical-candle/intraday/${encodeURIComponent(instrKey)}/30minute`;
+  if (range === '1d') {
+    // 5-min intraday for today only
+    url = `https://api.upstox.com/v2/historical-candle/intraday/${encodeURIComponent(instrKey)}/5minute`;
   } else {
+    // Daily candles for 5d and all longer ranges
     url = `https://api.upstox.com/v2/historical-candle/${encodeURIComponent(instrKey)}/day/${fmt(toDate)}/${fmt(fromDate)}`;
   }
 

@@ -95,13 +95,37 @@
   100% { color: var(--text); background: transparent; }
 }
 
-/* ── Portfolio bar ───────────────────────────────────────────────────────────── */
-.stock-header__portfolio-bar {
+/* ── Actions bar (watchlist + portfolio) ─────────────────────────────────────── */
+.stock-header__actions-bar {
   padding: 8px 20px;
   border-top: 1px solid var(--border);
   background: var(--bg2);
   display: flex;
   align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sh-wl-btn {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  color: var(--text2);
+  background: var(--card);
+  transition: background 0.13s, border-color 0.13s, color 0.13s;
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  &--added {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border-color: rgba(232,168,56,0.3);
+  }
 }
 
 .sh-holding-pill {

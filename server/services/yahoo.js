@@ -339,10 +339,23 @@ export async function getHistory(symbol, range = '1mo') {
     });
   }
 
-  if (!result?.length && (range === '1d' || range === '5d')) {
-    // Intraday: use direct chart API (yf.historical doesn't support 5m/30m)
-    result = await getIntradayFromChartApi(symbol, range).catch(e => {
-      log.warn(`Intraday chart failed ${symbol}/${range}: ${e.message}`);
+  if (!result?.length && range === '1d') {
+    // Intraday (5m bars) for 1D only
+    result = await getIntradayFromChartApi(symbol, '1d').catch(e => {
+      log.warn(`Intraday chart failed ${symbol}/1d: ${e.message}`);
+      return null;
+    });
+  } else if (!result?.length && range === '5d') {
+    // Daily bars for 5D — use chart API with 1d interval
+    result = await chartApiFetch(symbol, '5d', '1d').then(res => {
+      const timestamps = res.timestamp || [];
+      const q = res.indicators?.quote?.[0] || {};
+      return timestamps.map((ts, i) => ({
+        ts, open: q.open?.[i] ?? null, high: q.high?.[i] ?? null,
+        low: q.low?.[i] ?? null, close: q.close?.[i] ?? null, volume: q.volume?.[i] ?? null,
+      })).filter(row => row.close != null);
+    }).catch(e => {
+      log.warn(`5D chart API failed ${symbol}: ${e.message}`);
       return null;
     });
   } else if (!result?.length) {
