@@ -5,6 +5,7 @@ import { quoteTtl } from '../market.js';
 import log from '../log.js';
 import { avQuote, avOverview, avFinancials } from './alphavantage.js';
 import { nseQuote, nseProfile, nseFinancials } from './nse.js';
+import { upstoxQuote, upstoxHistory, upstoxAvailable } from './upstox.js';
 
 const yf = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
@@ -91,9 +92,29 @@ async function getQuoteFromChartApi(symbol) {
 
 // ── Quote ─────────────────────────────────────────────────────────────────────
 export async function getQuote(symbol) {
-  const key = `q5:${symbol}`;
+  const key = `q6:${symbol}`;
   const hit = await cacheGet(key);
   if (hit) return hit;
+
+  const isIndian = symbol.endsWith('.NS') || symbol.endsWith('.BO');
+
+  // 0. Upstox (live Indian market data, primary source when token is set)
+  if (isIndian && upstoxAvailable()) {
+    const upResult = await upstoxQuote(symbol).catch(e => {
+      log.warn(`Upstox quote failed for ${symbol}: ${e.message}`);
+      return null;
+    });
+    if (upResult?.price) {
+      // Merge NSE data for market cap
+      const nse = await nseQuote(symbol).catch(() => null);
+      if (nse?.mkt_cap) upResult.mkt_cap = nse.mkt_cap;
+      if (!upResult.name || upResult.name === symbol) upResult.name = nse?.name || upResult.name;
+      if (!upResult.pe_ratio && nse?.pe_ratio) upResult.pe_ratio = nse.pe_ratio;
+      if (!upResult.eps && nse?.eps) upResult.eps = nse.eps;
+      await cacheSet(key, upResult, quoteTtl(symbol));
+      return upResult;
+    }
+  }
 
   // 1. Try yahoo-finance2 (works locally and on some servers)
   const d = await yf.quote(symbol, {}, OPT).catch(() => null);
@@ -119,7 +140,6 @@ export async function getQuote(symbol) {
 
   // 2. Fallback: Yahoo Finance chart API + NSE for market cap (parallel)
   log.info(`Yahoo quote blocked for ${symbol} — using chart API`);
-  const isIndian = symbol.endsWith('.NS') || symbol.endsWith('.BO');
   const [chartResult, nseForMktCap] = await Promise.all([
     getQuoteFromChartApi(symbol).catch(e => {
       log.warn(`Chart API failed for ${symbol}: ${e.message}`);
@@ -304,19 +324,28 @@ export async function getLivePrice(symbol) {
 const RANGE_DAYS = { '5d': 10, '1wk': 7, '1mo': 30, '3mo': 90, '6mo': 180, '1y': 365, '5y': 1825, max: 3650 };
 
 export async function getHistory(symbol, range = '1mo') {
-  const key = `hist6:${symbol}:${range}`;
+  const key = `hist7:${symbol}:${range}`;
   const hit = await cacheGet(key);
   if (hit) return hit;
 
   let result;
+  const isIndian = symbol.endsWith('.NS') || symbol.endsWith('.BO');
 
-  if (range === '1d' || range === '5d') {
+  // Try Upstox first for Indian stocks (best reliability on cloud)
+  if (isIndian && upstoxAvailable()) {
+    result = await upstoxHistory(symbol, range).catch(e => {
+      log.warn(`Upstox history failed ${symbol}/${range}: ${e.message}`);
+      return null;
+    });
+  }
+
+  if (!result?.length && (range === '1d' || range === '5d')) {
     // Intraday: use direct chart API (yf.historical doesn't support 5m/30m)
     result = await getIntradayFromChartApi(symbol, range).catch(e => {
       log.warn(`Intraday chart failed ${symbol}/${range}: ${e.message}`);
       return null;
     });
-  } else {
+  } else if (!result?.length) {
     const days    = RANGE_DAYS[range] || 30;
     const period2 = new Date();
     const period1 = new Date(period2.getTime() - days * 86400000);

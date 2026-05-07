@@ -24,3 +24,5 @@ services:
         sync: false
       - key: ALPHA_VANTAGE_KEY
         sync: false
+      - key: UPSTOX_ACCESS_TOKEN
+        sync: false
