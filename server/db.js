@@ -58,6 +58,19 @@ export async function initDb() {
         added_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
         PRIMARY KEY (user_id, symbol)
       )`);
+    await query(`
+      CREATE TABLE IF NOT EXISTS portfolio (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        symbol TEXT NOT NULL,
+        name TEXT,
+        shares NUMERIC(15,4) NOT NULL CHECK (shares > 0),
+        avg_price NUMERIC(15,4) NOT NULL CHECK (avg_price > 0),
+        notes TEXT,
+        created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+        updated_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+        UNIQUE(user_id, symbol)
+      )`);
     log.info('PostgreSQL schema ready');
   } catch (err) {
     log.error('DB init failed:', err.message);

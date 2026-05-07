@@ -16,7 +16,8 @@ import pingRouter     from './routes/ping.js';
 import authRouter     from './routes/auth.js';
 import stocksRouter   from './routes/stocks.js';
 import screenerRouter from './routes/screener.js';
-import watchlistRouter from './routes/watchlist.js';
+import watchlistRouter  from './routes/watchlist.js';
+import portfolioRouter  from './routes/portfolio.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -35,6 +36,7 @@ app.use('/api/auth',      authRouter);
 app.use('/api',           stocksRouter);
 app.use('/api/screener',  screenerRouter);
 app.use('/api/watchlist', watchlistRouter);
+app.use('/api/portfolio', portfolioRouter);
 
 // ── Static React build ────────────────────────────────────────────────────────
 const staticDir = path.join(__dirname, '..', 'static', 'dist', 'browser');

@@ -22,6 +22,7 @@ const initialState = {
   quotes: {},
   profiles: {},
   financials: {},
+  portfolio: null,
   view: 'stock',
   chatOpen: false,
   authModalOpen: false,
@@ -68,6 +69,8 @@ function reducer(state, action) {
     }
     case 'REMOVE_TOAST':
       return { ...state, toasts: state.toasts.filter(t => t.id !== action.payload) };
+    case 'SET_PORTFOLIO':
+      return { ...state, portfolio: action.payload };
     default:
       return state;
   }

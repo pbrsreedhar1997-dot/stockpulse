@@ -8,9 +8,11 @@ import Sidebar from './components/Sidebar/Sidebar';
 import StockDetail from './components/StockDetail/StockDetail';
 import Screener from './components/Screener/Screener';
 import Chat from './components/Chat/Chat';
+import Portfolio from './components/Portfolio/Portfolio';
 import AuthModal from './components/Auth/AuthModal';
 import Search from './components/Search/Search';
 import Toast from './components/shared/Toast';
+import { usePortfolio } from './hooks/usePortfolio';
 import './App.scss';
 
 const PING_INTERVAL_MS = 30000;
@@ -52,6 +54,7 @@ export default function App() {
   const { watchlist, syncFromServer } = useWatchlist();
   const { fetchQuote, fetchProfile, fetchFinancials: fetchFin } = useStocks();
   const { logout } = useAuth();
+  const { fetchPortfolio } = usePortfolio();
 
   const symbols        = watchlist.map(s => s.symbol);
   const wakeRetries    = useRef(0);
@@ -106,6 +109,7 @@ export default function App() {
   }
 
   useEffect(() => { syncFromServer(); }, [state.token]);
+  useEffect(() => { if (state.token) fetchPortfolio(); }, [state.token]);
 
   useEffect(() => {
     if (!state.currentSymbol && watchlist.length) {
@@ -155,13 +159,18 @@ export default function App() {
             {statusLabel}
           </span>
 
-          {(['stock', 'screener', 'chat']).map(v => (
+          {([
+            { v: 'stock',     label: 'Dashboard'   },
+            { v: 'screener',  label: 'Value Picks'  },
+            { v: 'portfolio', label: 'Portfolio'    },
+            { v: 'chat',      label: 'AI Chat'      },
+          ]).map(({ v, label }) => (
             <button
               key={v}
               className={`nav-btn ${state.view === v ? 'nav-btn--active' : ''}`}
               onClick={() => setView(v)}
             >
-              {v === 'stock' ? 'Dashboard' : v === 'screener' ? 'Value Picks' : 'AI Chat'}
+              {label}
             </button>
           ))}
 
@@ -194,8 +203,9 @@ export default function App() {
       <div className="body">
         <Sidebar />
         <main className="main-content">
-          {state.view === 'screener' && <Screener />}
-          {state.view === 'chat'     && <Chat />}
+          {state.view === 'screener'  && <Screener />}
+          {state.view === 'portfolio' && <Portfolio />}
+          {state.view === 'chat'      && <Chat />}
           {state.view === 'stock' && (
             state.currentSymbol
               ? <StockDetail symbol={state.currentSymbol} />

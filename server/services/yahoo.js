@@ -18,7 +18,37 @@ function safeNum(v) {
 }
 
 // ── Yahoo Finance Chart API (no crumb needed — works on cloud servers) ────────
-// This endpoint is what yf.historical() uses and is NOT blocked by Yahoo.
+const CHART_HEADERS = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' };
+
+async function chartApiFetch(symbol, range, interval) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}&includePrePost=false`;
+  const r = await fetch(url, { signal: AbortSignal.timeout(15000), headers: CHART_HEADERS });
+  if (!r.ok) throw new Error(`Chart API HTTP ${r.status}`);
+  const json = await r.json();
+  const result = json?.chart?.result?.[0];
+  if (!result) throw new Error('No chart result');
+  return result;
+}
+
+// Intraday history via chart API (5m for 1d, 30m for 5d) — avoids yf.historical interval limitation
+async function getIntradayFromChartApi(symbol, range) {
+  const interval = range === '1d' ? '5m' : '30m';
+  const result = await chartApiFetch(symbol, range, interval);
+  const timestamps = result.timestamp || [];
+  const q = result.indicators?.quote?.[0] || {};
+  if (!timestamps.length) throw new Error('No intraday data');
+  return timestamps
+    .map((ts, i) => ({
+      ts,
+      open:   q.open?.[i]   ?? null,
+      high:   q.high?.[i]   ?? null,
+      low:    q.low?.[i]    ?? null,
+      close:  q.close?.[i]  ?? null,
+      volume: q.volume?.[i] ?? null,
+    }))
+    .filter(row => row.close != null);
+}
+
 async function getQuoteFromChartApi(symbol) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=5m&includePrePost=false`;
   const r = await fetch(url, {
@@ -274,50 +304,40 @@ export async function getLivePrice(symbol) {
 const RANGE_DAYS = { '5d': 10, '1wk': 7, '1mo': 30, '3mo': 90, '6mo': 180, '1y': 365, '5y': 1825, max: 3650 };
 
 export async function getHistory(symbol, range = '1mo') {
-  const key = `hist5:${symbol}:${range}`;
+  const key = `hist6:${symbol}:${range}`;
   const hit = await cacheGet(key);
   if (hit) return hit;
 
-  let rows;
+  let result;
 
-  if (range === '1d') {
-    // Live intraday: 5m bars for today only (chart API works on cloud — no crumb needed)
-    const now      = new Date();
-    const period2  = now.toISOString().split('T')[0];
-    const period1  = new Date(now.getTime() - 86400000).toISOString().split('T')[0];
-    rows = await yf.historical(symbol, { period1, period2, interval: '5m' }, OPT).catch(() => null);
-    // Keep only today's bars (filter out yesterday's spillover)
-    if (Array.isArray(rows)) {
-      const todayUTC = now.toISOString().split('T')[0];
-      rows = rows.filter(r => r.date?.toISOString?.().split('T')[0] === todayUTC || new Date(r.date).getTime() > now.getTime() - 86400000 * 0.5);
-    }
-  } else if (range === '5d') {
-    // 5-day: 30m bars for intraday detail across the week
-    const now     = new Date();
-    const period2 = now.toISOString().split('T')[0];
-    const period1 = new Date(now.getTime() - 10 * 86400000).toISOString().split('T')[0];
-    rows = await yf.historical(symbol, { period1, period2, interval: '30m' }, OPT).catch(() => null);
+  if (range === '1d' || range === '5d') {
+    // Intraday: use direct chart API (yf.historical doesn't support 5m/30m)
+    result = await getIntradayFromChartApi(symbol, range).catch(e => {
+      log.warn(`Intraday chart failed ${symbol}/${range}: ${e.message}`);
+      return null;
+    });
   } else {
     const days    = RANGE_DAYS[range] || 30;
     const period2 = new Date();
     const period1 = new Date(period2.getTime() - days * 86400000);
-    rows = await yf.historical(symbol, {
+    const rows = await yf.historical(symbol, {
       period1:  period1.toISOString().split('T')[0],
       period2:  period2.toISOString().split('T')[0],
       interval: '1d',
     }, OPT).catch(() => null);
+    if (Array.isArray(rows)) {
+      result = rows.filter(r => r.close != null).map(r => ({
+        ts:     Math.floor(new Date(r.date).getTime() / 1000),
+        open:   r.open   ?? r.close,
+        high:   r.high   ?? r.close,
+        low:    r.low    ?? r.close,
+        close:  r.close,
+        volume: r.volume || 0,
+      }));
+    }
   }
 
-  if (!Array.isArray(rows)) return null;
-
-  const result = rows.filter(r => r.close != null).map(r => ({
-    ts:     Math.floor(new Date(r.date).getTime() / 1000),
-    open:   r.open  ?? r.close,
-    high:   r.high  ?? r.close,
-    low:    r.low   ?? r.close,
-    close:  r.close,
-    volume: r.volume || 0,
-  }));
+  if (!result?.length) return null;
 
   const ttl = range === '1d' ? 60 : range === '5d' ? 120 : 300;
   await cacheSet(key, result, ttl);
