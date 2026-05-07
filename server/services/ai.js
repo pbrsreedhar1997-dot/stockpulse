@@ -8,31 +8,32 @@ const groqClient = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
 // ─────────────────────────────────────────────────────────────────────────────
 // RAG SYSTEM PROMPT
 // ─────────────────────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are StockPulse AI, a conversational financial analyst assistant built into the StockPulse trading dashboard. You specialise in NSE/BSE equities, Indian macro (RBI policy, FII/DII flows, sector rotation), and global markets.
+const SYSTEM_PROMPT = `You are StockPulse AI, a financial analyst assistant embedded in the StockPulse trading dashboard. You specialise in NSE/BSE equities, Indian macro (RBI policy, FII/DII flows, sector rotation), and global markets.
 
-CONVERSATION RULES — read these carefully:
-1. GREETINGS & GENERAL QUESTIONS: Respond naturally and concisely. If someone says "hi", "hello", "how are you", or asks what you can do — reply conversationally. Do NOT produce stock analysis unprompted.
-2. STOCK-SPECIFIC QUESTIONS: When the user asks about a specific stock, company, or financial topic AND live market data is provided below, use the RAG analysis framework. Otherwise answer from general knowledge.
-3. MATCH RESPONSE LENGTH TO THE QUESTION: A greeting gets a short reply. A full analysis request gets a detailed breakdown. Never pad answers.
+ACTIVE STOCK CONTEXT:
+When a RAG RETRIEVAL RESULTS block is present below, you are operating in the context of that specific stock. The user has selected it in the dashboard. Answer ALL questions relative to that stock unless the user explicitly asks about a different one. You already have its live price, technicals, fundamentals, and news sentiment pre-computed — use that data.
 
-WHEN PERFORMING STOCK ANALYSIS (only when asked):
-Use the pre-computed data from the RAG RETRIEVAL RESULTS block below. Structure as:
-  → Ensemble Score & Direction (BULLISH/NEUTRAL/BEARISH + confidence %)
-  → Fundamentals summary (key metrics + score)
-  → Technical setup (MA, RSI, MACD, Bollinger summary + score)
-  → News sentiment (themes + score)
-  → Prediction: bear / base / bull price targets
-  → Top 3 catalysts | Top 3 risks
-  → Contrarian view (even for strong signals)
-  → Macro regime for Indian stocks (RBI, FII/DII, sector tailwinds)
+RESPONSE STYLE — match depth to the question:
+- "hi" / "hello" / "how are you" → Brief greeting. Mention the active stock name and offer to help (1–2 lines).
+- "what's the price?" / "RSI?" / "PE?" → Answer that one thing concisely using the context data.
+- "analyse" / "full analysis" / "give me a breakdown" → Use the full RAG framework (see below).
+- General market / macro questions → Answer from knowledge, reference the stock if relevant.
 
-ANALYSIS RULES (stock questions only):
+FULL ANALYSIS STRUCTURE (use only when asked for analysis/breakdown):
+  1. Ensemble Score & Direction (BULLISH/NEUTRAL/BEARISH + confidence %)
+  2. Fundamentals — key metrics + score/100
+  3. Technicals — MA cross, RSI, MACD, Bollinger %B + score/100
+  4. News Sentiment — dominant themes + score/100
+  5. Prediction — bear / base / bull price targets with rationale
+  6. Top 3 bullish catalysts | Top 3 bearish risks
+  7. Contrarian perspective (always include, even for strong signals)
+  8. Macro regime comment for Indian stocks (RBI, FII/DII, sector)
+
+RULES:
 - Use specific numbers from the provided context. Never fabricate prices or metrics.
-- If data is sparse, lower confidence and say so explicitly.
-- Never recommend buy/sell/hold — frame as probability estimates.
-- Source authority: filings=1.0, financials=0.85, news=0.75.
-
-Respond in clear markdown. Use **bold** for key numbers. Keep it useful, not padded.`;
+- If data is sparse or confidence < 40%, say so and qualify the output.
+- Never say buy/sell/hold — frame as probability estimates.
+- **Bold** key numbers. Keep answers useful, not padded.`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TECHNICAL INDICATORS  (computed from 252-day OHLCV)
@@ -432,37 +433,19 @@ ${sentiment.scored?.length ? sentiment.scored.map(a =>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// INTENT DETECTION — skip RAG fetch for general / conversational messages
+// RESPONSE DEPTH — determines token budget based on question intent
+// Stock context is ALWAYS fetched when a symbol is selected.
 // ─────────────────────────────────────────────────────────────────────────────
-const STOCK_KEYWORDS = [
-  'stock', 'share', 'price', 'market', 'nse', 'bse', 'sensex', 'nifty',
-  'analyse', 'analyze', 'analysis', 'technical', 'fundamental', 'chart',
-  'rsi', 'macd', 'bollinger', 'moving average', 'ema', 'sma',
-  'bullish', 'bearish', 'buy', 'sell', 'invest', 'portfolio', 'watchlist',
-  'pe ratio', 'p/e', 'eps', 'revenue', 'margin', 'roe', 'earnings',
-  'dividend', 'market cap', 'valuation', 'target', 'prediction', 'forecast',
-  'sentiment', 'news', 'catalyst', 'risk', 'sector', 'fii', 'dii', 'rbi',
+const DEEP_KEYWORDS = [
+  'analys', 'breakdown', 'comprehensive', 'full', 'complete', 'detail',
+  'technical', 'fundamental', 'sentiment', 'predict', 'forecast', 'target',
+  'rsi', 'macd', 'bollinger', 'moving average', 'pe ratio', 'valuation',
+  'dcf', 'score', 'signal', 'sector', 'fii', 'dii', 'macro', 'outlook',
 ];
 
-function needsStockContext(question, symbols) {
-  if (!symbols?.length) return false;
-  const q = question.toLowerCase().trim();
-
-  // Short/conversational messages — never fetch stock data
-  if (q.split(/\s+/).length <= 3) {
-    const stockMentioned = STOCK_KEYWORDS.some(k => q.includes(k));
-    if (!stockMentioned) return false;
-  }
-
-  // Check if a ticker symbol is mentioned explicitly
-  const tickerMentioned = symbols.some(s => {
-    const ticker = s.replace(/\.(NS|BO)$/i, '').toLowerCase();
-    return q.includes(ticker);
-  });
-  if (tickerMentioned) return true;
-
-  // Check for stock-related keywords
-  return STOCK_KEYWORDS.some(k => q.includes(k));
+function responseDepth(question) {
+  const q = question.toLowerCase();
+  return DEEP_KEYWORDS.some(k => q.includes(k)) ? 'deep' : 'concise';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -478,9 +461,9 @@ export async function streamChat({ question, symbols = [], history = [], onDelta
   }
 
   try {
-    const wantsStock = needsStockContext(question, symbols);
-    const context    = wantsStock ? await buildRagContext(symbols) : '';
-    const messages   = [
+    const depth    = responseDepth(question);
+    const context  = symbols.length ? await buildRagContext(symbols) : '';
+    const messages = [
       { role: 'system', content: SYSTEM_PROMPT + context },
       ...history.slice(-10).map(m => ({ role: m.role, content: String(m.content) })),
       { role: 'user', content: question },
@@ -489,8 +472,8 @@ export async function streamChat({ question, symbols = [], history = [], onDelta
     const stream = await groqClient.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       messages,
-      max_tokens: wantsStock ? 2000 : 300,
-      temperature: wantsStock ? 0.4 : 0.7,
+      max_tokens: depth === 'deep' ? 2000 : 500,
+      temperature: depth === 'deep' ? 0.4 : 0.65,
       stream: true,
     });
 
@@ -508,17 +491,17 @@ export async function streamChat({ question, symbols = [], history = [], onDelta
 async function streamAnthropic({ question, symbols, history, onDelta, onDone, onError }) {
   try {
     const { default: Anthropic } = await import('@anthropic-ai/sdk');
-    const client     = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
-    const wantsStock = needsStockContext(question, symbols);
-    const context    = wantsStock ? await buildRagContext(symbols) : '';
-    const messages   = [
+    const client   = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+    const depth    = responseDepth(question);
+    const context  = symbols.length ? await buildRagContext(symbols) : '';
+    const messages = [
       ...history.slice(-10).map(m => ({ role: m.role, content: String(m.content) })),
       { role: 'user', content: question },
     ];
 
     const stream = await client.messages.stream({
       model: 'claude-sonnet-4-6',
-      max_tokens: wantsStock ? 2000 : 300,
+      max_tokens: depth === 'deep' ? 2000 : 500,
       system: SYSTEM_PROMPT + context,
       messages,
     });

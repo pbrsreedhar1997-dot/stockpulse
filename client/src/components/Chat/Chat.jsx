@@ -4,12 +4,12 @@ import { useAppContext } from '../../contexts/AppContext';
 import './Chat.scss';
 
 const QUICK_ACTIONS = [
-  { label: '📊 Full Analysis', question: 'Run a full RAG analysis on this stock — fundamentals, technicals, news sentiment, ensemble score, and 30-day prediction with bear/base/bull price targets.' },
-  { label: '📈 Technical Setup', question: 'Analyse the technical setup: MA cross, RSI, MACD, Bollinger Bands, volume trend. Is this bullish or bearish right now?' },
-  { label: '💰 Fundamentals', question: 'Evaluate the fundamental score: P/E vs sector, margins, ROE, debt, revenue growth. Is this company financially strong?' },
-  { label: '📰 News Sentiment', question: 'Score the news sentiment with decay weighting. What themes dominate and how does it affect the outlook?' },
-  { label: '⚠️ Top Risks', question: 'List the top 3 bearish risks and catalysts that could push this stock lower. Include contrarian view if the signal is bullish.' },
-  { label: '🎯 Price Targets', question: 'Give me bear, base, and bull case 30-day price targets with confidence levels and the key catalysts for each scenario.' },
+  { label: '📊 Full Analysis',   question: 'Give me a full analysis — fundamentals, technicals, news sentiment, ensemble score, and bear/base/bull price targets.' },
+  { label: '📈 Technical Setup', question: 'What is the technical setup? Cover MA cross, RSI, MACD, Bollinger Bands, and volume trend.' },
+  { label: '💰 Fundamentals',    question: 'How are the fundamentals? P/E, margins, ROE, debt levels, and revenue growth.' },
+  { label: '📰 News Sentiment',  question: 'What does the recent news say? Summarise sentiment and the key themes.' },
+  { label: '⚠️ Key Risks',       question: 'What are the top risks that could push the price down?' },
+  { label: '🎯 Price Targets',   question: 'What are the bear, base, and bull case price targets for the next 30 days?' },
 ];
 
 function parseMarkdown(text) {
@@ -60,8 +60,8 @@ export default function Chat() {
           <h2 className="chat__title">AI Stock Analyst</h2>
           <p className="chat__sub">
             {currentStock
-              ? `Analyzing ${currentStock.symbol.replace('.NS', '').replace('.BO', '')} — ${currentStock.name || ''}`
-              : 'Ask about any stock in your watchlist'}
+              ? <>Active: <strong>{currentStock.symbol.replace(/\.(NS|BO)$/i, '')}</strong>{currentStock.name ? ` — ${currentStock.name}` : ''}</>
+              : 'Select a stock first, then ask anything about it'}
           </p>
         </div>
         {messages.length > 0 && (
@@ -73,8 +73,16 @@ export default function Chat() {
         {messages.length === 0 ? (
           <div className="chat__welcome">
             <div className="chat__welcome-icon">🤖</div>
-            <h3>RAG Stock Analyst</h3>
-            <p>Powered by live market data. I compute RSI, MACD, Bollinger Bands, score fundamentals, decay-weight news sentiment, and run an ensemble prediction before responding.</p>
+            <h3>
+              {currentStock
+                ? `Ask me anything about ${currentStock.symbol.replace(/\.(NS|BO)$/i, '')}`
+                : 'AI Stock Analyst'}
+            </h3>
+            <p>
+              {currentStock
+                ? 'I already have the live price, technicals (RSI, MACD, Bollinger Bands), fundamentals, and news sentiment loaded. Just ask.'
+                : 'Select a stock from the Stock tab first. I\'ll have its live data, technicals, and news ready for your questions.'}
+            </p>
             <div className="chat__quick-actions">
               {QUICK_ACTIONS.map(a => (
                 <button key={a.label} className="quick-btn" onClick={() => submit(a.question)}>
