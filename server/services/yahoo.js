@@ -121,10 +121,10 @@ export async function getFinancials(symbol) {
 }
 
 // ── History ───────────────────────────────────────────────────────────────────
-const RANGE_DAYS = { '1wk': 7, '1mo': 30, '3mo': 90, '6mo': 180, '1y': 365, '5y': 1825, max: 3650 };
+const RANGE_DAYS = { '1d': 5, '5d': 10, '1wk': 7, '1mo': 30, '3mo': 90, '6mo': 180, '1y': 365, '5y': 1825, max: 3650 };
 
 export async function getHistory(symbol, range = '1mo') {
-  const key = `hist3:${symbol}:${range}`;
+  const key = `hist4:${symbol}:${range}`;
   const hit = await cacheGet(key);
   if (hit) return hit;
 

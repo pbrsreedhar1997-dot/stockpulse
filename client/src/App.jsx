@@ -50,34 +50,48 @@ const EmptyIcon = () => (
 export default function App() {
   const { state, dispatch } = useAppContext();
   const { watchlist, syncFromServer } = useWatchlist();
-  const { fetchQuote } = useStocks();
+  const { fetchQuote, fetchProfile, fetchFinancials: fetchFin } = useStocks();
   const { logout } = useAuth();
 
   const symbols        = watchlist.map(s => s.symbol);
   const wakeRetries    = useRef(0);
   const wakeRetryTimer = useRef(null);
   const pingInterval   = useRef(null);
+  const backendWasOk   = useRef(false);
 
   useLivePrice(symbols);
 
-  function refreshQuotes(syms) {
+  function refreshAll(syms) {
     syms.forEach(sym => fetchQuote(sym));
+    // Also re-fetch profile + financials for current symbol on recovery
+    const cur = sessionStorage.getItem('sp_sym');
+    if (cur) {
+      fetchProfile(cur);
+      fetchFin(cur);
+    }
   }
 
   function checkBackend(syms) {
     fetch('/api/ping')
       .then(r => r.json())
       .then(json => {
-        const ok   = !!json?.ok;
-        const prev = state.backendOk;
+        const ok = !!json?.ok;
         dispatch({ type: 'SET_BACKEND_OK', payload: ok });
         if (ok) {
           clearTimeout(wakeRetryTimer.current);
           wakeRetries.current = 0;
-          if (prev !== true) refreshQuotes(syms);
+          if (!backendWasOk.current) {
+            backendWasOk.current = true;
+            refreshAll(syms);
+          }
+        } else {
+          backendWasOk.current = false;
         }
       })
-      .catch(() => dispatch({ type: 'SET_BACKEND_OK', payload: false }));
+      .catch(() => {
+        dispatch({ type: 'SET_BACKEND_OK', payload: false });
+        backendWasOk.current = false;
+      });
   }
 
   function scheduleWakeRetry(syms) {
