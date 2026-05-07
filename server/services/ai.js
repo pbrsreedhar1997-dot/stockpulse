@@ -6,46 +6,33 @@ import log from '../log.js';
 const groqClient = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RAG SYSTEM PROMPT (framework from config, adapted for streaming chat output)
+// RAG SYSTEM PROMPT
 // ─────────────────────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are StockPulse AI, an expert financial analyst with deep knowledge of equity markets, fundamental analysis, technical analysis, and macroeconomic indicators. You specialise in NSE/BSE equities, Indian macro (RBI policy, FII/DII flows, sector rotation), and global markets.
+const SYSTEM_PROMPT = `You are StockPulse AI, a conversational financial analyst assistant built into the StockPulse trading dashboard. You specialise in NSE/BSE equities, Indian macro (RBI policy, FII/DII flows, sector rotation), and global markets.
 
-ANALYSIS FRAMEWORK — always reason through ALL available modules before responding:
+CONVERSATION RULES — read these carefully:
+1. GREETINGS & GENERAL QUESTIONS: Respond naturally and concisely. If someone says "hi", "hello", "how are you", or asks what you can do — reply conversationally. Do NOT produce stock analysis unprompted.
+2. STOCK-SPECIFIC QUESTIONS: When the user asks about a specific stock, company, or financial topic AND live market data is provided below, use the RAG analysis framework. Otherwise answer from general knowledge.
+3. MATCH RESPONSE LENGTH TO THE QUESTION: A greeting gets a short reply. A full analysis request gets a detailed breakdown. Never pad answers.
 
-[FUNDAMENTAL ANALYSIS]
-Score the company 0–100 on: revenue growth YoY/QoQ (20%), margin trends vs 3-year average (15%), EPS trend + forward P/E vs sector median (20%), debt-to-equity/current ratio/FCF yield (20%), ROE/ROIC vs peers (15%), DCF implied upside (10%).
-Score >65 = strong fundamentals. Score <40 = weak fundamentals.
+WHEN PERFORMING STOCK ANALYSIS (only when asked):
+Use the pre-computed data from the RAG RETRIEVAL RESULTS block below. Structure as:
+  → Ensemble Score & Direction (BULLISH/NEUTRAL/BEARISH + confidence %)
+  → Fundamentals summary (key metrics + score)
+  → Technical setup (MA, RSI, MACD, Bollinger summary + score)
+  → News sentiment (themes + score)
+  → Prediction: bear / base / bull price targets
+  → Top 3 catalysts | Top 3 risks
+  → Contrarian view (even for strong signals)
+  → Macro regime for Indian stocks (RBI, FII/DII, sector tailwinds)
 
-[TECHNICAL ANALYSIS]
-Evaluate: price vs MA50/MA200 (golden/death cross), RSI(14) overbought/oversold, MACD histogram + crossovers, Bollinger Band %B position, volume trend vs 20-day average.
-Score >60 = bullish technical setup. Score <40 = bearish.
+ANALYSIS RULES (stock questions only):
+- Use specific numbers from the provided context. Never fabricate prices or metrics.
+- If data is sparse, lower confidence and say so explicitly.
+- Never recommend buy/sell/hold — frame as probability estimates.
+- Source authority: filings=1.0, financials=0.85, news=0.75.
 
-[NEWS SENTIMENT]
-Apply exponential time-decay (weight = e^(−days_old/7)) to recent headlines.
-Classify each: POSITIVE/NEGATIVE/NEUTRAL. Extract themes: earnings_beat/miss, regulatory_risk, leadership_change, analyst_upgrade/downgrade, macro_headwind, guidance_change.
-Sentiment >65 = positive bias. <35 = negative bias.
-
-[PREDICTION ENGINE]
-final_score = (fundamental_score × 40%) + (technical_score × 30%) + (sentiment_score × 30%)
-BULLISH if ≥65 · BEARISH if ≤35 · NEUTRAL otherwise
-confidence = |final_score − 50| × 2
-Provide bear/base/bull price targets. List top 3 catalysts and top 3 risks.
-
-RESPONSE RULES:
-- Lead with the ensemble score and direction (BULLISH/NEUTRAL/BEARISH + confidence %)
-- Structure output: Overview → Fundamentals → Technicals → Sentiment → Prediction → Risks
-- Use specific numbers from the provided context. Never fabricate data.
-- If context data is sparse, say so explicitly and lower confidence accordingly.
-- Never recommend a specific buy/sell/hold action — frame as probability estimates.
-- Always include a contrarian perspective even for strong directional signals.
-- Classify macro regime (bull/bear/volatile/transitioning) in every stock-specific response.
-- For Indian stocks: comment on FII/DII activity, RBI rate environment, sector tailwinds/headwinds.
-- Quantify all uncertainty. If data is >4h old, note it. If news is sparse, note it.
-
-DOCUMENT AUTHORITY WEIGHTS (used for retrieved context below):
-SEC/SEBI filings=1.0, Earnings transcripts=0.95, Analyst reports=0.85, News=0.75, Social=0.55
-
-Respond in clear, structured markdown. Use **bold** for key numbers and signals.`;
+Respond in clear markdown. Use **bold** for key numbers. Keep it useful, not padded.`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TECHNICAL INDICATORS  (computed from 252-day OHLCV)
@@ -445,6 +432,40 @@ ${sentiment.scored?.length ? sentiment.scored.map(a =>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// INTENT DETECTION — skip RAG fetch for general / conversational messages
+// ─────────────────────────────────────────────────────────────────────────────
+const STOCK_KEYWORDS = [
+  'stock', 'share', 'price', 'market', 'nse', 'bse', 'sensex', 'nifty',
+  'analyse', 'analyze', 'analysis', 'technical', 'fundamental', 'chart',
+  'rsi', 'macd', 'bollinger', 'moving average', 'ema', 'sma',
+  'bullish', 'bearish', 'buy', 'sell', 'invest', 'portfolio', 'watchlist',
+  'pe ratio', 'p/e', 'eps', 'revenue', 'margin', 'roe', 'earnings',
+  'dividend', 'market cap', 'valuation', 'target', 'prediction', 'forecast',
+  'sentiment', 'news', 'catalyst', 'risk', 'sector', 'fii', 'dii', 'rbi',
+];
+
+function needsStockContext(question, symbols) {
+  if (!symbols?.length) return false;
+  const q = question.toLowerCase().trim();
+
+  // Short/conversational messages — never fetch stock data
+  if (q.split(/\s+/).length <= 3) {
+    const stockMentioned = STOCK_KEYWORDS.some(k => q.includes(k));
+    if (!stockMentioned) return false;
+  }
+
+  // Check if a ticker symbol is mentioned explicitly
+  const tickerMentioned = symbols.some(s => {
+    const ticker = s.replace(/\.(NS|BO)$/i, '').toLowerCase();
+    return q.includes(ticker);
+  });
+  if (tickerMentioned) return true;
+
+  // Check for stock-related keywords
+  return STOCK_KEYWORDS.some(k => q.includes(k));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // STREAM ENTRY POINTS
 // ─────────────────────────────────────────────────────────────────────────────
 export async function streamChat({ question, symbols = [], history = [], onDelta, onDone, onError }) {
@@ -457,8 +478,9 @@ export async function streamChat({ question, symbols = [], history = [], onDelta
   }
 
   try {
-    const context  = await buildRagContext(symbols);
-    const messages = [
+    const wantsStock = needsStockContext(question, symbols);
+    const context    = wantsStock ? await buildRagContext(symbols) : '';
+    const messages   = [
       { role: 'system', content: SYSTEM_PROMPT + context },
       ...history.slice(-10).map(m => ({ role: m.role, content: String(m.content) })),
       { role: 'user', content: question },
@@ -467,8 +489,8 @@ export async function streamChat({ question, symbols = [], history = [], onDelta
     const stream = await groqClient.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       messages,
-      max_tokens: 2000,
-      temperature: 0.4,   // lower temp for analytical consistency
+      max_tokens: wantsStock ? 2000 : 300,
+      temperature: wantsStock ? 0.4 : 0.7,
       stream: true,
     });
 
@@ -486,16 +508,17 @@ export async function streamChat({ question, symbols = [], history = [], onDelta
 async function streamAnthropic({ question, symbols, history, onDelta, onDone, onError }) {
   try {
     const { default: Anthropic } = await import('@anthropic-ai/sdk');
-    const client   = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
-    const context  = await buildRagContext(symbols);
-    const messages = [
+    const client     = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+    const wantsStock = needsStockContext(question, symbols);
+    const context    = wantsStock ? await buildRagContext(symbols) : '';
+    const messages   = [
       ...history.slice(-10).map(m => ({ role: m.role, content: String(m.content) })),
       { role: 'user', content: question },
     ];
 
     const stream = await client.messages.stream({
       model: 'claude-sonnet-4-6',
-      max_tokens: 2000,
+      max_tokens: wantsStock ? 2000 : 300,
       system: SYSTEM_PROMPT + context,
       messages,
     });
