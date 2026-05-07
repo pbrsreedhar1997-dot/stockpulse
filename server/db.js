@@ -66,11 +66,16 @@ export async function initDb() {
         name TEXT,
         shares NUMERIC(15,4) NOT NULL CHECK (shares > 0),
         avg_price NUMERIC(15,4) NOT NULL CHECK (avg_price > 0),
+        stop_loss NUMERIC(15,4),
+        purchase_date BIGINT,
         notes TEXT,
         created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
         updated_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
         UNIQUE(user_id, symbol)
       )`);
+    // Add new columns to existing table if upgrading
+    await query(`ALTER TABLE portfolio ADD COLUMN IF NOT EXISTS stop_loss NUMERIC(15,4)`).catch(() => {});
+    await query(`ALTER TABLE portfolio ADD COLUMN IF NOT EXISTS purchase_date BIGINT`).catch(() => {});
     log.info('PostgreSQL schema ready');
   } catch (err) {
     log.error('DB init failed:', err.message);

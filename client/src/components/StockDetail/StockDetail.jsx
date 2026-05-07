@@ -19,17 +19,22 @@ const TABS = [
   { id: 'performance', label: 'Performance' },
 ];
 
+const TAB_KEY = sym => `sp_tab_${sym}`;
+
 export default function StockDetail({ symbol }) {
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState(
+    () => sessionStorage.getItem(TAB_KEY(symbol)) || 'overview'
+  );
   const { fetchQuote, fetchProfile, fetchFinancials } = useStocks();
   const { state } = useAppContext();
 
-  // Fetch all data when symbol changes
+  // When symbol changes, restore saved tab (default to overview for new symbols)
   useEffect(() => {
     fetchQuote(symbol);
     fetchProfile(symbol);
     fetchFinancials(symbol);
-    setActiveTab('overview');
+    const saved = sessionStorage.getItem(TAB_KEY(symbol));
+    setActiveTab(saved || 'overview');
   }, [symbol]);
 
   // Re-fetch missing data whenever backend comes online (handles Render cold-start)
@@ -49,7 +54,10 @@ export default function StockDetail({ symbol }) {
           <button
             key={t.id}
             className={`tab-bar__tab ${activeTab === t.id ? 'tab-bar__tab--active' : ''}`}
-            onClick={() => setActiveTab(t.id)}
+            onClick={() => {
+              setActiveTab(t.id);
+              sessionStorage.setItem(TAB_KEY(symbol), t.id);
+            }}
           >
             {t.label}
           </button>

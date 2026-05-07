@@ -56,11 +56,12 @@ export function useStocks() {
       if (!Array.isArray(points)) return null;
       return {
         candles: points.map(p => ({
-          t: p.ts * 1000,  // unix seconds → milliseconds for Chart.js
+          t: p.ts * 1000,
           o: p.open,
           h: p.high,
           l: p.low,
           c: p.close,
+          v: p.volume ?? 0,
         })),
       };
     } catch (e) {

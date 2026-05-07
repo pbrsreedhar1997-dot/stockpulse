@@ -13,6 +13,7 @@ import AuthModal from './components/Auth/AuthModal';
 import Search from './components/Search/Search';
 import Toast from './components/shared/Toast';
 import { usePortfolio } from './hooks/usePortfolio';
+import { useStopLossAlert } from './hooks/useStopLossAlert';
 import './App.scss';
 
 const PING_INTERVAL_MS = 30000;
@@ -54,7 +55,8 @@ export default function App() {
   const { watchlist, syncFromServer } = useWatchlist();
   const { fetchQuote, fetchProfile, fetchFinancials: fetchFin } = useStocks();
   const { logout } = useAuth();
-  const { fetchPortfolio } = usePortfolio();
+  const { fetchPortfolio, portfolio } = usePortfolio();
+  useStopLossAlert({ portfolio, quotes: state.quotes });
 
   const symbols        = watchlist.map(s => s.symbol);
   const wakeRetries    = useRef(0);

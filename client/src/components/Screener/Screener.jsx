@@ -56,7 +56,7 @@ export default function Screener() {
       <div className="screener__header">
         <div>
           <h2 className="screener__title">Value Picks</h2>
-          <p className="screener__sub">Nifty 100 stocks ≥20% below 52W high with strong fundamentals</p>
+          <p className="screener__sub">Large-cap NSE stocks ≥10% below 52W high with positive EPS</p>
         </div>
         <button className="screener__refresh" onClick={refresh} disabled={loading}>
           {loading ? <span className="spinner" /> : '↻ Refresh'}
