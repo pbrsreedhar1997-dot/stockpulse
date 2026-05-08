@@ -82,6 +82,47 @@ const NavChatIcon = () => (
   </svg>
 );
 
+/* ── User menu with logout confirm ────────────────────────────────────────── */
+function UserMenu({ user, onLogout }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [open]);
+
+  return (
+    <div className="user-menu" ref={ref}>
+      <div className="user-chip" onClick={() => setOpen(o => !o)} title="Account">
+        <div className="user-chip__avatar">
+          {user.name?.[0]?.toUpperCase() || 'U'}
+        </div>
+        <span className="user-chip__name">{user.name?.split(' ')[0]}</span>
+      </div>
+      {open && (
+        <div className="user-menu__dropdown">
+          <div className="user-menu__info">
+            <span className="user-menu__name">{user.name}</span>
+            <span className="user-menu__email">{user.email}</span>
+          </div>
+          <div className="user-menu__divider" />
+          <button
+            className="user-menu__item user-menu__item--danger"
+            onClick={() => { setOpen(false); onLogout(); }}
+          >
+            Sign out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Right panel watchlist (desktop only) ──────────────────────────────────── */
 function StockRightPanel() {
   const { state, dispatch } = useAppContext();
@@ -310,12 +351,7 @@ export default function App() {
           </button>
 
           {state.user ? (
-            <div className="user-chip" onClick={logout} title="Click to logout">
-              <div className="user-chip__avatar">
-                {state.user.name?.[0]?.toUpperCase() || 'U'}
-              </div>
-              <span className="user-chip__name">{state.user.name?.split(' ')[0]}</span>
-            </div>
+            <UserMenu user={state.user} onLogout={logout} />
           ) : (
             <div className="auth-btns">
               <button className="auth-btn auth-btn--login"
