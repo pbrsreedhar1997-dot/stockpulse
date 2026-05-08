@@ -321,7 +321,7 @@ export async function getLivePrice(symbol) {
 }
 
 // ── History ───────────────────────────────────────────────────────────────────
-const RANGE_DAYS = { '5d': 10, '1wk': 7, '1mo': 30, '3mo': 90, '6mo': 180, '1y': 365, '5y': 1825, max: 3650 };
+const RANGE_DAYS = { '5d': 10, '1wk': 7, '1mo': 35, '3mo': 95, '6mo': 185, '1y': 370, '2y': 740, '3y': 1100, '5y': 1830, max: 3650 };
 
 export async function getHistory(symbol, range = '1mo') {
   const key = `hist7:${symbol}:${range}`;

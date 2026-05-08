@@ -570,9 +570,9 @@
   /* Hide desktop search bar */
   .header__search-wrap--desktop { display: none; }
 
-  /* Hide "Sign up" text button on mobile, keep icon-only auth */
+  /* Hide Sign up on mobile; keep Login as compact pill */
   .auth-btn--signup { display: none; }
-  .auth-btn--login  { display: none; }
+  .auth-btn--login  { padding: 4px 10px; font-size: 11.5px; }
 
   /* Tighter header */
   .header {

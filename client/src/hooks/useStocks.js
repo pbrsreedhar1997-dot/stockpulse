@@ -54,9 +54,11 @@ export function useStocks() {
       const res = await api.get(`/api/history/${symbol}?range=${range}`);
       const points = res?.data;
       if (!Array.isArray(points)) return null;
+      const intraday = range === '1d';
       return {
         candles: points.map(p => ({
-          t: p.ts * 1000,
+          // Daily bars: snap to UTC noon to avoid day-boundary drift across timezones
+          t: intraday ? p.ts * 1000 : Math.floor(p.ts / 86400) * 86400 * 1000 + 43200000,
           o: p.open,
           h: p.high,
           l: p.low,

@@ -16,12 +16,13 @@ Chart.register(
 );
 
 const RANGES = [
-  { label: '1D', value: '1d' },
-  { label: '5D', value: '5d' },
+  { label: '1D', value: '1d'  },
+  { label: '5D', value: '5d'  },
   { label: '1M', value: '1mo' },
   { label: '3M', value: '3mo' },
-  { label: '1Y', value: '1y' },
-  { label: '5Y', value: '5y' },
+  { label: '1Y', value: '1y'  },
+  { label: '2Y', value: '2y'  },
+  { label: '3Y', value: '3y'  },
 ];
 
 export default function PriceChart({ symbol }) {
@@ -84,9 +85,19 @@ export default function PriceChart({ symbol }) {
     const upColor  = '#00c896';
     const downColor = '#ff4560';
 
-    const xUnit     = rng === '1d' ? 'minute' : rng === '5d' ? 'day' : rng === '1mo' || rng === '3mo' ? 'week' : 'month';
+    const xUnit = rng === '1d'  ? 'minute'
+                : rng === '5d'  ? 'day'
+                : rng === '1mo' ? 'day'
+                : rng === '3mo' ? 'week'
+                : rng === '1y'  ? 'week'
+                : 'month'; // 2y, 3y
     const xStepSize = rng === '1d' ? 30 : undefined;
-    const maxTicks  = rng === '1d' ? 10 : rng === '5d' ? 5 : 8;
+    const maxTicks  = rng === '1d'  ? 10
+                    : rng === '5d'  ? 5
+                    : rng === '1mo' ? 22
+                    : rng === '3mo' ? 13
+                    : rng === '1y'  ? 13
+                    : 24; // 2y / 3y
 
     const isUp  = data[data.length - 1].c >= data[0].c;
     const accent = isUp ? upColor : downColor;
@@ -117,7 +128,7 @@ export default function PriceChart({ symbol }) {
           const d = new Date(items[0].raw.x);
           return rng === '1d'
             ? d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
-            : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: rng === '5y' ? '2-digit' : undefined });
+            : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: (rng === '2y' || rng === '3y' || rng === '5y') ? '2-digit' : undefined });
         },
         label: c => `₹${c.raw.y?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
       };
@@ -137,7 +148,7 @@ export default function PriceChart({ symbol }) {
           const d = new Date(x);
           return rng === '1d'
             ? d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
-            : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: rng === '5y' ? '2-digit' : undefined });
+            : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: (rng === '2y' || rng === '3y' || rng === '5y') ? '2-digit' : undefined });
         },
         label: c => {
           const { o, h, l, c: cl } = c.raw;
