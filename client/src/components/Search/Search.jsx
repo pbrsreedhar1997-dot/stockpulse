@@ -129,7 +129,10 @@ export default function Search() {
   };
 
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { setOpen(false); inputRef.current?.blur(); return; }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); inputRef.current?.focus(); }
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, []);
@@ -142,7 +145,7 @@ export default function Search() {
           ref={inputRef}
           className="search__input"
           type="text"
-          placeholder="Search stocks (e.g. RELIANCE, TCS, AAPL)"
+          placeholder="Search stocks… (⌘K)"
           value={query}
           onChange={e => setQuery(e.target.value)}
           onFocus={() => results.length && setOpen(true)}

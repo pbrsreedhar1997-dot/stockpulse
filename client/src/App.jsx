@@ -13,6 +13,7 @@ import Search from './components/Search/Search';
 import Toast from './components/shared/Toast';
 import { usePortfolio } from './hooks/usePortfolio';
 import { useStopLossAlert } from './hooks/useStopLossAlert';
+import { usePriceAlert } from './hooks/usePriceAlert';
 import './App.scss';
 
 const PING_INTERVAL_MS = 30000;
@@ -189,6 +190,7 @@ export default function App() {
   const { logout } = useAuth();
   const { fetchPortfolio, portfolio } = usePortfolio();
   useStopLossAlert({ portfolio, quotes: state.quotes });
+  usePriceAlert();
 
   const [mobSearchOpen, setMobSearchOpen] = useState(false);
 

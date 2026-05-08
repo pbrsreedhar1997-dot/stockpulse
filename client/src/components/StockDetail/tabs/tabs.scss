@@ -88,9 +88,16 @@
 .range-labels {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   font-size: 11px;
   font-weight: 600;
   font-family: 'JetBrains Mono', monospace;
+  position: relative;
+
+  /* MetricInfo inside range-labels acts inline */
+  .mi-wrap { display: inline-flex; flex-direction: row; align-items: center; }
+  .mi-row  { gap: 3px; cursor: pointer; }
+  .mi-chevron { font-size: 8px; }
 }
 
 /* ── News ──────────────────────────────────────────────────────────────────── */
@@ -293,7 +300,198 @@
   }
 }
 
-/* ── Insights ──────────────────────────────────────────────────────────────── */
+/* ── MarginRow with MetricInfo ─────────────────────────────────────────────── */
+.margin-row__header--mi {
+  margin-bottom: 5px;
+
+  .mi-row {
+    font-size: 12px;
+    .margin-row__lbl { color: var(--text2); }
+  }
+}
+
+/* ── Insights scorecard ────────────────────────────────────────────────────── */
+.ins-header {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+
+  @media (max-width: 600px) { flex-direction: column; }
+}
+
+.ins-overall {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  min-width: 100px;
+  flex-shrink: 0;
+
+  &__label {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text3);
+    margin-bottom: 8px;
+  }
+
+  &__value {
+    font-size: 36px;
+    font-weight: 800;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: -1px;
+    line-height: 1;
+
+    span { font-size: 14px; font-weight: 500; color: var(--text3); }
+  }
+
+  &__tag {
+    font-size: 11px;
+    font-weight: 700;
+    margin-top: 6px;
+  }
+}
+
+.ins-scores {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  flex: 1;
+
+  @media (max-width: 768px) { grid-template-columns: repeat(2, 1fr); }
+}
+
+.ins-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 10px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  gap: 4px;
+  text-align: center;
+
+  &__icon  { font-size: 18px; margin-bottom: 2px; }
+  &__label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.7px; color: var(--text2); }
+
+  &__score {
+    font-size: 22px;
+    font-weight: 800;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: -0.5px;
+    line-height: 1.1;
+    span { font-size: 11px; font-weight: 500; color: var(--text3); }
+
+    &--na { font-size: 14px; color: var(--text3); }
+  }
+
+  &__bar {
+    width: 100%;
+    height: 3px;
+    background: var(--border2);
+    border-radius: 2px;
+    overflow: hidden;
+    margin: 3px 0 2px;
+  }
+
+  &__bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.6s ease;
+  }
+
+  &__tag {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+}
+
+/* ── Bull / Bear signals ───────────────────────────────────────────────────── */
+.ins-signals {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+
+  @media (max-width: 600px) { grid-template-columns: 1fr; }
+}
+
+.ins-col {
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow: hidden;
+
+  &__hdr {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 10px 13px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+
+  &__dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    &--bull { background: var(--up); }
+    &--bear { background: var(--down); }
+  }
+
+  &--bull {
+    .ins-col__hdr { background: var(--up-dim); color: var(--up); }
+  }
+
+  &--bear {
+    .ins-col__hdr { background: var(--down-dim); color: var(--down); }
+  }
+}
+
+.ins-row {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 7px 13px;
+  font-size: 12.5px;
+  border-top: 1px solid var(--border);
+  color: var(--text2);
+  line-height: 1.4;
+
+  span { font-size: 9px; flex-shrink: 0; }
+
+  &--bull span { color: var(--up); }
+  &--bear span { color: var(--down); }
+}
+
+/* ── Stats strip ───────────────────────────────────────────────────────────── */
+.ins-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+
+  &__item {
+    padding: 4px 12px;
+    background: var(--card2);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    font-size: 11.5px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text2);
+  }
+}
+
+/* ── Insights text block ───────────────────────────────────────────────────── */
 .insights-block {
   background: var(--card);
   border: 1px solid var(--border);

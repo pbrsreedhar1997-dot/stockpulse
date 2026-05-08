@@ -12,6 +12,10 @@ const _savedWatchlist = (() => {
   try { const s = JSON.parse(localStorage.getItem('sp_watchlist')); return Array.isArray(s) && s.length ? s : null; } catch { return null; }
 })();
 
+const _savedAlerts = (() => {
+  try { const s = JSON.parse(localStorage.getItem('sp_alerts')); return Array.isArray(s) ? s : []; } catch { return []; }
+})();
+
 const initialState = {
   backendOk: null,
   theme: localStorage.getItem('sp_theme') || 'dark',
@@ -27,6 +31,7 @@ const initialState = {
   chatOpen: false,
   authModalOpen: false,
   toasts: [],
+  alerts: _savedAlerts,
 };
 
 function reducer(state, action) {
@@ -81,6 +86,17 @@ function reducer(state, action) {
       return { ...state, toasts: state.toasts.filter(t => t.id !== action.payload) };
     case 'SET_PORTFOLIO':
       return { ...state, portfolio: action.payload };
+    case 'ADD_ALERT': {
+      const exists = state.alerts.find(a => a.id === action.payload.id);
+      if (exists) return state;
+      return { ...state, alerts: [...state.alerts, action.payload] };
+    }
+    case 'REMOVE_ALERT':
+      return { ...state, alerts: state.alerts.filter(a => a.id !== action.payload) };
+    case 'TRIGGER_ALERT':
+      return { ...state, alerts: state.alerts.map(a => a.id === action.payload ? { ...a, triggered: true } : a) };
+    case 'RESET_ALERT':
+      return { ...state, alerts: state.alerts.map(a => a.id === action.payload ? { ...a, triggered: false } : a) };
     default:
       return state;
   }
@@ -99,6 +115,10 @@ export function AppProvider({ children }) {
   useEffect(() => {
     localStorage.setItem('sp_watchlist', JSON.stringify(state.watchlist));
   }, [state.watchlist]);
+
+  useEffect(() => {
+    localStorage.setItem('sp_alerts', JSON.stringify(state.alerts));
+  }, [state.alerts]);
 
   useEffect(() => {
     if (state.user) {

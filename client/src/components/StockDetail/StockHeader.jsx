@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
 import { useWatchlist } from '../../hooks/useWatchlist';
 import { usePortfolio } from '../../hooks/usePortfolio';
+import PriceAlertPanel from '../PriceAlert/PriceAlertPanel';
 import './StockHeader.scss';
 
 function fmt(n, dec = 2) {
@@ -17,7 +18,30 @@ function fmtCr(n) {
   return `₹${cr.toFixed(0)} Cr`;
 }
 
-// ── Inline holding modal (used directly from the header) ─────────────────────
+/* Live NSE market hours: Mon–Fri 09:15–15:30 IST */
+function useMarketStatus() {
+  const [status, setStatus] = useState(null);
+  useEffect(() => {
+    function check() {
+      const now = new Date();
+      const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+      const day = ist.getDay();
+      const h   = ist.getHours();
+      const m   = ist.getMinutes();
+      const mins = h * 60 + m;
+      if (day === 0 || day === 6) { setStatus('closed'); return; }
+      if (mins >= 9 * 60 + 15 && mins <= 15 * 60 + 30) setStatus('open');
+      else if (mins < 9 * 60 + 15) setStatus('pre');
+      else setStatus('closed');
+    }
+    check();
+    const t = setInterval(check, 60000);
+    return () => clearInterval(t);
+  }, []);
+  return status;
+}
+
+/* Inline holding modal */
 function QuickAddModal({ symbol, name, holding, onClose, onSave }) {
   const [shares,   setShares]   = useState(holding?.shares   ?? '');
   const [avgPrice, setAvgPrice] = useState(holding?.avg_price ?? '');
@@ -27,8 +51,8 @@ function QuickAddModal({ symbol, name, holding, onClose, onSave }) {
   async function submit(e) {
     e.preventDefault();
     const s = parseFloat(shares), p = parseFloat(avgPrice);
-    if (!s || s <= 0)  { setError('Shares must be > 0'); return; }
-    if (!p || p <= 0)  { setError('Price must be > 0');  return; }
+    if (!s || s <= 0) { setError('Shares must be > 0'); return; }
+    if (!p || p <= 0) { setError('Price must be > 0');  return; }
     setSaving(true);
     try { await onSave({ symbol, name, shares: s, avg_price: p }); onClose(); }
     catch (err) { setError(err?.message || 'Failed'); }
@@ -81,10 +105,14 @@ export default function StockHeader({ symbol }) {
   const f = state.financials[symbol];
   const { add: addToWatchlist, remove: removeFromWatchlist } = useWatchlist();
   const { getHolding, addHolding, updateHolding } = usePortfolio();
-  const holding = getHolding(symbol);
-  const [showModal, setShowModal] = useState(false);
+  const holding      = getHolding(symbol);
+  const [showModal,  setShowModal]  = useState(false);
+  const [showAlerts, setShowAlerts] = useState(false);
+  const marketStatus = useMarketStatus();
 
   const inWatchlist = state.watchlist.some(s => s.symbol === symbol);
+  const alertCount  = state.alerts.filter(a => a.symbol === symbol && !a.triggered).length;
+  const triggeredCount = state.alerts.filter(a => a.symbol === symbol && a.triggered).length;
 
   function toggleWatchlist() {
     if (inWatchlist) removeFromWatchlist(symbol);
@@ -99,7 +127,6 @@ export default function StockHeader({ symbol }) {
   const prevPriceRef = useRef(null);
   const [flash, setFlash] = useState('');
 
-  // Flash the price green/red when a live tick arrives with a new price
   useEffect(() => {
     if (q?.price == null) return;
     if (prevPriceRef.current != null && prevPriceRef.current !== q.price) {
@@ -129,30 +156,38 @@ export default function StockHeader({ symbol }) {
     { label: 'Mkt Cap',    value: fmtCr(mktCp) },
     { label: '52W High',   value: w52h ? `₹${fmt(w52h)}` : '—', cls: 'up' },
     { label: '52W Low',    value: w52l ? `₹${fmt(w52l)}` : '—', cls: 'down' },
-    { label: 'P/E',        value: pe  != null ? `${fmt(pe)}x` : '—' },
-    { label: 'EPS',        value: eps != null ? `₹${fmt(eps)}` : '—' },
+    { label: 'P/E',        value: pe  != null ? `${fmt(pe)}x` : '—', cls: pe < 15 ? 'up' : pe > 45 ? 'down' : '' },
+    { label: 'EPS',        value: eps != null ? `₹${fmt(eps)}` : '—', cls: eps > 0 ? 'up' : eps < 0 ? 'down' : '' },
   ];
+
+  const mktStatusMeta = {
+    open:   { cls: 'mst--open',   dot: true,  label: 'NSE Open'    },
+    pre:    { cls: 'mst--pre',    dot: false, label: 'Pre-market'   },
+    closed: { cls: 'mst--closed', dot: false, label: 'NSE Closed'  },
+  };
+  const mst = mktStatusMeta[marketStatus] || mktStatusMeta.closed;
 
   return (
     <div className="stock-header">
+      {/* ── Top row ─────────────────────────────────────────────────────────── */}
       <div className="stock-header__top">
         {p?.logo_url && (
-          <img
-            className="stock-header__logo"
-            src={p.logo_url}
-            alt=""
-            onError={e => (e.target.style.display = 'none')}
-          />
+          <img className="stock-header__logo" src={p.logo_url} alt=""
+            onError={e => (e.target.style.display = 'none')} />
         )}
 
         <div className="stock-header__name-block">
           <h1 className="stock-header__name">{p?.name || symbol}</h1>
           <div className="stock-header__meta">
-            <span className="badge badge--neutral">
-              {symbol.replace(/\.(NS|BO)$/i, '')}
-            </span>
+            <span className="badge badge--neutral">{symbol.replace(/\.(NS|BO)$/i, '')}</span>
             {p?.exchange && <span className="badge badge--neutral">{p.exchange}</span>}
             {p?.sector   && <span className="badge badge--accent">{p.sector}</span>}
+            {marketStatus && (
+              <span className={`mst-pill ${mst.cls}`}>
+                {mst.dot && <span className="mst-pill__dot" />}
+                {mst.label}
+              </span>
+            )}
           </div>
         </div>
 
@@ -175,6 +210,7 @@ export default function StockHeader({ symbol }) {
         </div>
       </div>
 
+      {/* ── Stats bar ─────────────────────────────────────────────────────── */}
       <div className="stock-header__stats">
         {stats.map(s => (
           <div key={s.label} className="stat">
@@ -184,6 +220,7 @@ export default function StockHeader({ symbol }) {
         ))}
       </div>
 
+      {/* ── Actions bar ─────────────────────────────────────────────────────── */}
       <div className="stock-header__actions-bar">
         <button
           className={`sh-wl-btn ${inWatchlist ? 'sh-wl-btn--added' : ''}`}
@@ -192,12 +229,26 @@ export default function StockHeader({ symbol }) {
           {inWatchlist ? '★ In Watchlist' : '☆ Add to Watchlist'}
         </button>
 
-          {holding ? (
+        {/* Alert bell — only for logged-in users */}
+        {state.user && (
+          <button
+            className={`sh-alert-btn ${alertCount > 0 ? 'sh-alert-btn--active' : ''} ${triggeredCount > 0 ? 'sh-alert-btn--triggered' : ''}`}
+            onClick={() => setShowAlerts(true)}
+            title="Set price alerts"
+          >
+            🔔
+            {alertCount > 0 && <span className="sh-alert-btn__badge">{alertCount}</span>}
+            {triggeredCount > 0 && <span className="sh-alert-btn__badge sh-alert-btn__badge--hit">{triggeredCount}✓</span>}
+            Alerts
+          </button>
+        )}
+
+        {holding ? (
           <div className="sh-holding-pill">
-            <span className="sh-holding-pill__label">Your Holding:</span>
-            <span>{holding.shares} shares @ ₹{holding.avg_price?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            <span className="sh-holding-pill__label">Holding:</span>
+            <span>{holding.shares} @ ₹{holding.avg_price?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
             {holding.pnl != null && (
-              <span className={holding.pnl >= 0 ? 'up' : 'down'}>
+              <span className={`sh-pnl ${holding.pnl >= 0 ? 'up' : 'down'}`}>
                 {holding.pnl >= 0 ? '+' : ''}₹{holding.pnl?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 &nbsp;({holding.pnl_pct >= 0 ? '+' : ''}{holding.pnl_pct?.toFixed(2)}%)
               </span>
@@ -213,11 +264,15 @@ export default function StockHeader({ symbol }) {
 
       {showModal && (
         <QuickAddModal
-          symbol={symbol}
-          name={p?.name || symbol}
-          holding={holding}
-          onClose={() => setShowModal(false)}
-          onSave={handleSave}
+          symbol={symbol} name={p?.name || symbol} holding={holding}
+          onClose={() => setShowModal(false)} onSave={handleSave}
+        />
+      )}
+
+      {showAlerts && (
+        <PriceAlertPanel
+          symbol={symbol} name={p?.name || symbol} currentPrice={q?.price}
+          onClose={() => setShowAlerts(false)}
         />
       )}
     </div>
