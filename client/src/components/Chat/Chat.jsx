@@ -62,7 +62,12 @@ export default function Chat() {
       <div className="chat__messages">
         {messages.length === 0 ? (
           <div className="chat__welcome">
-            <div className="chat__welcome-icon">🤖</div>
+            <img
+              className="chat__welcome-anime"
+              src="https://media.giphy.com/media/mC7M5n4RR3iN2qBoYi/giphy.gif"
+              alt=""
+              loading="lazy"
+            />
             <h3>AI Stock Analyst</h3>
             <p>
               Just mention a stock by name or ticker and I'll pull live price, technicals (RSI, MACD, Bollinger Bands), fundamentals, and news sentiment automatically.
@@ -88,7 +93,15 @@ export default function Chat() {
                   <div>{msg.content}</div>
                 )}
                 {streaming && i === messages.length - 1 && msg.role === 'assistant' && (
-                  <span className="message__cursor" />
+                  <span className="message__cursor">
+                    {!msg.content && (
+                      <img
+                        className="message__thinking-gif"
+                        src="https://media.giphy.com/media/dNgK7Ws7y176U/giphy.gif"
+                        alt="thinking…"
+                      />
+                    )}
+                  </span>
                 )}
               </div>
             </div>

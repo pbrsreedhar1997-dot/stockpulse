@@ -119,7 +119,12 @@ export default function WatchlistPortfolio() {
         {tab === 'watchlist' && (
           watchlist.length === 0 ? (
             <div className="mylist__empty">
-              <div className="mylist__empty-icon">📋</div>
+              <img
+                className="mylist__empty-anime"
+                src="https://media.giphy.com/media/fmXgCpO3IhesE/giphy.gif"
+                alt=""
+                loading="lazy"
+              />
               <div className="mylist__empty-title">Your watchlist is empty</div>
               <div className="mylist__empty-sub">Search for a stock and add it to track prices here.</div>
             </div>

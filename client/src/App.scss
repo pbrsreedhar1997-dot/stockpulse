@@ -463,6 +463,27 @@
     max-width: 280px;
     line-height: 1.65;
   }
+
+  &__anime {
+    width: 160px;
+    height: 120px;
+    object-fit: contain;
+    border-radius: 12px;
+    opacity: 0.92;
+  }
+
+  &__hint {
+    font-size: 12px;
+    color: var(--text3);
+    kbd {
+      background: var(--card2);
+      border: 1px solid var(--border2);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+    }
+  }
 }
 
 /* ── Mobile bottom navigation ──────────────────────────────────────────────── */

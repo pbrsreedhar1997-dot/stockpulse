@@ -14,6 +14,7 @@ import Toast from './components/shared/Toast';
 import { usePortfolio } from './hooks/usePortfolio';
 import { useStopLossAlert } from './hooks/useStopLossAlert';
 import { usePriceAlert } from './hooks/usePriceAlert';
+import { usePushSubscription } from './hooks/usePushSubscription';
 import './App.scss';
 
 const PING_INTERVAL_MS = 30000;
@@ -191,6 +192,7 @@ export default function App() {
   const { fetchPortfolio, portfolio } = usePortfolio();
   useStopLossAlert({ portfolio, quotes: state.quotes });
   usePriceAlert();
+  usePushSubscription();
 
   const [mobSearchOpen, setMobSearchOpen] = useState(false);
 
@@ -340,11 +342,17 @@ export default function App() {
               )
               : (
                 <div className="empty-state">
-                  <div className="empty-state__icon"><EmptyIcon /></div>
+                  <img
+                    className="empty-state__anime"
+                    src="https://media.giphy.com/media/JkVnfE54QdOMQBxmHg/giphy.gif"
+                    alt=""
+                    loading="lazy"
+                  />
                   <div className="empty-state__title">Welcome to StockPulse</div>
                   <div className="empty-state__sub">
                     Search for a stock or select one from your watchlist to get started.
                   </div>
+                  <div className="empty-state__hint">Tip: press <kbd>⌘K</kbd> to search instantly</div>
                 </div>
               )
           )}

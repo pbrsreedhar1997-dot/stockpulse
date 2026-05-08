@@ -61,6 +61,14 @@
     gap: 14px;
     padding: 40px 24px;
 
+    &-anime {
+      width: 140px;
+      height: 105px;
+      object-fit: contain;
+      border-radius: 12px;
+      margin-bottom: 4px;
+    }
+
     &-icon {
       width: 52px;
       height: 52px;
@@ -214,6 +222,16 @@
     vertical-align: middle;
     margin-left: 2px;
   }
+}
+
+.message__thinking-gif {
+  display: block;
+  width: 80px;
+  height: 60px;
+  object-fit: contain;
+  border-radius: 8px;
+  margin-top: 6px;
+  opacity: 0.85;
 }
 
 .quick-btn {

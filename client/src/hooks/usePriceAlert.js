@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useAppContext } from '../contexts/AppContext';
+import { useApi } from './useApi';
 import { playAboveTone, playBelowTone } from '../utils/audio';
 
 async function ensureNotifyPermission() {
@@ -22,6 +23,7 @@ function fireNotification(alert, currentPrice) {
 
 export function usePriceAlert() {
   const { state, dispatch } = useAppContext();
+  const api     = useApi();
   const firedRef = useRef(new Set()); // ids that have already triggered in this session
 
   useEffect(() => {
@@ -47,9 +49,20 @@ export function usePriceAlert() {
       if (alert.type === 'above') playAboveTone();
       else playBelowTone();
 
-      // Browser notification
+      // In-browser notification
       const canNotify = await ensureNotifyPermission();
       if (canNotify) fireNotification(alert, q.price);
+
+      // Server-side push to ALL user devices (mobile, locked screen, other tabs)
+      const sym  = alert.symbol.replace(/\.(NS|BO)$/i, '');
+      const dir  = alert.type === 'above' ? '▲ rose above' : '▼ fell below';
+      const pStr = q.price.toLocaleString('en-IN', { minimumFractionDigits: 2 });
+      const tStr = alert.targetPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 });
+      api.post('/api/push/send-alert', {
+        title: `🔔 ${sym} Alert`,
+        body:  `${alert.name || sym} ${dir} your target ₹${tStr}. Now ₹${pStr}`,
+        tag:   `pa-${alert.id}`,
+      }).catch(() => {});
     });
   }, [state.quotes, state.alerts, state.user]);
 

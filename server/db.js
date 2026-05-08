@@ -76,6 +76,16 @@ export async function initDb() {
     // Add new columns to existing table if upgrading
     await query(`ALTER TABLE portfolio ADD COLUMN IF NOT EXISTS stop_loss NUMERIC(15,4)`).catch(() => {});
     await query(`ALTER TABLE portfolio ADD COLUMN IF NOT EXISTS purchase_date BIGINT`).catch(() => {});
+    // Web Push subscriptions
+    await query(`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        endpoint TEXT PRIMARY KEY,
+        user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        p256dh   TEXT NOT NULL,
+        auth     TEXT NOT NULL,
+        created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+      )`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id)`);
     log.info('PostgreSQL schema ready');
   } catch (err) {
     log.error('DB init failed:', err.message);

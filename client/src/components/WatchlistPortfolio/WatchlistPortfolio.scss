@@ -34,6 +34,14 @@
 
     &-icon { font-size: 40px; }
 
+    &-anime {
+      width: 120px;
+      height: 90px;
+      object-fit: contain;
+      border-radius: 10px;
+      opacity: 0.9;
+    }
+
     &-title {
       font-size: 17px;
       font-weight: 700;
