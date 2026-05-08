@@ -87,11 +87,22 @@ function StockRightPanel() {
   const { state, dispatch } = useAppContext();
   const { watchlist, quotes, currentSymbol } = state;
 
-  const pick   = (symbol) => dispatch({ type: 'SET_CURRENT_SYMBOL', payload: symbol });
-  const moveUp = (e, symbol) => { e.stopPropagation(); dispatch({ type: 'MOVE_WATCHLIST_ITEM', payload: { symbol, direction: 'up' } }); };
-  const moveDn = (e, symbol) => { e.stopPropagation(); dispatch({ type: 'MOVE_WATCHLIST_ITEM', payload: { symbol, direction: 'down' } }); };
+  const dragFrom = useRef(null);
+  const [dragOver, setDragOver] = useState(null);
+
+  const pick = (symbol) => dispatch({ type: 'SET_CURRENT_SYMBOL', payload: symbol });
 
   if (watchlist.length === 0) return null;
+
+  function handleDrop(e, toIdx) {
+    e.preventDefault();
+    const from = dragFrom.current;
+    if (from != null && from !== toIdx) {
+      dispatch({ type: 'REORDER_WATCHLIST', payload: { fromIdx: from, toIdx } });
+    }
+    dragFrom.current = null;
+    setDragOver(null);
+  }
 
   return (
     <aside className="stock-right-panel">
@@ -101,29 +112,21 @@ function StockRightPanel() {
       </div>
       <div className="stock-right-panel__list">
         {watchlist.map((s, idx) => {
-          const q   = quotes[s.symbol];
-          const up  = (q?.change_pct ?? 0) >= 0;
+          const q  = quotes[s.symbol];
+          const up = (q?.change_pct ?? 0) >= 0;
           const active = s.symbol === currentSymbol;
           return (
             <div
               key={s.symbol}
-              className={`srp-row ${active ? 'srp-row--active' : ''}`}
+              className={`srp-row ${active ? 'srp-row--active' : ''} ${dragOver === idx && dragFrom.current !== idx ? 'srp-row--drop' : ''} ${dragFrom.current === idx ? 'srp-row--dragging' : ''}`}
+              draggable
               onClick={() => pick(s.symbol)}
+              onDragStart={() => { dragFrom.current = idx; }}
+              onDragOver={e => { e.preventDefault(); setDragOver(idx); }}
+              onDrop={e => handleDrop(e, idx)}
+              onDragEnd={() => { dragFrom.current = null; setDragOver(null); }}
             >
-              <div className="srp-row__order">
-                <button
-                  className="srp-row__mv"
-                  disabled={idx === 0}
-                  onClick={e => moveUp(e, s.symbol)}
-                  title="Move up"
-                >▲</button>
-                <button
-                  className="srp-row__mv"
-                  disabled={idx === watchlist.length - 1}
-                  onClick={e => moveDn(e, s.symbol)}
-                  title="Move down"
-                >▼</button>
-              </div>
+              <div className="srp-row__drag">⠿</div>
               <div className="srp-row__info">
                 <span className="srp-row__sym">{s.symbol.replace(/\.(NS|BO)$/i, '')}</span>
                 <span className="srp-row__name">{s.name}</span>

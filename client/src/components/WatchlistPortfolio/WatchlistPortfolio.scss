@@ -74,6 +74,13 @@
     color: var(--text3);
     flex-shrink: 0;
   }
+
+  &__hint {
+    font-size: 10.5px;
+    color: var(--text3);
+    margin-left: 4px;
+    font-style: italic;
+  }
 }
 
 .wl-sort-chip {
@@ -99,12 +106,13 @@
   }
 }
 
-/* ── Watchlist rows ────────────────────────────────────────────────────────── */
+/* ── Watchlist list container ──────────────────────────────────────────────── */
 .wl-list {
   display: flex;
   flex-direction: column;
 }
 
+/* ── Row ───────────────────────────────────────────────────────────────────── */
 .wl-row {
   display: flex;
   align-items: center;
@@ -113,54 +121,71 @@
   cursor: pointer;
   border-left: 2px solid transparent;
   border-bottom: 1px solid var(--border);
-  transition: background 0.1s;
+  transition: background 0.1s, opacity 0.15s;
+  position: relative;
 
   &:last-child { border-bottom: none; }
 
   &:hover {
     background: rgba(255, 255, 255, 0.025);
-
-    .wl-row__rm    { opacity: 1; }
-    .wl-row__order { opacity: 1; }
+    .wl-row__rm         { opacity: 1; }
+    .wl-row__drag-handle { opacity: 0.6; }
   }
 
+  /* Active selection */
   &--active {
     background: var(--accent-glow);
     border-left-color: var(--accent);
-
     .wl-row__symbol { color: var(--accent); }
   }
 
-  /* ── Reorder buttons ───────────────────────────────────────────────────── */
-  &__order {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    opacity: 0;
-    transition: opacity 0.12s;
+  /* Item being dragged */
+  &--dragging {
+    opacity: 0.35;
+    background: var(--card2);
+  }
+
+  /* Drop indicator — top edge */
+  &--drop-top::before {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: 0; right: 0;
+    height: 2px;
+    background: var(--accent);
+    border-radius: 1px;
+    z-index: 2;
+  }
+
+  /* Drop indicator — bottom edge */
+  &--drop-bottom::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0; right: 0;
+    height: 2px;
+    background: var(--accent);
+    border-radius: 1px;
+    z-index: 2;
+  }
+
+  /* ── Drag handle ─────────────────────────────────────────────────────────── */
+  &__drag-handle {
+    width: 14px;
+    height: 20px;
     flex-shrink: 0;
-  }
-
-  &__mv {
-    width: 20px;
-    height: 18px;
-    font-size: 9px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 3px;
     color: var(--text3);
-    transition: background 0.1s, color 0.1s;
+    opacity: 0.3;
+    cursor: grab;
+    transition: opacity 0.12s, color 0.12s;
 
-    &:hover:not(:disabled) {
-      background: var(--accent-dim);
-      color: var(--accent);
-    }
-
-    &:disabled { opacity: 0.2; cursor: default; }
+    &:active { cursor: grabbing; }
   }
 
-  /* ── Stock info ────────────────────────────────────────────────────────── */
+  &[draggable='true'] { cursor: grab; }
+  &[draggable='true']:active { cursor: grabbing; }
+
+  /* ── Stock info ──────────────────────────────────────────────────────────── */
   &__info {
     flex: 1;
     min-width: 0;
@@ -186,7 +211,7 @@
     margin-top: 2px;
   }
 
-  /* ── Price area ────────────────────────────────────────────────────────── */
+  /* ── Price area ──────────────────────────────────────────────────────────── */
   &__right {
     display: flex;
     align-items: center;
@@ -246,10 +271,8 @@
   .wl-row {
     padding: 14px 14px;
     gap: 8px;
-
-    /* Always show reorder handles on mobile (no hover) */
-    &__order { opacity: 1; }
-    &__rm     { opacity: 0.45; }
+    &__rm           { opacity: 0.45; }
+    &__drag-handle  { opacity: 0.5; }
   }
 
   .wl-row__symbol { font-size: 14px; }
@@ -257,13 +280,14 @@
   .wl-row__price  { font-size: 14px; }
   .wl-row__chg    { font-size: 11.5px; }
 
-  .wl-sort-bar { padding: 8px 14px 6px; gap: 5px; }
-  .wl-sort-chip { padding: 3px 8px; font-size: 11px; }
+  .wl-sort-bar       { padding: 8px 14px 6px; gap: 5px; }
+  .wl-sort-chip      { padding: 3px 8px; font-size: 11px; }
+  .wl-sort-bar__hint { display: none; }
 
   .mylist__content { padding: 0; }
 }
 
 @media (max-width: 480px) {
   .wl-row__name { display: none; }
-  .wl-row { padding: 13px 12px; }
+  .wl-row       { padding: 13px 12px; }
 }

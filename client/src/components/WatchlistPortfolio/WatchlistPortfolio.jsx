@@ -9,7 +9,23 @@ function fmt(n) {
   return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function WatchlistRow({ stock, active, onPick, onRemove, onMoveUp, onMoveDown, canUp, canDown, quote, showReorder }) {
+/* ── Drag handle SVG ────────────────────────────────────────────────────────── */
+function DragHandle() {
+  return (
+    <svg className="wl-row__drag-handle" viewBox="0 0 16 24" fill="currentColor">
+      <circle cx="5" cy="5"  r="1.5"/><circle cx="11" cy="5"  r="1.5"/>
+      <circle cx="5" cy="12" r="1.5"/><circle cx="11" cy="12" r="1.5"/>
+      <circle cx="5" cy="19" r="1.5"/><circle cx="11" cy="19" r="1.5"/>
+    </svg>
+  );
+}
+
+/* ── Row ────────────────────────────────────────────────────────────────────── */
+function WatchlistRow({
+  stock, active, onPick, onRemove, quote,
+  draggable, isDragging, isDropTarget, dropEdge,
+  onDragStart, onDragEnter, onDragLeave, onDragOver, onDrop, onDragEnd,
+}) {
   const prevPriceRef = useRef(null);
   const [flash, setFlash] = useState('');
 
@@ -26,14 +42,26 @@ function WatchlistRow({ stock, active, onPick, onRemove, onMoveUp, onMoveDown, c
 
   const up = (quote?.change_pct ?? 0) >= 0;
 
+  const cls = [
+    'wl-row',
+    active       ? 'wl-row--active'      : '',
+    isDragging   ? 'wl-row--dragging'    : '',
+    isDropTarget ? `wl-row--drop-${dropEdge}` : '',
+  ].filter(Boolean).join(' ');
+
   return (
-    <div className={`wl-row ${active ? 'wl-row--active' : ''}`} onClick={onPick}>
-      {showReorder && (
-        <div className="wl-row__order" onClick={e => e.stopPropagation()}>
-          <button className="wl-row__mv" disabled={!canUp} onClick={onMoveUp} title="Move up">▲</button>
-          <button className="wl-row__mv" disabled={!canDown} onClick={onMoveDown} title="Move down">▼</button>
-        </div>
-      )}
+    <div
+      className={cls}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
+      onClick={onPick}
+    >
+      {draggable && <DragHandle />}
 
       <div className="wl-row__info">
         <span className="wl-row__symbol">{stock.symbol.replace(/\.(NS|BO)$/i, '')}</span>
@@ -42,14 +70,12 @@ function WatchlistRow({ stock, active, onPick, onRemove, onMoveUp, onMoveDown, c
 
       <div className="wl-row__right">
         {quote ? (
-          <>
-            <div className="wl-row__prices">
-              <span className={`wl-row__price ${flash}`}>₹{fmt(quote.price)}</span>
-              <span className={`wl-row__chg ${up ? 'up' : 'down'}`}>
-                {up ? '+' : ''}{quote.change_pct?.toFixed(2)}%
-              </span>
-            </div>
-          </>
+          <div className="wl-row__prices">
+            <span className={`wl-row__price ${flash}`}>₹{fmt(quote.price)}</span>
+            <span className={`wl-row__chg ${up ? 'up' : 'down'}`}>
+              {up ? '+' : ''}{quote.change_pct?.toFixed(2)}%
+            </span>
+          </div>
         ) : (
           <span className="skeleton" style={{ width: 72, height: 14, display: 'block', borderRadius: 4 }} />
         )}
@@ -63,39 +89,86 @@ function WatchlistRow({ stock, active, onPick, onRemove, onMoveUp, onMoveDown, c
   );
 }
 
+/* ── Sort options ───────────────────────────────────────────────────────────── */
 const SORT_OPTIONS = [
-  { key: 'manual',  label: '↕ Manual'  },
+  { key: 'manual',  label: '⠿ Drag'    },
   { key: 'name',    label: 'Name'      },
   { key: 'price',   label: 'Price'     },
   { key: 'change',  label: '% Change'  },
 ];
 
+/* ── Main component ─────────────────────────────────────────────────────────── */
 export default function WatchlistPortfolio() {
   const { state, dispatch } = useAppContext();
   const { remove } = useWatchlist();
   const { watchlist, quotes, currentSymbol } = state;
-  const [tab, setTab] = useState('watchlist');
+  const [tab, setTab]     = useState('watchlist');
   const [sortBy, setSortBy] = useState('manual');
+
+  /* Drag state */
+  const dragFromIdx = useRef(null);
+  const [dragOverIdx, setDragOverIdx] = useState(null);
+  const [dropEdge, setDropEdge]       = useState('top'); // 'top' | 'bottom'
 
   const pick = (symbol) => {
     dispatch({ type: 'SET_CURRENT_SYMBOL', payload: symbol });
     dispatch({ type: 'SET_VIEW', payload: 'stock' });
   };
 
-  const moveUp = (symbol) => dispatch({ type: 'MOVE_WATCHLIST_ITEM', payload: { symbol, direction: 'up' } });
-  const moveDn = (symbol) => dispatch({ type: 'MOVE_WATCHLIST_ITEM', payload: { symbol, direction: 'down' } });
-
   const sortedList = useMemo(() => {
     if (sortBy === 'manual') return watchlist;
     return [...watchlist].sort((a, b) => {
-      const qa = quotes[a.symbol];
-      const qb = quotes[b.symbol];
+      const qa = quotes[a.symbol], qb = quotes[b.symbol];
       if (sortBy === 'name')   return a.name.localeCompare(b.name);
       if (sortBy === 'price')  return (qb?.price ?? 0) - (qa?.price ?? 0);
       if (sortBy === 'change') return (qb?.change_pct ?? 0) - (qa?.change_pct ?? 0);
       return 0;
     });
   }, [watchlist, quotes, sortBy]);
+
+  /* ── Drag handlers ───────────────────────────────────────────────────────── */
+  function getEdge(e, el) {
+    const rect = el.getBoundingClientRect();
+    return (e.clientY - rect.top) < rect.height / 2 ? 'top' : 'bottom';
+  }
+
+  function handleDragStart(e, idx) {
+    dragFromIdx.current = idx;
+    e.dataTransfer.effectAllowed = 'move';
+    /* slightly delay so the ghost image looks right */
+    setTimeout(() => setDragOverIdx(idx), 0);
+  }
+
+  function handleDragOver(e, idx) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverIdx(idx);
+    setDropEdge(getEdge(e, e.currentTarget));
+  }
+
+  function handleDrop(e, toIdx) {
+    e.preventDefault();
+    const fromIdx = dragFromIdx.current;
+    if (fromIdx == null || fromIdx === toIdx) { reset(); return; }
+
+    /* If dropping on bottom half of a row, insert after it */
+    const edge = getEdge(e, e.currentTarget);
+    const adjustedTo = edge === 'bottom' && toIdx >= fromIdx
+      ? toIdx
+      : edge === 'bottom' && toIdx < fromIdx
+      ? toIdx + 1
+      : toIdx > fromIdx
+      ? toIdx - 1
+      : toIdx;
+
+    dispatch({ type: 'REORDER_WATCHLIST', payload: { fromIdx, toIdx: adjustedTo } });
+    reset();
+  }
+
+  function reset() {
+    dragFromIdx.current = null;
+    setDragOverIdx(null);
+  }
 
   return (
     <div className="mylist">
@@ -142,9 +215,15 @@ export default function WatchlistPortfolio() {
                     {opt.label}
                   </button>
                 ))}
+                {sortBy === 'manual' && (
+                  <span className="wl-sort-bar__hint">drag rows to reorder</span>
+                )}
               </div>
 
-              <div className="wl-list">
+              <div
+                className="wl-list"
+                onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) reset(); }}
+              >
                 {sortedList.map((stock, idx) => {
                   const origIdx = watchlist.findIndex(s => s.symbol === stock.symbol);
                   return (
@@ -153,13 +232,18 @@ export default function WatchlistPortfolio() {
                       stock={stock}
                       active={stock.symbol === currentSymbol}
                       quote={quotes[stock.symbol]}
-                      showReorder={sortBy === 'manual'}
-                      canUp={origIdx > 0}
-                      canDown={origIdx < watchlist.length - 1}
+                      draggable={sortBy === 'manual'}
+                      isDragging={dragFromIdx.current === origIdx}
+                      isDropTarget={dragOverIdx === idx && dragFromIdx.current !== origIdx}
+                      dropEdge={dropEdge}
                       onPick={() => pick(stock.symbol)}
                       onRemove={() => remove(stock.symbol)}
-                      onMoveUp={() => moveUp(stock.symbol)}
-                      onMoveDown={() => moveDn(stock.symbol)}
+                      onDragStart={e => handleDragStart(e, origIdx)}
+                      onDragEnter={e => e.preventDefault()}
+                      onDragLeave={() => {}}
+                      onDragOver={e => handleDragOver(e, idx)}
+                      onDrop={e => handleDrop(e, origIdx)}
+                      onDragEnd={reset}
                     />
                   );
                 })}

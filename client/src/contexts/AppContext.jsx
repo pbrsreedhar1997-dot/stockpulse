@@ -61,6 +61,14 @@ function reducer(state, action) {
       [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
       return { ...state, watchlist: next };
     }
+    case 'REORDER_WATCHLIST': {
+      const { fromIdx, toIdx } = action.payload;
+      if (fromIdx === toIdx) return state;
+      const next = [...state.watchlist];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, moved);
+      return { ...state, watchlist: next };
+    }
     case 'SET_CURRENT_SYMBOL':
       sessionStorage.setItem('sp_sym', action.payload || '');
       return { ...state, currentSymbol: action.payload };

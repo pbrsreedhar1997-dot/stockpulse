@@ -88,7 +88,7 @@
 
   &:hover {
     background: rgba(255,255,255,0.025);
-    .srp-row__order { opacity: 1; }
+    .srp-row__drag { opacity: 0.6; }
   }
 
   &--active {
@@ -97,28 +97,21 @@
     .srp-row__sym { color: var(--accent); }
   }
 
-  &__order {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    opacity: 0;
-    transition: opacity 0.12s;
-    flex-shrink: 0;
+  &--dragging { opacity: 0.3; }
+
+  &--drop {
+    border-top: 2px solid var(--accent);
   }
 
-  &__mv {
-    width: 14px;
-    height: 14px;
-    font-size: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 2px;
+  &__drag {
+    font-size: 13px;
     color: var(--text3);
-    transition: background 0.1s, color 0.1s;
-
-    &:hover:not(:disabled) { background: var(--accent-dim); color: var(--accent); }
-    &:disabled { opacity: 0.2; cursor: default; }
+    opacity: 0.25;
+    cursor: grab;
+    flex-shrink: 0;
+    transition: opacity 0.12s;
+    user-select: none;
+    &:active { cursor: grabbing; }
   }
 
   &__info {
