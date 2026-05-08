@@ -48,11 +48,12 @@
 /* ── Summary bar ─────────────────────────────────────────────────────────────── */
 .pf-summary {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 10px;
   margin-bottom: 20px;
 
-  @media (max-width: 680px) { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 860px) { grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 520px) { grid-template-columns: repeat(2, 1fr); }
 }
 
 .pf-summary__card {
@@ -83,6 +84,20 @@
   &--pnl, &--pct {
     &.up   strong { color: var(--up);   }
     &.down strong { color: var(--down); }
+  }
+
+  &--today {
+    &.up   strong { color: var(--up);   }
+    &.down strong { color: var(--down); }
+    em {
+      display: block;
+      font-style: normal;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      margin-top: 1px;
+      &.up   { color: var(--up);   }
+      &.down { color: var(--down); }
+    }
   }
 }
 

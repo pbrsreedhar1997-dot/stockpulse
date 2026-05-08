@@ -385,6 +385,15 @@ function HoldingCard({ h, onEdit, onRemove, onHistory }) {
             <em> ({up ? '+' : ''}{fmt(h.pnl_pct)}%)</em>
           </strong>
         </div>
+        {h.today_pnl != null && (
+          <div className="pf-card__kv">
+            <span>Today</span>
+            <strong className={h.today_pnl_pct >= 0 ? 'up' : 'down'}>
+              {h.today_pnl_pct >= 0 ? '+' : ''}{fmt(h.today_pnl_pct)}%
+              <em> ({h.today_pnl >= 0 ? '+' : ''}₹{fmt(h.today_pnl)})</em>
+            </strong>
+          </div>
+        )}
         {h.pe_ratio != null && (
           <div className="pf-card__kv"><span>P/E</span><strong>{fmt(h.pe_ratio, 1)}</strong></div>
         )}
@@ -495,6 +504,15 @@ export default function Portfolio() {
             <span>Return</span>
             <strong>{totalUp ? '+' : ''}{fmt(summary.total_pnl_pct)}%</strong>
           </div>
+          {summary.total_today_pnl != null && (
+            <div className={`pf-summary__card pf-summary__card--today ${(summary.total_today_pnl ?? 0) >= 0 ? 'up' : 'down'}`}>
+              <span>Today's P&amp;L</span>
+              <strong>{(summary.total_today_pnl ?? 0) >= 0 ? '+' : ''}₹{fmt(summary.total_today_pnl)}</strong>
+              <em className={(summary.total_today_pct ?? 0) >= 0 ? 'up' : 'down'}>
+                {(summary.total_today_pct ?? 0) >= 0 ? '+' : ''}{fmt(summary.total_today_pct)}%
+              </em>
+            </div>
+          )}
         </div>
       )}
 

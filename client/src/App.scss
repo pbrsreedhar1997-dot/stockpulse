@@ -193,6 +193,12 @@
     white-space: nowrap;
     user-select: none;
     flex-shrink: 0;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    padding: 3px 6px 3px 2px;
+    margin-left: -2px;
+    transition: background 0.13s;
+    &:hover { background: var(--card); }
 
     span {
       font-size: 15px;
@@ -332,6 +338,93 @@
   }
 
   &__name { white-space: nowrap; }
+}
+
+/* ── View transition ───────────────────────────────────────────────────────── */
+@keyframes view-slide-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}
+
+.view-enter {
+  animation: view-slide-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ── Market Pulse logo popover ─────────────────────────────────────────────── */
+.market-pulse {
+  position: relative;
+  flex-shrink: 0;
+
+  .header__logo { cursor: pointer; }
+
+  &__panel {
+    position: absolute;
+    top: calc(100% + 10px);
+    left: 0;
+    min-width: 240px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.4);
+    z-index: 500;
+    overflow: hidden;
+    animation: fadeIn 0.14s ease-out;
+  }
+
+  &__head {
+    padding: 10px 14px 8px;
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.1px;
+    color: var(--text3);
+    border-bottom: 1px solid var(--border);
+  }
+
+  &__loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+  }
+
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    &:last-child { border-bottom: none; }
+  }
+
+  &__lbl {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text3);
+    flex: 1;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  &__price {
+    font-size: 12px;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text);
+    letter-spacing: -0.3px;
+  }
+
+  &__chg {
+    font-size: 11px;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    min-width: 54px;
+    text-align: right;
+    &.up   { color: var(--up);   }
+    &.down { color: var(--down); }
+  }
+
+  &__na { font-size: 12px; color: var(--text3); margin-left: auto; }
 }
 
 /* ── User menu ─────────────────────────────────────────────────────────────── */

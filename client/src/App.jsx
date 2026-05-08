@@ -123,6 +123,74 @@ function UserMenu({ user, onLogout }) {
   );
 }
 
+/* ── Market Pulse logo popover ─────────────────────────────────────────────── */
+function MarketPulse() {
+  const [open, setOpen]       = useState(false);
+  const [indices, setIndices] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const ref = useRef(null);
+
+  const INDICES = [
+    { symbol: '^NSEI',    label: 'NIFTY 50'   },
+    { symbol: '^BSESN',   label: 'SENSEX'     },
+    { symbol: '^NSEBANK', label: 'BANK NIFTY' },
+  ];
+
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    Promise.all(
+      INDICES.map(idx =>
+        fetch(`/api/quote?symbol=${encodeURIComponent(idx.symbol)}`)
+          .then(r => r.json())
+          .then(res => ({ ...idx, q: res?.data ?? res }))
+          .catch(() => ({ ...idx, q: null }))
+      )
+    ).then(res => { setIndices(res); setLoading(false); });
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div className="market-pulse" ref={ref}>
+      <div className="header__logo" onClick={() => setOpen(o => !o)} title="Market overview">
+        <div className="header__logo-mark"><ChartIcon /></div>
+        <span>StockPulse</span>
+      </div>
+      {open && (
+        <div className="market-pulse__panel">
+          <div className="market-pulse__head">Market Overview</div>
+          {loading ? (
+            <div className="market-pulse__loading"><span className="spinner" /></div>
+          ) : indices.map(({ label, q }) => {
+            const up = (q?.change_pct ?? 0) >= 0;
+            return (
+              <div key={label} className="market-pulse__row">
+                <span className="market-pulse__lbl">{label}</span>
+                {q?.price != null ? (
+                  <>
+                    <span className="market-pulse__price">
+                      {q.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                    <span className={`market-pulse__chg ${up ? 'up' : 'down'}`}>
+                      {up ? '+' : ''}{q.change_pct?.toFixed(2)}%
+                    </span>
+                  </>
+                ) : <span className="market-pulse__na">—</span>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Right panel watchlist (desktop only) ──────────────────────────────────── */
 function StockRightPanel() {
   const { state, dispatch } = useAppContext();
@@ -239,6 +307,15 @@ export default function App() {
   usePushSubscription();
 
   const [mobSearchOpen, setMobSearchOpen] = useState(false);
+  const [animView, setAnimView]           = useState(state.view);
+  const prevView = useRef(state.view);
+
+  useEffect(() => {
+    if (state.view !== prevView.current) {
+      prevView.current = state.view;
+      setAnimView(state.view);
+    }
+  }, [state.view]);
 
   const symbols        = watchlist.map(s => s.symbol);
   const wakeRetries    = useRef(0);
@@ -307,10 +384,7 @@ export default function App() {
     <div className="app">
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header className="header">
-        <div className="header__logo">
-          <div className="header__logo-mark"><ChartIcon /></div>
-          <span>StockPulse</span>
-        </div>
+        <MarketPulse />
 
         {/* Desktop search */}
         <div className="header__search-wrap header__search-wrap--desktop">
@@ -366,35 +440,44 @@ export default function App() {
       {/* ── Body ───────────────────────────────────────────────────────────── */}
       <div className="body">
         <main className="main-content">
-          {state.view === 'screener' && <Screener />}
-          {state.view === 'mylist'   && <WatchlistPortfolio />}
-          {state.view === 'chat'     && <Chat />}
-          {state.view === 'stock' && (
-            state.currentSymbol
-              ? (
-                <div className="stock-layout">
-                  <div className="stock-layout__main">
-                    <StockDetail symbol={state.currentSymbol} />
-                  </div>
-                  <StockRightPanel />
+
+          {/* Always mounted — display:none preserves scroll + component state */}
+          <div style={{ display: state.view === 'screener' ? 'flex' : 'none', height: '100%', flexDirection: 'column' }}
+               className={animView === 'screener' ? 'view-enter' : ''}>
+            <Screener />
+          </div>
+
+          <div style={{ display: state.view === 'mylist' ? 'flex' : 'none', height: '100%', flexDirection: 'column' }}
+               className={animView === 'mylist' ? 'view-enter' : ''}>
+            <WatchlistPortfolio />
+          </div>
+
+          <div style={{ display: state.view === 'chat' ? 'flex' : 'none', height: '100%', flexDirection: 'column' }}
+               className={animView === 'chat' ? 'view-enter' : ''}>
+            <Chat />
+          </div>
+
+          <div style={{ display: state.view === 'stock' ? 'flex' : 'none', height: '100%', flexDirection: 'column' }}
+               className={animView === 'stock' ? 'view-enter' : ''}>
+            {state.currentSymbol ? (
+              <div className="stock-layout" style={{ flex: 1, overflow: 'hidden' }}>
+                <div className="stock-layout__main">
+                  <StockDetail symbol={state.currentSymbol} />
                 </div>
-              )
-              : (
-                <div className="empty-state">
-                  <img
-                    className="empty-state__anime"
-                    src="https://media.giphy.com/media/JkVnfE54QdOMQBxmHg/giphy.gif"
-                    alt=""
-                    loading="lazy"
-                  />
-                  <div className="empty-state__title">Welcome to StockPulse</div>
-                  <div className="empty-state__sub">
-                    Search for a stock or select one from your watchlist to get started.
-                  </div>
-                  <div className="empty-state__hint">Tip: press <kbd>⌘K</kbd> to search instantly</div>
+                <StockRightPanel />
+              </div>
+            ) : (
+              <div className="empty-state">
+                <div className="empty-state__icon"><EmptyIcon /></div>
+                <div className="empty-state__title">Welcome to StockPulse</div>
+                <div className="empty-state__sub">
+                  Search for a stock or select one from your watchlist to get started.
                 </div>
-              )
-          )}
+                <div className="empty-state__hint">Tip: press <kbd>⌘K</kbd> to search instantly</div>
+              </div>
+            )}
+          </div>
+
         </main>
       </div>
 

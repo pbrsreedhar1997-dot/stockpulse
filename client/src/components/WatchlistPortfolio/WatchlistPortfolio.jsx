@@ -115,6 +115,21 @@ export default function WatchlistPortfolio() {
     dispatch({ type: 'SET_VIEW', payload: 'stock' });
   };
 
+  const todaySummary = useMemo(() => {
+    if (!watchlist.length) return null;
+    let up = 0, down = 0, totalChg = 0, count = 0;
+    watchlist.forEach(s => {
+      const q = quotes[s.symbol];
+      if (q?.change_pct != null) {
+        totalChg += q.change_pct;
+        count++;
+        if (q.change_pct >= 0) up++; else down++;
+      }
+    });
+    if (!count) return null;
+    return { up, down, avg: totalChg / count };
+  }, [watchlist, quotes]);
+
   const sortedList = useMemo(() => {
     if (sortBy === 'manual') return watchlist;
     return [...watchlist].sort((a, b) => {
@@ -189,6 +204,17 @@ export default function WatchlistPortfolio() {
       </div>
 
       <div className="tab-content mylist__content">
+        {tab === 'watchlist' && todaySummary && (
+          <div className="wl-today-bar">
+            <span className="wl-today-bar__label">Today</span>
+            <span className="wl-today-bar__up">▲ {todaySummary.up}</span>
+            <span className="wl-today-bar__down">▼ {todaySummary.down}</span>
+            <span className={`wl-today-bar__avg ${todaySummary.avg >= 0 ? 'up' : 'down'}`}>
+              Avg {todaySummary.avg >= 0 ? '+' : ''}{todaySummary.avg.toFixed(2)}%
+            </span>
+          </div>
+        )}
+
         {tab === 'watchlist' && (
           watchlist.length === 0 ? (
             <div className="mylist__empty">

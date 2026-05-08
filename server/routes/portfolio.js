@@ -88,6 +88,9 @@ async function enrichHolding(h) {
   const pnlPct   = invested ? Math.round(((curVal - invested) / invested) * 10000) / 100 : 0;
   const rec      = getRecommendation(avgPrice, price, pe, q?.week52_high, q?.week52_low);
   const stopLoss = h.stop_loss ? parseFloat(h.stop_loss) : rec?.stop_loss ?? null;
+  const changePct = q?.change_pct ?? 0;
+  const todayChangeAmt = price && changePct ? price * (changePct / 100) / (1 + changePct / 100) : 0;
+  const todayPnl = Math.round(shares * todayChangeAmt * 100) / 100;
 
   return {
     id:            h.id,
@@ -100,6 +103,8 @@ async function enrichHolding(h) {
     current_value: curVal,
     pnl,
     pnl_pct:       pnlPct,
+    today_pnl:     todayPnl,
+    today_pnl_pct: Math.round(changePct * 100) / 100,
     pe_ratio:      pe,
     week52_high:   q?.week52_high ?? null,
     week52_low:    q?.week52_low  ?? null,
@@ -120,11 +125,15 @@ router.get('/', async (req, res) => {
     );
 
     const enriched = await Promise.all(rows.map(enrichHolding));
-    const totalInvested = enriched.reduce((s, h) => s + h.invested,      0);
-    const totalValue    = enriched.reduce((s, h) => s + h.current_value, 0);
-    const totalPnl      = Math.round((totalValue - totalInvested) * 100) / 100;
-    const totalPnlPct   = totalInvested
+    const totalInvested  = enriched.reduce((s, h) => s + h.invested,      0);
+    const totalValue     = enriched.reduce((s, h) => s + h.current_value, 0);
+    const totalTodayPnl  = enriched.reduce((s, h) => s + (h.today_pnl || 0), 0);
+    const totalPnl       = Math.round((totalValue - totalInvested) * 100) / 100;
+    const totalPnlPct    = totalInvested
       ? Math.round(((totalValue - totalInvested) / totalInvested) * 10000) / 100
+      : 0;
+    const totalTodayPct  = totalValue > 0
+      ? Math.round((totalTodayPnl / (totalValue - totalTodayPnl)) * 10000) / 100
       : 0;
 
     res.json({
@@ -132,10 +141,12 @@ router.get('/', async (req, res) => {
       data: {
         holdings: enriched,
         summary: {
-          total_invested: Math.round(totalInvested * 100) / 100,
-          total_value:    Math.round(totalValue * 100) / 100,
-          total_pnl:      totalPnl,
-          total_pnl_pct:  totalPnlPct,
+          total_invested:  Math.round(totalInvested * 100) / 100,
+          total_value:     Math.round(totalValue * 100) / 100,
+          total_pnl:       totalPnl,
+          total_pnl_pct:   totalPnlPct,
+          total_today_pnl: Math.round(totalTodayPnl * 100) / 100,
+          total_today_pct: totalTodayPct,
           count:          enriched.length,
         },
       },

@@ -62,12 +62,18 @@ export default function Chat() {
       <div className="chat__messages">
         {messages.length === 0 ? (
           <div className="chat__welcome">
-            <img
-              className="chat__welcome-anime"
-              src="https://media.giphy.com/media/mC7M5n4RR3iN2qBoYi/giphy.gif"
-              alt=""
-              loading="lazy"
-            />
+            <div className="chat__welcome-icon">
+              <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="4" y="4" width="40" height="40" rx="8" stroke="none" fill="var(--accent-dim)"/>
+                <polyline points="10 34 18 22 24 28 32 16 38 20" strokeWidth="2.5" stroke="var(--accent)"/>
+                <circle cx="10" cy="34" r="2" fill="var(--accent)" stroke="none"/>
+                <circle cx="18" cy="22" r="2" fill="var(--accent)" stroke="none"/>
+                <circle cx="24" cy="28" r="2" fill="var(--accent)" stroke="none"/>
+                <circle cx="32" cy="16" r="2" fill="var(--accent)" stroke="none"/>
+                <circle cx="38" cy="20" r="2" fill="var(--accent)" stroke="none"/>
+                <path d="M32 34h6M32 38h4" strokeWidth="2" stroke="var(--text3)"/>
+              </svg>
+            </div>
             <h3>AI Stock Analyst</h3>
             <p>
               Just mention a stock by name or ticker and I'll pull live price, technicals (RSI, MACD, Bollinger Bands), fundamentals, and news sentiment automatically.
@@ -95,11 +101,9 @@ export default function Chat() {
                 {streaming && i === messages.length - 1 && msg.role === 'assistant' && (
                   <span className="message__cursor">
                     {!msg.content && (
-                      <img
-                        className="message__thinking-gif"
-                        src="https://media.giphy.com/media/dNgK7Ws7y176U/giphy.gif"
-                        alt="thinking…"
-                      />
+                      <span className="message__thinking-dots">
+                        <span /><span /><span />
+                      </span>
                     )}
                   </span>
                 )}
