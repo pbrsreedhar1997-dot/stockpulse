@@ -2,12 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
 import { usePriceAlert } from '../../hooks/usePriceAlert';
 import { playSaveTone, playDismissTone } from '../../utils/audio';
+import { fmtPrice } from '../../utils/currency';
 import './PriceAlertPanel.scss';
-
-function fmt(n) {
-  if (n == null) return '—';
-  return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
 
 function timeAgo(ts) {
   const diff = Date.now() - ts;
@@ -19,7 +15,7 @@ function timeAgo(ts) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-export default function PriceAlertPanel({ symbol, name, currentPrice, onClose }) {
+export default function PriceAlertPanel({ symbol, name, currentPrice, currency, onClose }) {
   const { state, dispatch } = useAppContext();
   const { requestPermission } = usePriceAlert();
 
@@ -31,6 +27,9 @@ export default function PriceAlertPanel({ symbol, name, currentPrice, onClose })
 
   const sym = symbol?.replace(/\.(NS|BO)$/i, '');
   const symbolAlerts = state.alerts.filter(a => a.symbol === symbol);
+  // Helper: resolve currency for any alert symbol (fall back to suffix detection)
+  const alertCurrency = (sym) =>
+    state.quotes[sym]?.currency || (sym?.match(/\.(NS|BO)$/i) ? 'INR' : 'USD');
 
   // Pre-fill sensible defaults based on direction
   useEffect(() => {
@@ -43,8 +42,8 @@ export default function PriceAlertPanel({ symbol, name, currentPrice, onClose })
     e.preventDefault();
     const p = parseFloat(price);
     if (!p || p <= 0) { setError('Enter a valid price'); return; }
-    if (type === 'above' && p <= currentPrice) { setError(`Must be above current ₹${fmt(currentPrice)}`); return; }
-    if (type === 'below' && p >= currentPrice) { setError(`Must be below current ₹${fmt(currentPrice)}`); return; }
+    if (type === 'above' && p <= currentPrice) { setError(`Must be above current ${fmtPrice(currentPrice, currency)}`); return; }
+    if (type === 'below' && p >= currentPrice) { setError(`Must be below current ${fmtPrice(currentPrice, currency)}`); return; }
 
     const granted = await requestPermission();
     if (!granted) setPermDenied(true);
@@ -76,7 +75,7 @@ export default function PriceAlertPanel({ symbol, name, currentPrice, onClose })
         <div className="ap-panel__hdr">
           <div>
             <div className="ap-panel__title">🔔 Price Alerts</div>
-            <div className="ap-panel__sym">{sym} · ₹{fmt(currentPrice)}</div>
+            <div className="ap-panel__sym">{sym} · {fmtPrice(currentPrice, currency)}</div>
           </div>
           <button className="ap-panel__close" onClick={onClose}>×</button>
         </div>
@@ -119,7 +118,7 @@ export default function PriceAlertPanel({ symbol, name, currentPrice, onClose })
               min="0.01"
               value={price}
               onChange={e => { setPrice(e.target.value); setError(''); }}
-              placeholder="Target price (₹)"
+              placeholder="Target price"
               required
               autoFocus
             />
@@ -156,7 +155,7 @@ export default function PriceAlertPanel({ symbol, name, currentPrice, onClose })
               <div key={a.id} className={`ap-alert-row ${a.triggered ? 'ap-alert-row--triggered' : ''}`}>
                 <div className="ap-alert-row__left">
                   <span className={`ap-alert-row__badge ${a.type === 'above' ? 'badge--up' : 'badge--down'}`}>
-                    {a.type === 'above' ? '▲' : '▼'} ₹{fmt(a.targetPrice)}
+                    {a.type === 'above' ? '▲' : '▼'} {fmtPrice(a.targetPrice, alertCurrency(a.symbol))}
                   </span>
                   {a.note && <span className="ap-alert-row__note">{a.note}</span>}
                   <span className="ap-alert-row__time">{timeAgo(a.createdAt)}</span>
@@ -183,7 +182,7 @@ export default function PriceAlertPanel({ symbol, name, currentPrice, onClose })
               <div key={a.id} className="ap-other__row">
                 <span className="ap-other__sym">{a.symbol.replace(/\.(NS|BO)$/i, '')}</span>
                 <span className={`ap-other__dir ${a.type === 'above' ? 'up' : 'down'}`}>
-                  {a.type === 'above' ? '▲' : '▼'} ₹{fmt(a.targetPrice)}
+                  {a.type === 'above' ? '▲' : '▼'} {fmtPrice(a.targetPrice, alertCurrency(a.symbol))}
                 </span>
                 {a.triggered && <span className="ap-other__hit">✓</span>}
                 <button className="ap-alert-row__rm" onClick={() => removeAlert(a.id)}>×</button>

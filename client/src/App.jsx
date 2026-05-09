@@ -15,6 +15,7 @@ import { usePortfolio } from './hooks/usePortfolio';
 import { useStopLossAlert } from './hooks/useStopLossAlert';
 import { usePriceAlert } from './hooks/usePriceAlert';
 import { usePushSubscription } from './hooks/usePushSubscription';
+import { fmtPrice } from './utils/currency';
 import './App.scss';
 
 const PING_INTERVAL_MS = 30000;
@@ -242,7 +243,7 @@ function StockRightPanel() {
               </div>
               {q ? (
                 <div className="srp-row__price">
-                  <span className="srp-row__val">₹{q.price?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  <span className="srp-row__val">{fmtPrice(q.price, q.currency)}</span>
                   <span className={`srp-row__chg ${up ? 'up' : 'down'}`}>
                     {up ? '+' : ''}{q.change_pct?.toFixed(2)}%
                   </span>

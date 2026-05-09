@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { useAppContext } from '../../../contexts/AppContext';
+import { fmtPrice } from '../../../utils/currency';
 import './tabs.scss';
 
 function fmt(n, dec = 2) {
@@ -141,6 +142,7 @@ export default function InsightsTab({ symbol }) {
   const q = state.quotes[symbol];
   const f = state.financials[symbol];
   const p = state.profiles[symbol];
+  const cur = q?.currency || (symbol?.match(/\.(NS|BO)$/i) ? 'INR' : 'USD');
 
   const scores  = useMemo(() => calcScores(q, f),           [q?.price, f?.pe_ratio, f?.gross_margin, f?.return_on_equity, f?.beta, f?.debt_to_equity]);
   const signals = useMemo(() => buildSignals(q, f, p),      [q?.price, f, p?.sector]);
@@ -162,9 +164,11 @@ export default function InsightsTab({ symbol }) {
 
   /* Quick text summary */
   const peStr    = f.pe_ratio  != null ? `P/E ${f.pe_ratio.toFixed(1)}x` : null;
-  const epsStr   = f.eps       != null ? `EPS ₹${f.eps.toFixed(2)}` : null;
+  const epsStr   = f.eps       != null ? `EPS ${fmtPrice(f.eps, cur)}` : null;
   const betaStr  = f.beta      != null ? `Beta ${f.beta.toFixed(2)}` : null;
-  const w52Str   = f.week52_high && f.week52_low ? `52W range ₹${fmt(f.week52_low)} – ₹${fmt(f.week52_high)}` : null;
+  const w52Str   = f.week52_high && f.week52_low
+    ? `52W range ${fmtPrice(f.week52_low, cur)} – ${fmtPrice(f.week52_high, cur)}`
+    : null;
 
   return (
     <div className="tab-panel">

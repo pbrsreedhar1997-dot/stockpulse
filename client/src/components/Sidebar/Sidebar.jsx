@@ -1,12 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
 import { useWatchlist } from '../../hooks/useWatchlist';
+import { fmtPrice } from '../../utils/currency';
 import './Sidebar.scss';
-
-function fmt(n) {
-  if (!n && n !== 0) return '—';
-  return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
 
 function StockRow({ stock, active, onPick, onRemove, quote }) {
   const prevPriceRef = useRef(null);
@@ -41,7 +37,7 @@ function StockRow({ stock, active, onPick, onRemove, quote }) {
       <div className="stock-row__price">
         {quote ? (
           <>
-            <span className={`stock-row__value ${flash}`}>₹{fmt(quote.price)}</span>
+            <span className={`stock-row__value ${flash}`}>{fmtPrice(quote.price, quote.currency)}</span>
             <span className={`stock-row__change ${up ? 'up' : 'down'}`}>
               {up ? '+' : ''}{quote.change_pct?.toFixed(2)}%
             </span>

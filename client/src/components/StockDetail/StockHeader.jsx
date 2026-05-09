@@ -3,19 +3,12 @@ import { useAppContext } from '../../contexts/AppContext';
 import { useWatchlist } from '../../hooks/useWatchlist';
 import { usePortfolio } from '../../hooks/usePortfolio';
 import PriceAlertPanel from '../PriceAlert/PriceAlertPanel';
+import { fmtPrice, fmtMktCap } from '../../utils/currency';
 import './StockHeader.scss';
 
 function fmt(n, dec = 2) {
   if (n == null) return '—';
   return n.toLocaleString('en-IN', { minimumFractionDigits: dec, maximumFractionDigits: dec });
-}
-
-function fmtCr(n) {
-  if (!n) return '—';
-  const cr = n / 1e7;
-  if (cr >= 1e5) return `₹${(cr / 1e5).toFixed(2)}L Cr`;
-  if (cr >= 1e3) return `₹${(cr / 1e3).toFixed(2)}K Cr`;
-  return `₹${cr.toFixed(0)} Cr`;
 }
 
 /* Live NSE market hours: Mon–Fri 09:15–15:30 IST */
@@ -42,7 +35,7 @@ function useMarketStatus() {
 }
 
 /* Inline holding modal */
-function QuickAddModal({ symbol, name, holding, onClose, onSave }) {
+function QuickAddModal({ symbol, name, holding, currency, onClose, onSave }) {
   const [shares,   setShares]   = useState(holding?.shares   ?? '');
   const [avgPrice, setAvgPrice] = useState(holding?.avg_price ?? '');
   const [saving,   setSaving]   = useState(false);
@@ -76,13 +69,13 @@ function QuickAddModal({ symbol, name, holding, onClose, onSave }) {
               value={shares} onChange={e => setShares(e.target.value)} required autoFocus />
           </label>
           <label>
-            <span>Avg Buy Price (₹)</span>
+            <span>Avg Buy Price</span>
             <input type="number" step="0.01" min="0.01" placeholder="e.g. 1350.00"
               value={avgPrice} onChange={e => setAvgPrice(e.target.value)} required />
           </label>
           {shares && avgPrice && parseFloat(shares) > 0 && parseFloat(avgPrice) > 0 && (
             <div className="sh-modal__preview">
-              Invested: <strong>₹{(parseFloat(shares) * parseFloat(avgPrice)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+              Invested: <strong>{fmtPrice(parseFloat(shares) * parseFloat(avgPrice), currency)}</strong>
             </div>
           )}
           {error && <div className="sh-modal__error">{error}</div>}
@@ -147,17 +140,20 @@ export default function StockHeader({ symbol }) {
   const eps   = f?.eps         ?? q?.eps;
   const mktCp = q?.mkt_cap || f?.market_cap;
 
+  const cur = q?.currency || (symbol.match(/\.(NS|BO)$/i) ? 'INR' : 'USD');
+  const isINR = cur === 'INR';
+
   const stats = [
-    { label: 'Open',       value: q?.open       ? `₹${fmt(q.open)}`       : '—' },
-    { label: 'High',       value: q?.high       ? `₹${fmt(q.high)}`       : '—', cls: 'up' },
-    { label: 'Low',        value: q?.low        ? `₹${fmt(q.low)}`        : '—', cls: 'down' },
-    { label: 'Prev Close', value: q?.prev_close ? `₹${fmt(q.prev_close)}` : '—' },
-    { label: 'Volume',     value: q?.volume     ? `${(q.volume / 1e5).toFixed(2)}L` : '—' },
-    { label: 'Mkt Cap',    value: fmtCr(mktCp) },
-    { label: '52W High',   value: w52h ? `₹${fmt(w52h)}` : '—', cls: 'up' },
-    { label: '52W Low',    value: w52l ? `₹${fmt(w52l)}` : '—', cls: 'down' },
+    { label: 'Open',       value: q?.open       ? fmtPrice(q.open,       cur) : '—' },
+    { label: 'High',       value: q?.high       ? fmtPrice(q.high,       cur) : '—', cls: 'up' },
+    { label: 'Low',        value: q?.low        ? fmtPrice(q.low,        cur) : '—', cls: 'down' },
+    { label: 'Prev Close', value: q?.prev_close ? fmtPrice(q.prev_close, cur) : '—' },
+    { label: 'Volume',     value: q?.volume     ? (isINR ? `${(q.volume / 1e5).toFixed(2)}L` : `${(q.volume / 1e6).toFixed(2)}M`) : '—' },
+    { label: 'Mkt Cap',    value: fmtMktCap(mktCp, cur) },
+    { label: '52W High',   value: w52h ? fmtPrice(w52h, cur) : '—', cls: 'up' },
+    { label: '52W Low',    value: w52l ? fmtPrice(w52l, cur) : '—', cls: 'down' },
     { label: 'P/E',        value: pe  != null ? `${fmt(pe)}x` : '—', cls: pe < 15 ? 'up' : pe > 45 ? 'down' : '' },
-    { label: 'EPS',        value: eps != null ? `₹${fmt(eps)}` : '—', cls: eps > 0 ? 'up' : eps < 0 ? 'down' : '' },
+    { label: 'EPS',        value: eps != null ? fmtPrice(eps, cur) : '—', cls: eps > 0 ? 'up' : eps < 0 ? 'down' : '' },
   ];
 
   const mktStatusMeta = {
@@ -194,7 +190,7 @@ export default function StockHeader({ symbol }) {
         <div className="stock-header__price-block">
           {q ? (
             <>
-              <div className={`stock-header__price ${flash}`}>₹{fmt(q.price)}</div>
+              <div className={`stock-header__price ${flash}`}>{fmtPrice(q.price, cur)}</div>
               <div className={`stock-header__change ${up ? 'up' : 'down'}`}>
                 {up ? '▲' : '▼'}&nbsp;
                 {up ? '+' : ''}{fmt(q.change)}&nbsp;
@@ -246,10 +242,10 @@ export default function StockHeader({ symbol }) {
         {holding ? (
           <div className="sh-holding-pill">
             <span className="sh-holding-pill__label">Holding:</span>
-            <span>{holding.shares} @ ₹{holding.avg_price?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            <span>{holding.shares} @ {fmtPrice(holding.avg_price, cur)}</span>
             {holding.pnl != null && (
               <span className={`sh-pnl ${holding.pnl >= 0 ? 'up' : 'down'}`}>
-                {holding.pnl >= 0 ? '+' : ''}₹{holding.pnl?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {holding.pnl >= 0 ? '+' : ''}{fmtPrice(holding.pnl, cur)}
                 &nbsp;({holding.pnl_pct >= 0 ? '+' : ''}{holding.pnl_pct?.toFixed(2)}%)
               </span>
             )}
@@ -264,14 +260,14 @@ export default function StockHeader({ symbol }) {
 
       {showModal && (
         <QuickAddModal
-          symbol={symbol} name={p?.name || symbol} holding={holding}
+          symbol={symbol} name={p?.name || symbol} holding={holding} currency={cur}
           onClose={() => setShowModal(false)} onSave={handleSave}
         />
       )}
 
       {showAlerts && (
         <PriceAlertPanel
-          symbol={symbol} name={p?.name || symbol} currentPrice={q?.price}
+          symbol={symbol} name={p?.name || symbol} currentPrice={q?.price} currency={cur}
           onClose={() => setShowAlerts(false)}
         />
       )}

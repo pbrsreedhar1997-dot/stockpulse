@@ -3226,9 +3226,12 @@ def check_alerts():
     if newly_triggered:
         db.commit()
         # Fire push notifications in background — don't block the response
+        def _alert_price_str(sym, price):
+            is_inr = '.NS' in sym or '.BO' in sym
+            return f'₹{price:,.2f}' if is_inr else f'${price:,.2f}'
         sym_labels = ', '.join(
             f'{a["symbol"].replace(".NS","").replace(".BO","")} '
-            f'{"≥" if a["condition"]=="above" else "≤"} ₹{a["target_price"]}'
+            f'{"≥" if a["condition"]=="above" else "≤"} {_alert_price_str(a["symbol"], a["target_price"])}'
             for a in newly_triggered
         )
         title = f'🔔 StockPulse Alert Triggered'
