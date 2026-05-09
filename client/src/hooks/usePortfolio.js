@@ -14,13 +14,26 @@ export function usePortfolio() {
     } catch {}
   }, [api, dispatch, state.token]);
 
-  const addHolding = useCallback(async ({ symbol, name, shares, avg_price, notes }) => {
-    await api.post('/api/portfolio', { symbol, name, shares: Number(shares), avg_price: Number(avg_price), notes });
+  const addHolding = useCallback(async ({ symbol, name, shares, avg_price, stop_loss, purchase_date, notes }) => {
+    await api.post('/api/portfolio', {
+      symbol, name,
+      shares:        Number(shares),
+      avg_price:     Number(avg_price),
+      stop_loss:     stop_loss     ? Number(stop_loss)     : null,
+      purchase_date: purchase_date ? Number(purchase_date) : null,
+      notes,
+    });
     await fetchPortfolio();
   }, [api, fetchPortfolio]);
 
-  const updateHolding = useCallback(async (symbol, { shares, avg_price, notes }) => {
-    await api.put(`/api/portfolio/${symbol}`, { shares: Number(shares), avg_price: Number(avg_price), notes });
+  const updateHolding = useCallback(async (symbol, { shares, avg_price, stop_loss, purchase_date, notes }) => {
+    await api.put(`/api/portfolio/${symbol}`, {
+      shares:        Number(shares),
+      avg_price:     Number(avg_price),
+      stop_loss:     stop_loss     ? Number(stop_loss)     : null,
+      purchase_date: purchase_date ? Number(purchase_date) : null,
+      notes,
+    });
     await fetchPortfolio();
   }, [api, fetchPortfolio]);
 
