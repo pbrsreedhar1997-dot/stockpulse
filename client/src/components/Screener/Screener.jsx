@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useScreener } from '../../hooks/useScreener';
 import { useAppContext } from '../../contexts/AppContext';
+import { useWebSocket } from '../../contexts/WebSocketContext';
 import './Screener.scss';
 
 function fmt(n, dec = 2) { if (n == null) return '—'; return typeof n === 'number' ? n.toFixed(dec) : n; }
@@ -12,26 +13,274 @@ function fmtCr(n) {
   return `₹${cr.toFixed(0)} Cr`;
 }
 
+// ─── Category config ────────────────────────────────────────────────────────
+const CAT_META = {
+  value:      { label: 'Value Buy',   color: '#10D98C', desc: 'Profitable & trading at a discount' },
+  growth:     { label: 'Quality',     color: '#4B9EFF', desc: 'High ROE, strong margins'           },
+  turnaround: { label: 'Turnaround',  color: '#E8A838', desc: 'Beaten-down, recovery potential'    },
+};
+
+// ─── Score bar ───────────────────────────────────────────────────────────────
+function ScoreBar({ score }) {
+  const pct = Math.min(100, Math.max(0, score ?? 0));
+  const color = pct >= 70 ? '#10D98C' : pct >= 50 ? '#4B9EFF' : '#E8A838';
+  return (
+    <div className="sc-score-bar" title={`Score: ${pct}/100`}>
+      <div className="sc-score-bar__fill" style={{ width: `${pct}%`, background: color }} />
+      <span className="sc-score-bar__label">{pct}</span>
+    </div>
+  );
+}
+
+// ─── Streaming AI Insights panel ─────────────────────────────────────────────
+function AIInsightsPanel({ stocks }) {
+  const { emit, on } = useWebSocket();
+  const { state } = useAppContext();
+  const [text, setText]       = useState('');
+  const [status, setStatus]   = useState('idle'); // idle | loading | done | error
+  const chatIdRef  = useRef(null);
+  const textRef    = useRef('');
+
+  const buildPrompt = useCallback((picks) => {
+    const top = picks.slice(0, 20);
+    const lines = top.map(s =>
+      `${s.symbol.replace(/\.(NS|BO)$/i, '')} (${s.sector || s.theme}): ` +
+      `₹${s.price} | -${s.decline_pct}% from high | ` +
+      `P/E ${s.pe_ratio ?? '—'}x | Score ${s.composite_score} | ${s.category}`
+    ).join('\n');
+
+    return `You are an institutional investment analyst. Below are top screener picks sorted by opportunity score. Current date context: Indian markets, May 2026.
+
+SCREENER PICKS (${top.length} stocks, sorted by composite score):
+${lines}
+
+Provide a concise investor-grade analysis in EXACTLY this structure:
+
+## 🎯 Top Value Buys (3 picks)
+For each: **SYMBOL** — 1-sentence thesis · Target ₹X · Risk: [key risk]
+
+## 🚀 Next Boom Themes (2 sectors/picks)
+Sectors/stocks best positioned for the next 6–12 months based on India macro, global demand, and structural tailwinds. Be specific about the catalyst.
+
+## 🔄 Contrarian Bets (2 turnaround picks)
+Beaten-down large-caps with recovery potential. What needs to happen for re-rating.
+
+## ⚠️ Avoid Right Now (1–2 names)
+From this list, which look like value traps and why.
+
+Use real prices from the data above. Be direct and data-driven. Total response under 400 words.`;
+  }, []);
+
+  const run = useCallback(() => {
+    if (!stocks.length || status === 'loading') return;
+    setText('');
+    textRef.current = '';
+    setStatus('loading');
+
+    const id = `sc-ai-${Date.now()}`;
+    chatIdRef.current = id;
+
+    const unsubDelta = on('chat_delta', (msg) => {
+      if (msg.id !== chatIdRef.current) return;
+      textRef.current += msg.text || '';
+      setText(textRef.current);
+    });
+
+    const unsubDone = on('chat_done', (msg) => {
+      if (msg.id !== chatIdRef.current) return;
+      setStatus('done');
+      unsubDelta(); unsubDone(); unsubErr();
+    });
+
+    const unsubErr = on('chat_error', (msg) => {
+      if (msg.id !== chatIdRef.current) return;
+      setStatus('error');
+      setText(msg.error || 'Analysis failed. Please try again.');
+      unsubDelta(); unsubDone(); unsubErr();
+    });
+
+    emit('chat', {
+      id:       id,
+      question: buildPrompt(stocks),
+      symbols:  [],
+      history:  [],
+      token:    state.token || '',
+    });
+  }, [stocks, status, emit, on, buildPrompt, state.token]);
+
+  // Render markdown-ish text into simple HTML
+  function renderMarkdown(raw) {
+    if (!raw) return null;
+    return raw.split('\n').map((line, i) => {
+      if (line.startsWith('## ')) return <h3 key={i} className="sc-ai__h3">{line.slice(3)}</h3>;
+      if (line.startsWith('**') && line.endsWith('**')) return <strong key={i} className="sc-ai__bold">{line.slice(2, -2)}</strong>;
+      // Bold inline
+      const parts = line.split(/(\*\*[^*]+\*\*)/g).map((p, j) =>
+        p.startsWith('**') ? <strong key={j}>{p.slice(2, -2)}</strong> : p
+      );
+      return <p key={i} className="sc-ai__line">{parts}</p>;
+    });
+  }
+
+  return (
+    <div className="sc-ai">
+      <div className="sc-ai__header">
+        <div>
+          <div className="sc-ai__title">AI Market Intelligence</div>
+          <div className="sc-ai__sub">
+            RAG-powered analysis using live data, macro context, and sector insights
+          </div>
+        </div>
+        <button
+          className={`sc-ai__btn ${status === 'loading' ? 'sc-ai__btn--loading' : ''}`}
+          onClick={run}
+          disabled={status === 'loading' || !stocks.length}
+        >
+          {status === 'loading' ? (
+            <><span className="spinner" /> Analysing…</>
+          ) : status === 'done' ? (
+            '↻ Refresh Analysis'
+          ) : (
+            '✦ Generate Insights'
+          )}
+        </button>
+      </div>
+
+      {status === 'idle' && (
+        <div className="sc-ai__idle">
+          <div className="sc-ai__idle-icon">✦</div>
+          <div className="sc-ai__idle-title">AI Investor Analysis</div>
+          <div className="sc-ai__idle-sub">
+            Click "Generate Insights" to get a real-time RAG analysis of the top screener picks —
+            value buys, booming sectors, turnaround bets, and what to avoid.
+          </div>
+        </div>
+      )}
+
+      {status === 'loading' && !text && (
+        <div className="sc-ai__thinking">
+          <span className="sc-ai__dot" /><span className="sc-ai__dot" /><span className="sc-ai__dot" />
+          <span className="sc-ai__think-label">Analysing {stocks.length} stocks with market data…</span>
+        </div>
+      )}
+
+      {text && (
+        <div className="sc-ai__body">
+          {renderMarkdown(text)}
+          {status === 'loading' && <span className="sc-ai__cursor" />}
+        </div>
+      )}
+
+      {status === 'error' && !text && (
+        <div className="sc-ai__error">Analysis failed. Make sure the AI is configured.</div>
+      )}
+    </div>
+  );
+}
+
+// ─── Sector insight cards ─────────────────────────────────────────────────────
+function SectorGrid({ stocks, onPick }) {
+  const grouped = {};
+  for (const s of stocks) {
+    const key = s.sector || s.theme || 'Other';
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(s);
+  }
+
+  const sectorList = Object.entries(grouped)
+    .sort((a, b) => b[1].length - a[1].length);
+
+  return (
+    <div className="sc-sector-grid">
+      {sectorList.map(([sector, sectorStocks]) => {
+        const top = [...sectorStocks].sort((a, b) => b.composite_score - a.composite_score).slice(0, 3);
+        const avgChg = sectorStocks
+          .filter(s => s.change_pct != null)
+          .reduce((a, s, _, arr) => a + s.change_pct / arr.length, 0);
+        const sectorUp = avgChg >= 0;
+        const catCounts = sectorStocks.reduce((acc, s) => {
+          acc[s.category] = (acc[s.category] || 0) + 1;
+          return acc;
+        }, {});
+        const dominantCat = Object.entries(catCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
+
+        return (
+          <div key={sector} className="sc-sector-card">
+            <div className="sc-sector-card__head">
+              <div>
+                <div className="sc-sector-card__name">{sector}</div>
+                <div className="sc-sector-card__meta">
+                  {sectorStocks.length} stocks &nbsp;·&nbsp;
+                  {dominantCat && (
+                    <span style={{ color: CAT_META[dominantCat]?.color }}>
+                      {CAT_META[dominantCat]?.label}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <span className={`sc-sector-card__chg ${sectorUp ? 'up' : 'down'}`}>
+                {sectorUp ? '+' : ''}{avgChg.toFixed(2)}%
+              </span>
+            </div>
+
+            <div className="sc-sector-card__stocks">
+              {top.map(s => {
+                const up = (s.change_pct ?? 0) >= 0;
+                const cat = CAT_META[s.category];
+                return (
+                  <div key={s.symbol} className="sc-sector-row" onClick={() => onPick(s)}>
+                    <div className="sc-sector-row__left">
+                      <span className="sc-sector-row__sym">
+                        {s.symbol.replace(/\.(NS|BO)$/i, '')}
+                      </span>
+                      <span className="sc-sector-row__name">{s.name}</span>
+                    </div>
+                    <div className="sc-sector-row__right">
+                      <span className={`sc-sector-row__chg ${up ? 'up' : 'down'}`}>
+                        {up ? '+' : ''}{fmt(s.change_pct)}%
+                      </span>
+                      <span
+                        className="sc-sector-row__cat"
+                        style={{ background: cat?.color + '22', color: cat?.color }}
+                      >
+                        {cat?.label}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {sectorStocks.length > 3 && (
+              <div className="sc-sector-card__more">+{sectorStocks.length - 3} more</div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── All Picks table ──────────────────────────────────────────────────────────
 const SORT_OPTS = [
-  { label: 'Below 52W High', value: 'decline_pct' },
-  { label: 'P/E Ratio',      value: 'pe_ratio'    },
-  { label: 'Market Cap',     value: 'mkt_cap_cr'  },
-  { label: 'Today %',        value: 'change_pct'  },
+  { label: 'Score',        value: 'composite_score' },
+  { label: '52W Below',    value: 'decline_pct'     },
+  { label: 'P/E Ratio',    value: 'pe_ratio'        },
+  { label: 'Market Cap',   value: 'mkt_cap_cr'      },
+  { label: 'Today %',      value: 'change_pct'      },
 ];
 
-export default function Screener() {
-  const { stocks, loading, error, load, refresh } = useScreener();
-  const { dispatch } = useAppContext();
-  const [sector, setSector]   = useState('All');
-  const [sortBy, setSortBy]   = useState('decline_pct');
-  const [sortDir, setSortDir] = useState('desc');
-
-  useEffect(() => { load(); }, []);
+function AllPicksTable({ stocks, onPick }) {
+  const [sector,   setSector]   = useState('All');
+  const [category, setCategory] = useState('All');
+  const [sortBy,   setSortBy]   = useState('composite_score');
+  const [sortDir,  setSortDir]  = useState('desc');
 
   const sectors = ['All', ...new Set(stocks.map(s => s.sector).filter(Boolean))].sort();
 
   const filtered = stocks
-    .filter(s => sector === 'All' || s.sector === sector)
+    .filter(s => sector   === 'All' || s.sector   === sector)
+    .filter(s => category === 'All' || s.category === category)
     .sort((a, b) => {
       const av = a[sortBy] ?? (sortDir === 'desc' ? -Infinity : Infinity);
       const bv = b[sortBy] ?? (sortDir === 'desc' ? -Infinity : Infinity);
@@ -43,28 +292,26 @@ export default function Screener() {
     else { setSortBy(field); setSortDir(field === 'pe_ratio' ? 'asc' : 'desc'); }
   };
 
-  const pickStock = (stock) => {
-    dispatch({ type: 'SET_CURRENT_SYMBOL', payload: stock.symbol });
-    dispatch({ type: 'SET_VIEW', payload: 'stock' });
-  };
-
   return (
-    <div className="screener">
-      <div className="screener__header">
-        <div>
-          <h2 className="screener__title">Value Picks</h2>
-          <p className="screener__sub">
-            Nifty 100 stocks trading ≥10% below their 52-week high with positive earnings.
-            Click any row to review the stock.
-          </p>
-        </div>
-        <button className="screener__refresh" onClick={refresh} disabled={loading}>
-          {loading ? <span className="spinner" /> : '↻ Refresh'}
-        </button>
-      </div>
-
+    <>
       <div className="screener__toolbar">
+        {/* Category filter */}
+        <div className="screener__filters">
+          <span className="screener__filter-label">Type:</span>
+          {['All', 'value', 'growth', 'turnaround'].map(c => (
+            <button
+              key={c}
+              className={`sc-chip ${category === c ? 'sc-chip--active' : ''} ${c !== 'All' ? `sc-chip--cat sc-chip--${c}` : ''}`}
+              onClick={() => setCategory(c)}
+            >
+              {c === 'All' ? 'All Types' : CAT_META[c]?.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Sector filter */}
         <div className="screener__sectors">
+          <span className="screener__filter-label">Sector:</span>
           {sectors.map(s => (
             <button
               key={s}
@@ -74,8 +321,9 @@ export default function Screener() {
           ))}
         </div>
 
+        {/* Sort */}
         <div className="screener__sort">
-          <span className="screener__sort-label">Sort:</span>
+          <span className="screener__filter-label">Sort:</span>
           {SORT_OPTS.map(o => (
             <button
               key={o.value}
@@ -89,14 +337,7 @@ export default function Screener() {
         </div>
       </div>
 
-      {error && <div className="screener__error">{error}</div>}
-
-      {loading && stocks.length === 0 ? (
-        <div className="screener__loading">
-          <span className="spinner" />
-          <p>Scanning {'>'}90 large-cap stocks for value opportunities…</p>
-        </div>
-      ) : filtered.length === 0 ? (
+      {filtered.length === 0 ? (
         <div className="screener__empty">No stocks match the current filters.</div>
       ) : (
         <div className="sc-table-wrap">
@@ -105,51 +346,60 @@ export default function Screener() {
               <tr>
                 <th>Symbol</th>
                 <th>Company</th>
+                <th className="sc-th--num">Score</th>
                 <th className="sc-th--num">Price</th>
-                <th className="sc-th--num" title="Today's price change">Today</th>
-                <th className="sc-th--num" title="% below 52-week high — lower means more upside potential">
-                  52W Below ↓
-                </th>
-                <th className="sc-th--num">52W High</th>
+                <th className="sc-th--num">Today</th>
+                <th className="sc-th--num">52W Below</th>
                 <th className="sc-th--num">P/E</th>
                 <th className="sc-th--num">Mkt Cap</th>
-                <th>Sector</th>
+                <th>Type</th>
+                <th>Theme</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map(stock => {
-                const todayUp  = (stock.change_pct ?? 0) >= 0;
-                const hasTodayChg = stock.change_pct != null;
-                const peColor  = stock.pe_ratio < 15 ? 'up' : stock.pe_ratio > 45 ? 'down' : '';
+                const todayUp = (stock.change_pct ?? 0) >= 0;
+                const peColor = stock.pe_ratio < 15 ? 'up' : stock.pe_ratio > 50 ? 'down' : '';
+                const cat     = CAT_META[stock.category];
 
                 return (
-                  <tr key={stock.symbol} className="sc-row" onClick={() => pickStock(stock)}>
+                  <tr key={stock.symbol} className="sc-row" onClick={() => onPick(stock)}>
                     <td className="sc-td--symbol">
                       {stock.symbol.replace(/\.(NS|BO)$/i, '')}
                     </td>
                     <td className="sc-td--name">{stock.name}</td>
+                    <td className="sc-td--num">
+                      <ScoreBar score={stock.composite_score} />
+                    </td>
                     <td className="sc-td--num">₹{fmt(stock.price)}</td>
                     <td className="sc-td--num">
-                      {hasTodayChg ? (
+                      {stock.change_pct != null ? (
                         <span className={`sc-chg ${todayUp ? 'sc-chg--up' : 'sc-chg--down'}`}>
                           {todayUp ? '+' : ''}{fmt(stock.change_pct)}%
                         </span>
                       ) : '—'}
                     </td>
                     <td className="sc-td--num">
-                      <span className="sc-below">
-                        -{fmt(stock.decline_pct)}%
-                      </span>
+                      <span className="sc-below">-{fmt(stock.decline_pct)}%</span>
                     </td>
-                    <td className="sc-td--num sc-dim">₹{fmt(stock.week52_high)}</td>
                     <td className={`sc-td--num ${peColor}`}>
                       {stock.pe_ratio ? `${fmt(stock.pe_ratio)}x` : '—'}
                     </td>
                     <td className="sc-td--num sc-dim">
                       {stock.mkt_cap_cr ? fmtCr(stock.mkt_cap_cr * 1e7) : '—'}
                     </td>
-                    <td className="sc-td--sector">
-                      {stock.sector ? <span className="sc-sector">{stock.sector}</span> : '—'}
+                    <td>
+                      {cat && (
+                        <span
+                          className="sc-cat-badge"
+                          style={{ background: cat.color + '20', color: cat.color, borderColor: cat.color + '40' }}
+                        >
+                          {cat.label}
+                        </span>
+                      )}
+                    </td>
+                    <td className="sc-td--theme">
+                      {stock.theme ? <span className="sc-theme-tag">{stock.theme}</span> : '—'}
                     </td>
                   </tr>
                 );
@@ -157,6 +407,107 @@ export default function Screener() {
             </tbody>
           </table>
         </div>
+      )}
+    </>
+  );
+}
+
+// ─── Main Screener ────────────────────────────────────────────────────────────
+const MODES = [
+  { v: 'all',    label: 'All Picks'       },
+  { v: 'sector', label: 'Sector Insights' },
+  { v: 'ai',     label: '✦ AI Analysis'   },
+];
+
+export default function Screener() {
+  const { stocks, loading, error, load, refresh } = useScreener();
+  const { dispatch } = useAppContext();
+  const [mode, setMode] = useState('all');
+
+  useEffect(() => { load(); }, []);
+
+  const pickStock = (stock) => {
+    dispatch({ type: 'SET_CURRENT_SYMBOL', payload: stock.symbol });
+    dispatch({ type: 'SET_VIEW', payload: 'stock' });
+  };
+
+  const valueCnt      = stocks.filter(s => s.category === 'value').length;
+  const growthCnt     = stocks.filter(s => s.category === 'growth').length;
+  const turnaroundCnt = stocks.filter(s => s.category === 'turnaround').length;
+
+  return (
+    <div className="screener">
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      <div className="screener__header">
+        <div className="screener__header-left">
+          <h2 className="screener__title">Value Picks</h2>
+          <p className="screener__sub">
+            {loading && stocks.length === 0
+              ? `Scanning ${'>'}130 stocks across all sectors…`
+              : stocks.length > 0
+                ? `${stocks.length} opportunities · ${valueCnt} value · ${growthCnt} quality · ${turnaroundCnt} turnaround`
+                : 'AI-powered stock screener — India large & mid-cap universe'}
+          </p>
+        </div>
+        <div className="screener__header-right">
+          <button className="screener__refresh" onClick={refresh} disabled={loading}>
+            {loading ? <span className="spinner" /> : '↻ Refresh'}
+          </button>
+        </div>
+      </div>
+
+      {/* ── Mode tabs ──────────────────────────────────────────────────────── */}
+      <div className="screener__mode-tabs">
+        {MODES.map(m => (
+          <button
+            key={m.v}
+            className={`sc-mode-tab ${mode === m.v ? 'sc-mode-tab--active' : ''} ${m.v === 'ai' ? 'sc-mode-tab--ai' : ''}`}
+            onClick={() => setMode(m.v)}
+          >
+            {m.label}
+          </button>
+        ))}
+
+        {/* Summary pills */}
+        {stocks.length > 0 && (
+          <div className="screener__pills">
+            {Object.entries(CAT_META).map(([k, v]) => {
+              const cnt = stocks.filter(s => s.category === k).length;
+              return cnt > 0 ? (
+                <span key={k} className="sc-summary-pill" style={{ color: v.color, borderColor: v.color + '40', background: v.color + '12' }}>
+                  {cnt} {v.label}
+                </span>
+              ) : null;
+            })}
+          </div>
+        )}
+      </div>
+
+      {error && <div className="screener__error">{error}</div>}
+
+      {/* ── Loading ─────────────────────────────────────────────────────────── */}
+      {loading && stocks.length === 0 ? (
+        <div className="screener__loading">
+          <span className="spinner" />
+          <p>Scanning 130+ stocks — fetching live prices, fundamentals & sector data…</p>
+          <p className="screener__loading-sub">This takes 2–4 minutes. Results appear once ready.</p>
+        </div>
+      ) : (
+        <>
+          {mode === 'all' && (
+            <AllPicksTable stocks={stocks} onPick={pickStock} />
+          )}
+
+          {mode === 'sector' && (
+            stocks.length === 0
+              ? <div className="screener__empty">Run the screener first to see sector insights.</div>
+              : <SectorGrid stocks={stocks} onPick={pickStock} />
+          )}
+
+          {mode === 'ai' && (
+            <AIInsightsPanel stocks={stocks} />
+          )}
+        </>
       )}
     </div>
   );
