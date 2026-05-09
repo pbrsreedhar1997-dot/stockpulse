@@ -629,11 +629,39 @@
     animation: blink 1s step-end infinite;
   }
 
+  &__cache-badge {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 7px;
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: 600;
+    background: rgba(16,217,140,0.12);
+    color: #10D98C;
+    vertical-align: middle;
+  }
+
   &__error {
     padding: 20px;
     color: var(--down);
     font-size: 13px;
     text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+
+  &__retry {
+    padding: 7px 18px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 700;
+    background: var(--down-dim);
+    color: var(--down);
+    border: 1px solid rgba(255,69,96,0.3);
+    transition: all 0.15s;
+    &:hover { background: rgba(255,69,96,0.18); }
   }
 }
 

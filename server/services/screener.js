@@ -1,11 +1,149 @@
 import { getQuote, getFinancials } from './yahoo.js';
 import { get as cacheGet, set as cacheSet, del as cacheDel } from '../cache.js';
+import { query } from '../db.js';
 import log from '../log.js';
 
 const CACHE_KEY = 'screener6:value-picks';
 const CACHE_TTL = 3 * 3600; // 3 hours
+const DB_STALE_SECS = 6 * 3600; // DB rows older than 6h trigger a fresh scan
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DB HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+async function savePicksToDB(picks) {
+  try {
+    for (const p of picks) {
+      await query(`
+        INSERT INTO screener_picks
+          (symbol,name,sector,industry,theme,price,week52_high,week52_low,
+           decline_pct,mkt_cap_cr,change_pct,pe_ratio,eps,net_margin,roe,
+           gross_margin,revenue_cr,composite_score,category,scanned_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+        ON CONFLICT (symbol) DO UPDATE SET
+          name=EXCLUDED.name, sector=EXCLUDED.sector, theme=EXCLUDED.theme,
+          price=EXCLUDED.price, week52_high=EXCLUDED.week52_high, week52_low=EXCLUDED.week52_low,
+          decline_pct=EXCLUDED.decline_pct, mkt_cap_cr=EXCLUDED.mkt_cap_cr,
+          change_pct=EXCLUDED.change_pct, pe_ratio=EXCLUDED.pe_ratio, eps=EXCLUDED.eps,
+          net_margin=EXCLUDED.net_margin, roe=EXCLUDED.roe, gross_margin=EXCLUDED.gross_margin,
+          revenue_cr=EXCLUDED.revenue_cr, composite_score=EXCLUDED.composite_score,
+          category=EXCLUDED.category, scanned_at=EXCLUDED.scanned_at
+      `, [
+        p.symbol, p.name, p.sector, p.industry, p.theme,
+        p.price, p.week52_high, p.week52_low, p.decline_pct, p.mkt_cap_cr,
+        p.change_pct, p.pe_ratio, p.eps, p.net_margin, p.roe,
+        p.gross_margin, p.revenue_cr, p.composite_score, p.category,
+        Math.floor(Date.now() / 1000),
+      ]);
+    }
+    log.info(`Screener: saved ${picks.length} picks to DB`);
+  } catch (e) {
+    log.warn('Screener DB save failed:', e.message);
+  }
+}
+
+async function loadPicksFromDB() {
+  try {
+    const cutoff = Math.floor(Date.now() / 1000) - DB_STALE_SECS;
+    const r = await query(
+      `SELECT * FROM screener_picks WHERE scanned_at > $1 ORDER BY composite_score DESC`,
+      [cutoff]
+    );
+    return r.rows.map(row => ({
+      symbol:          row.symbol,
+      name:            row.name,
+      sector:          row.sector || '',
+      industry:        row.industry || '',
+      theme:           row.theme || '',
+      price:           row.price != null     ? Number(row.price)          : null,
+      week52_high:     row.week52_high != null ? Number(row.week52_high)  : null,
+      week52_low:      row.week52_low  != null ? Number(row.week52_low)   : null,
+      decline_pct:     row.decline_pct != null ? Number(row.decline_pct) : null,
+      mkt_cap_cr:      row.mkt_cap_cr  != null ? Number(row.mkt_cap_cr)  : null,
+      change_pct:      row.change_pct  != null ? Number(row.change_pct)  : null,
+      pe_ratio:        row.pe_ratio    != null ? Number(row.pe_ratio)     : null,
+      eps:             row.eps         != null ? Number(row.eps)          : null,
+      net_margin:      row.net_margin  != null ? Number(row.net_margin)   : null,
+      roe:             row.roe         != null ? Number(row.roe)          : null,
+      gross_margin:    row.gross_margin != null ? Number(row.gross_margin): null,
+      revenue_cr:      row.revenue_cr  != null ? Number(row.revenue_cr)  : null,
+      composite_score: row.composite_score != null ? Number(row.composite_score) : 0,
+      category:        row.category || 'value',
+    }));
+  } catch (e) {
+    log.warn('Screener DB load failed:', e.message);
+    return [];
+  }
+}
+
+// ─── AI analysis DB helpers ───────────────────────────────────────────────────
+const AI_CACHE_SECS = 3 * 3600; // re-generate after 3 hours
+
+export async function getRecentAnalysis() {
+  try {
+    const cutoff = Math.floor(Date.now() / 1000) - AI_CACHE_SECS;
+    const r = await query(
+      `SELECT analysis, picks_count, created_at FROM screener_ai_analysis
+       WHERE created_at > $1 ORDER BY created_at DESC LIMIT 1`,
+      [cutoff]
+    );
+    if (!r.rows.length) return null;
+    const row = r.rows[0];
+    const ageMin = Math.round((Date.now() / 1000 - Number(row.created_at)) / 60);
+    return { analysis: row.analysis, picks_count: row.picks_count, ageMin };
+  } catch (e) {
+    log.warn('AI analysis load failed:', e.message);
+    return null;
+  }
+}
+
+export async function saveAnalysis(text, picksCount) {
+  try {
+    await query(
+      `INSERT INTO screener_ai_analysis (analysis, picks_count, created_at) VALUES ($1,$2,$3)`,
+      [text, picksCount, Math.floor(Date.now() / 1000)]
+    );
+  } catch (e) {
+    log.warn('AI analysis save failed:', e.message);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI PROMPT BUILDER  (exported for use in the route)
+// ─────────────────────────────────────────────────────────────────────────────
+export function buildAnalysisPrompt(picks) {
+  const top = picks.slice(0, 25);
+  const lines = top.map(s =>
+    `${s.symbol.replace(/\.(NS|BO)$/i, '')} | ${s.sector || s.theme} | ` +
+    `₹${s.price} | -${s.decline_pct}% from 52W high | ` +
+    `P/E ${s.pe_ratio ?? '—'}x | Score ${s.composite_score}/100 | ${s.category}` +
+    (s.net_margin != null ? ` | Net margin ${s.net_margin}%` : '') +
+    (s.roe != null ? ` | ROE ${s.roe}%` : '')
+  ).join('\n');
+
+  return `You are an institutional equity research analyst covering Indian markets (NSE/BSE). Today is ${new Date().toDateString()}.
+
+Below is live screener data for ${top.length} stocks, scored 0–100 (value discount + P/E + margins + ROE + safety):
+
+${lines}
+
+Provide a sharp, data-driven investor brief in EXACTLY this structure:
+
+## 🎯 Top 3 Value Buys
+For each: **SYMBOL** — buy thesis (1 line using actual metrics above) · Target ₹X (12-month) · Stop ₹X · Key risk
+
+## 🚀 Next Boom Sectors (2 picks)
+Sectors/stocks best positioned for the next 6–12 months. Reference India capex cycle, global demand, and structural tailwinds. Name specific catalysts.
+
+## 🔄 Turnaround Watch (2 picks)
+Large-caps beaten down >25%. What needs to happen for re-rating. Entry zone.
+
+## ⚠️ Avoid / Value Traps (1–2 names)
+From this list, names that look cheap but are not. Specific reason why.
+
+Use actual prices and metrics from the data above. Be direct and specific. Total response under 420 words. No generic disclaimers.`;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STOCK UNIVERSE  — ~130 stocks across all major Indian sectors
@@ -323,6 +461,7 @@ async function fetchOne({ s: symbol, theme }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // SCREENER RUNNER
 // ─────────────────────────────────────────────────────────────────────────────
 let running = false;
@@ -335,20 +474,37 @@ async function runScreener() {
     const item = await fetchOne(STOCK_UNIVERSE[i]);
     if (item) results.push(item);
   }
-  // Primary sort: composite score descending
   results.sort((a, b) => b.composite_score - a.composite_score);
   log.info(`Screener done: ${results.length} picks found`);
   return results;
 }
 
 export async function getValuePicks() {
+  // 1. In-memory / Redis cache (fastest)
   const cached = await cacheGet(CACHE_KEY);
   if (cached?.length) return { status: 'ready', data: cached };
-  if (running) return { status: 'loading', data: [] };
 
+  // 2. DB fallback — serve stale-but-fast data while a fresh scan runs
+  const dbPicks = await loadPicksFromDB();
+  if (dbPicks.length) {
+    // Warm the in-memory cache from DB so subsequent requests are instant
+    await cacheSet(CACHE_KEY, dbPicks, CACHE_TTL);
+    // Trigger a background refresh only if not already running
+    if (!running) {
+      running = true;
+      runScreener()
+        .then(async r => { await cacheSet(CACHE_KEY, r, CACHE_TTL); await savePicksToDB(r); })
+        .catch(e => log.error('Screener refresh failed:', e.message))
+        .finally(() => { running = false; });
+    }
+    return { status: 'ready', data: dbPicks };
+  }
+
+  // 3. Cold start — nothing in cache or DB, scan from scratch
+  if (running) return { status: 'loading', data: [] };
   running = true;
   runScreener()
-    .then(r => cacheSet(CACHE_KEY, r, CACHE_TTL))
+    .then(async r => { await cacheSet(CACHE_KEY, r, CACHE_TTL); await savePicksToDB(r); })
     .catch(e => log.error('Screener failed:', e.message))
     .finally(() => { running = false; });
 
@@ -359,3 +515,6 @@ export async function refreshScreener() {
   await cacheDel(CACHE_KEY);
   running = false;
 }
+
+// Re-export for use in the route
+export { loadPicksFromDB };

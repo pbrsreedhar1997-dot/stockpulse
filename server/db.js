@@ -105,6 +105,39 @@ export async function initDb() {
         created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
       )`);
     await query(`CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id)`);
+    // ── Screener picks cache (persists across server restarts) ──────────────
+    await query(`
+      CREATE TABLE IF NOT EXISTS screener_picks (
+        symbol          VARCHAR(20) PRIMARY KEY,
+        name            VARCHAR(200),
+        sector          VARCHAR(100),
+        industry        VARCHAR(100),
+        theme           VARCHAR(100),
+        price           NUMERIC(14,4),
+        week52_high     NUMERIC(14,4),
+        week52_low      NUMERIC(14,4),
+        decline_pct     NUMERIC(6,2),
+        mkt_cap_cr      INTEGER,
+        change_pct      NUMERIC(6,2),
+        pe_ratio        NUMERIC(10,2),
+        eps             NUMERIC(14,4),
+        net_margin      NUMERIC(8,2),
+        roe             NUMERIC(8,2),
+        gross_margin    NUMERIC(8,2),
+        revenue_cr      INTEGER,
+        composite_score INTEGER,
+        category        VARCHAR(20),
+        scanned_at      BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+      )`);
+    // ── AI analysis cache ────────────────────────────────────────────────────
+    await query(`
+      CREATE TABLE IF NOT EXISTS screener_ai_analysis (
+        id           SERIAL PRIMARY KEY,
+        analysis     TEXT NOT NULL,
+        picks_count  INTEGER,
+        created_at   BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+      )`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_screener_ai_ts ON screener_ai_analysis(created_at DESC)`);
     log.info('PostgreSQL schema ready');
   } catch (err) {
     log.error('DB init failed:', err.message);

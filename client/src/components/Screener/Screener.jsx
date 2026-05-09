@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useScreener } from '../../hooks/useScreener';
+import { useScreenerAI } from '../../hooks/useScreenerAI';
 import { useAppContext } from '../../contexts/AppContext';
-import { useWebSocket } from '../../contexts/WebSocketContext';
 import './Screener.scss';
 
 function fmt(n, dec = 2) { if (n == null) return '—'; return typeof n === 'number' ? n.toFixed(dec) : n; }
@@ -34,88 +34,17 @@ function ScoreBar({ score }) {
 
 // ─── Streaming AI Insights panel ─────────────────────────────────────────────
 function AIInsightsPanel({ stocks }) {
-  const { emit, on } = useWebSocket();
-  const { state } = useAppContext();
-  const [text, setText]       = useState('');
-  const [status, setStatus]   = useState('idle'); // idle | loading | done | error
-  const chatIdRef  = useRef(null);
-  const textRef    = useRef('');
+  const { text, status, cached, ageMin, generate } = useScreenerAI();
 
-  const buildPrompt = useCallback((picks) => {
-    const top = picks.slice(0, 20);
-    const lines = top.map(s =>
-      `${s.symbol.replace(/\.(NS|BO)$/i, '')} (${s.sector || s.theme}): ` +
-      `₹${s.price} | -${s.decline_pct}% from high | ` +
-      `P/E ${s.pe_ratio ?? '—'}x | Score ${s.composite_score} | ${s.category}`
-    ).join('\n');
+  // Auto-load on first mount if screener data is ready
+  useEffect(() => {
+    if (stocks.length > 0 && status === 'idle') generate();
+  }, [stocks.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    return `You are an institutional investment analyst. Below are top screener picks sorted by opportunity score. Current date context: Indian markets, May 2026.
-
-SCREENER PICKS (${top.length} stocks, sorted by composite score):
-${lines}
-
-Provide a concise investor-grade analysis in EXACTLY this structure:
-
-## 🎯 Top Value Buys (3 picks)
-For each: **SYMBOL** — 1-sentence thesis · Target ₹X · Risk: [key risk]
-
-## 🚀 Next Boom Themes (2 sectors/picks)
-Sectors/stocks best positioned for the next 6–12 months based on India macro, global demand, and structural tailwinds. Be specific about the catalyst.
-
-## 🔄 Contrarian Bets (2 turnaround picks)
-Beaten-down large-caps with recovery potential. What needs to happen for re-rating.
-
-## ⚠️ Avoid Right Now (1–2 names)
-From this list, which look like value traps and why.
-
-Use real prices from the data above. Be direct and data-driven. Total response under 400 words.`;
-  }, []);
-
-  const run = useCallback(() => {
-    if (!stocks.length || status === 'loading') return;
-    setText('');
-    textRef.current = '';
-    setStatus('loading');
-
-    const id = `sc-ai-${Date.now()}`;
-    chatIdRef.current = id;
-
-    const unsubDelta = on('chat_delta', (msg) => {
-      if (msg.id !== chatIdRef.current) return;
-      textRef.current += msg.text || '';
-      setText(textRef.current);
-    });
-
-    const unsubDone = on('chat_done', (msg) => {
-      if (msg.id !== chatIdRef.current) return;
-      setStatus('done');
-      unsubDelta(); unsubDone(); unsubErr();
-    });
-
-    const unsubErr = on('chat_error', (msg) => {
-      if (msg.id !== chatIdRef.current) return;
-      setStatus('error');
-      setText(msg.error || 'Analysis failed. Please try again.');
-      unsubDelta(); unsubDone(); unsubErr();
-    });
-
-    emit('chat', {
-      id:       id,
-      question: buildPrompt(stocks),
-      symbols:  [],
-      history:  [],
-      token:    state.token || '',
-      skipRag:  true,   // screener data is self-contained — skip the per-stock RAG fetch
-    });
-  }, [stocks, status, emit, on, buildPrompt, state.token]);
-
-  // Render markdown-ish text into simple HTML
   function renderMarkdown(raw) {
     if (!raw) return null;
     return raw.split('\n').map((line, i) => {
       if (line.startsWith('## ')) return <h3 key={i} className="sc-ai__h3">{line.slice(3)}</h3>;
-      if (line.startsWith('**') && line.endsWith('**')) return <strong key={i} className="sc-ai__bold">{line.slice(2, -2)}</strong>;
-      // Bold inline
       const parts = line.split(/(\*\*[^*]+\*\*)/g).map((p, j) =>
         p.startsWith('**') ? <strong key={j}>{p.slice(2, -2)}</strong> : p
       );
@@ -123,26 +52,30 @@ Use real prices from the data above. Be direct and data-driven. Total response u
     });
   }
 
+  const cacheLabel = cached && ageMin != null
+    ? `Cached · ${ageMin < 60 ? `${ageMin}m ago` : `${Math.round(ageMin / 60)}h ago`}`
+    : null;
+
   return (
     <div className="sc-ai">
       <div className="sc-ai__header">
         <div>
           <div className="sc-ai__title">AI Market Intelligence</div>
           <div className="sc-ai__sub">
-            RAG-powered analysis using live data, macro context, and sector insights
+            Live screener data → AI analysis · Value buys · Boom sectors · Turnarounds
+            {cacheLabel && <span className="sc-ai__cache-badge">{cacheLabel}</span>}
           </div>
         </div>
         <button
           className={`sc-ai__btn ${status === 'loading' ? 'sc-ai__btn--loading' : ''}`}
-          onClick={run}
-          disabled={status === 'loading' || !stocks.length}
+          onClick={() => generate(true)}
+          disabled={status === 'loading'}
+          title="Force fresh analysis"
         >
           {status === 'loading' ? (
             <><span className="spinner" /> Analysing…</>
-          ) : status === 'done' ? (
-            '↻ Refresh Analysis'
           ) : (
-            '✦ Generate Insights'
+            '↻ Refresh'
           )}
         </button>
       </div>
@@ -150,10 +83,11 @@ Use real prices from the data above. Be direct and data-driven. Total response u
       {status === 'idle' && (
         <div className="sc-ai__idle">
           <div className="sc-ai__idle-icon">✦</div>
-          <div className="sc-ai__idle-title">AI Investor Analysis</div>
+          <div className="sc-ai__idle-title">Loading analysis…</div>
           <div className="sc-ai__idle-sub">
-            Click "Generate Insights" to get a real-time RAG analysis of the top screener picks —
-            value buys, booming sectors, turnaround bets, and what to avoid.
+            {stocks.length === 0
+              ? 'Waiting for screener data. The scan takes 2–4 minutes on first load.'
+              : 'Fetching AI insights for the current screener picks.'}
           </div>
         </div>
       )}
@@ -161,7 +95,11 @@ Use real prices from the data above. Be direct and data-driven. Total response u
       {status === 'loading' && !text && (
         <div className="sc-ai__thinking">
           <span className="sc-ai__dot" /><span className="sc-ai__dot" /><span className="sc-ai__dot" />
-          <span className="sc-ai__think-label">Analysing {stocks.length} stocks with market data…</span>
+          <span className="sc-ai__think-label">
+            {stocks.length > 0
+              ? `Analysing ${stocks.length} stocks — value, growth, macro…`
+              : 'Connecting to AI…'}
+          </span>
         </div>
       )}
 
@@ -173,7 +111,10 @@ Use real prices from the data above. Be direct and data-driven. Total response u
       )}
 
       {status === 'error' && !text && (
-        <div className="sc-ai__error">Analysis failed. Make sure the AI is configured.</div>
+        <div className="sc-ai__error">
+          Analysis failed. Check that the AI service is configured and try again.
+          <button className="sc-ai__retry" onClick={() => generate(true)}>Retry</button>
+        </div>
       )}
     </div>
   );
