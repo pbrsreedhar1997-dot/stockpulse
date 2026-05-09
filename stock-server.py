@@ -412,6 +412,30 @@ def _fetch_macro_context() -> str:
     except Exception:
         pass
 
+    # Treasury yield curve (DGS2, DGS10, DGS30) from FRED
+    if fred_key:
+        for sid, label in [('DGS2', '2Y Treasury'), ('DGS10', '10Y Treasury'), ('DGS30', '30Y Treasury')]:
+            try:
+                r = http_requests.get(
+                    f'https://api.stlouisfed.org/fred/series/observations'
+                    f'?series_id={sid}&api_key={fred_key}&limit=1&sort_order=desc&file_type=json',
+                    timeout=5,
+                )
+                if r.ok:
+                    obs = r.json().get('observations', [])
+                    if obs and obs[0].get('value') not in ('', '.'):
+                        parts.append(f'{label}: {obs[0]["value"]}% (as of {obs[0]["date"]})')
+            except Exception:
+                pass
+
+    # World Bank global GDP (always free)
+    try:
+        wb_text = _fetch_world_bank_gdp()
+        if wb_text:
+            parts.append(wb_text)
+    except Exception:
+        pass
+
     text = '\n'.join(parts) if len(parts) > 1 else ''
     with _macro_cache_lock:
         _macro_cache['data'] = {'ts': now_ts(), 'text': text}
@@ -504,6 +528,260 @@ def _fetch_stocktwits_sentiment(symbol: str) -> str:
 
     with _stocktwits_cache_lock:
         _stocktwits_cache[st_sym] = {'ts': now_ts(), 'text': text}
+    return text
+
+# ── US Treasury yields (via FRED — free) ─────────────────────────────────────
+
+_treasury_cache: dict     = {}
+_treasury_cache_lock      = threading.Lock()
+_TREASURY_TTL             = 3600 * 6   # 6 hours
+
+def _fetch_treasury_yields() -> str:
+    """Fetch US Treasury yield curve (2Y/5Y/10Y/30Y) from FRED — free with FRED_API_KEY."""
+    with _treasury_cache_lock:
+        entry = _treasury_cache.get('data')
+        if entry and (now_ts() - entry['ts']) < _TREASURY_TTL:
+            return entry['text']
+
+    text  = ''
+    fk    = os.environ.get('FRED_API_KEY', '')
+    if fk:
+        series = {'DGS2': '2Y', 'DGS5': '5Y', 'DGS10': '10Y', 'DGS30': '30Y'}
+        parts  = ['🏦 US Treasury Yields (FRED, 6h cache):']
+        for sid, label in series.items():
+            try:
+                r = http_requests.get(
+                    f'https://api.stlouisfed.org/fred/series/observations'
+                    f'?series_id={sid}&api_key={fk}&limit=1&sort_order=desc&file_type=json',
+                    timeout=5,
+                )
+                if r.ok:
+                    obs = r.json().get('observations', [])
+                    if obs and obs[0].get('value') not in ('', '.'):
+                        parts.append(f'{label}: {obs[0]["value"]}% (as of {obs[0]["date"]})')
+            except Exception:
+                pass
+        if len(parts) > 1:
+            text = ' | '.join(parts)
+
+    with _treasury_cache_lock:
+        _treasury_cache['data'] = {'ts': now_ts(), 'text': text}
+    return text
+
+# ── World Bank global GDP ─────────────────────────────────────────────────────
+
+_worldbank_cache: dict     = {}
+_worldbank_cache_lock      = threading.Lock()
+_WORLDBANK_TTL             = 3600 * 24   # 24 hours
+
+def _fetch_world_bank_gdp() -> str:
+    """Fetch latest GDP growth from World Bank API — free, no key needed."""
+    with _worldbank_cache_lock:
+        entry = _worldbank_cache.get('data')
+        if entry and (now_ts() - entry['ts']) < _WORLDBANK_TTL:
+            return entry['text']
+
+    text  = ''
+    try:
+        countries = [('USA', 'US'), ('IND', 'India'), ('CHN', 'China'), ('GBR', 'UK'), ('EUU', 'EU')]
+        parts     = ['🌐 GDP Growth (World Bank, 24h cache):']
+        for code, name in countries:
+            try:
+                r = http_requests.get(
+                    f'https://api.worldbank.org/v2/country/{code}/indicator/NY.GDP.MKTP.KD.ZG'
+                    f'?format=json&mrv=1',
+                    timeout=6,
+                )
+                if r.ok:
+                    data = r.json()
+                    if len(data) >= 2 and data[1]:
+                        val = data[1][0].get('value')
+                        yr  = data[1][0].get('date')
+                        if val is not None:
+                            parts.append(f'{name}: {val:.1f}% ({yr})')
+            except Exception:
+                pass
+        if len(parts) > 1:
+            text = ' | '.join(parts)
+    except Exception as e:
+        log.debug(f'World Bank fetch error: {e}')
+
+    with _worldbank_cache_lock:
+        _worldbank_cache['data'] = {'ts': now_ts(), 'text': text}
+    return text
+
+# ── OpenInsider — insider buying/selling ──────────────────────────────────────
+
+_openinsider_cache: dict     = {}
+_openinsider_cache_lock      = threading.Lock()
+_OPENINSIDER_TTL             = 3600 * 6   # 6 hours
+
+def _fetch_openinsider(symbol: str) -> str:
+    """Fetch net insider buying/selling from OpenInsider — free, no key needed."""
+    if '.NS' in symbol or '.BO' in symbol:
+        return ''    # EDGAR covers US companies only
+
+    with _openinsider_cache_lock:
+        entry = _openinsider_cache.get(symbol)
+        if entry and (now_ts() - entry['ts']) < _OPENINSIDER_TTL:
+            return entry['text']
+
+    text = ''
+    try:
+        r = http_requests.get(
+            f'http://openinsider.com/screener?s={symbol}&fd=365&cnt=20&action=1',
+            timeout=8,
+            headers={'User-Agent': 'StockPulse/2.0 research@stockpulse.app'},
+        )
+        if r.ok:
+            content = r.text
+            buys    = content.count('P - Purchase')
+            sells   = content.count('S - Sale')
+            if buys + sells > 0:
+                net  = 'Net Insider Buying 🟢' if buys > sells else ('Net Insider Selling 🔴' if sells > buys else 'Neutral')
+                text = (
+                    f'👤 Insider Activity — {symbol} (OpenInsider, 365 days): '
+                    f'Purchases: {buys} | Sales: {sells} | {net}'
+                )
+    except Exception as e:
+        log.debug(f'OpenInsider fetch error ({symbol}): {e}')
+
+    with _openinsider_cache_lock:
+        _openinsider_cache[symbol] = {'ts': now_ts(), 'text': text}
+    return text
+
+# ── Google Trends search interest ─────────────────────────────────────────────
+
+_gtrends_cache: dict     = {}
+_gtrends_cache_lock      = threading.Lock()
+_GTRENDS_TTL             = 3600 * 24   # 24 hours
+
+def _fetch_google_trends(symbol: str) -> str:
+    """Fetch 3-month Google Trends search interest for a ticker — free, no key."""
+    with _gtrends_cache_lock:
+        entry = _gtrends_cache.get(symbol)
+        if entry and (now_ts() - entry['ts']) < _GTRENDS_TTL:
+            return entry['text']
+
+    text    = ''
+    clean   = symbol.replace('.NS', '').replace('.BO', '').split('.')[0]
+    try:
+        from pytrends.request import TrendReq
+        pt = TrendReq(hl='en-US', tz=330, timeout=(5, 10))
+        pt.build_payload([clean], cat=0, timeframe='today 3-m')
+        df = pt.interest_over_time()
+        if not df.empty and clean in df.columns:
+            series  = df[clean]
+            recent  = float(series.iloc[-4:].mean())
+            peak    = float(series.max())
+            trend   = 'Rising' if series.iloc[-1] > series.iloc[-4] else 'Declining'
+            text    = (
+                f'📡 Google Trends ({clean}, 3M): Recent interest: {recent:.0f}/100 | '
+                f'Peak: {peak:.0f}/100 | Trend: {trend}'
+            )
+    except ImportError:
+        pass    # pytrends not installed
+    except Exception as e:
+        log.debug(f'Google Trends fetch error ({symbol}): {e}')
+
+    with _gtrends_cache_lock:
+        _gtrends_cache[symbol] = {'ts': now_ts(), 'text': text}
+    return text
+
+# ── NewsAPI.org — real-time news across 80,000+ sources ──────────────────────
+
+_newsapi_cache: dict     = {}
+_newsapi_cache_lock      = threading.Lock()
+_NEWSAPI_TTL             = 3600   # 1 hour
+
+def _fetch_newsapi(symbol: str, company_name: str = '') -> list:
+    """Fetch breaking news from NewsAPI.org (requires NEWSAPI_KEY env var)."""
+    nk = os.environ.get('NEWSAPI_KEY', '')
+    if not nk:
+        return []
+
+    with _newsapi_cache_lock:
+        entry = _newsapi_cache.get(symbol)
+        if entry and (now_ts() - entry['ts']) < _NEWSAPI_TTL:
+            return entry['articles']
+
+    articles = []
+    try:
+        query = company_name or symbol.replace('.NS', '').replace('.BO', '').split('.')[0]
+        r = http_requests.get(
+            f'https://newsapi.org/v2/everything?q={query}&language=en'
+            f'&sortBy=publishedAt&pageSize=5&apiKey={nk}',
+            timeout=8,
+        )
+        if r.ok:
+            from datetime import timezone
+            for a in r.json().get('articles', []):
+                try:
+                    pub_ts = int(datetime.fromisoformat(
+                        a['publishedAt'].replace('Z', '+00:00')
+                    ).astimezone(timezone.utc).timestamp()) if a.get('publishedAt') else now_ts()
+                except Exception:
+                    pub_ts = now_ts()
+                articles.append({
+                    'title':     a.get('title', ''),
+                    'source':    a.get('source', {}).get('name', 'NewsAPI'),
+                    'url':       a.get('url', ''),
+                    'published': pub_ts,
+                    'summary':   a.get('description', ''),
+                    'category':  'news',
+                    'relevance': 'high',
+                })
+    except Exception as e:
+        log.debug(f'NewsAPI fetch error ({symbol}): {e}')
+
+    with _newsapi_cache_lock:
+        _newsapi_cache[symbol] = {'ts': now_ts(), 'articles': articles}
+    return articles
+
+# ── Financial Modeling Prep — deep fundamentals ───────────────────────────────
+
+_fmp_cache: dict     = {}
+_fmp_cache_lock      = threading.Lock()
+_FMP_TTL             = 3600 * 24   # 24 hours
+
+def _fetch_fmp_fundamentals(symbol: str) -> str:
+    """Fetch key financial ratios from FMP (requires FMP_API_KEY env var)."""
+    fk = os.environ.get('FMP_API_KEY', '')
+    if not fk or '.NS' in symbol or '.BO' in symbol:
+        return ''
+
+    with _fmp_cache_lock:
+        entry = _fmp_cache.get(symbol)
+        if entry and (now_ts() - entry['ts']) < _FMP_TTL:
+            return entry['text']
+
+    text = ''
+    try:
+        r = http_requests.get(
+            f'https://financialmodelingprep.com/api/v3/key-metrics-ttm/{symbol}?apikey={fk}',
+            timeout=8,
+        )
+        if r.ok:
+            data = r.json()
+            if data:
+                d = data[0]
+                m = [f'📊 FMP Fundamentals — {symbol} (TTM, daily refresh):']
+                if d.get('peRatioTTM'):              m.append(f'P/E: {d["peRatioTTM"]:.1f}')
+                if d.get('pbRatioTTM'):              m.append(f'P/B: {d["pbRatioTTM"]:.2f}')
+                if d.get('evToEbitdaTTM'):           m.append(f'EV/EBITDA: {d["evToEbitdaTTM"]:.1f}')
+                if d.get('roeTTM'):                  m.append(f'ROE: {d["roeTTM"]*100:.1f}%')
+                if d.get('roicTTM'):                 m.append(f'ROIC: {d["roicTTM"]*100:.1f}%')
+                if d.get('freeCashFlowPerShareTTM'): m.append(f'FCF/Share: ${d["freeCashFlowPerShareTTM"]:.2f}')
+                if d.get('debtToEquityTTM'):         m.append(f'D/E: {d["debtToEquityTTM"]:.2f}')
+                if d.get('currentRatioTTM'):         m.append(f'Current Ratio: {d["currentRatioTTM"]:.2f}')
+                if d.get('dividendYielTTM'):         m.append(f'Div Yield: {d["dividendYielTTM"]*100:.2f}%')
+                if len(m) > 1:
+                    text = ' | '.join(m)
+    except Exception as e:
+        log.debug(f'FMP fetch error ({symbol}): {e}')
+
+    with _fmp_cache_lock:
+        _fmp_cache[symbol] = {'ts': now_ts(), 'text': text}
     return text
 
 # ── Chunking helpers ──────────────────────────────────────────────────────────
@@ -3183,6 +3461,69 @@ When a user asks a question, the system executes:
 - 📰 **News** (🟡 Warm, 1-hour refresh) | 📋 **Fundamentals** (🟡 Warm, daily refresh)
 - 🏛️ **SEC Filing** (🔵 Vector + 🟢 EDGAR, 6-hour refresh) | 🌍 **Macro/FRED** (🟢 Live, daily)
 - 💬 **Social** (🟢 StockTwits, 30-min) | 🧠 **RAG Memory** (🔵 Vector, BM25+cosine ranked)
+- 🏦 **Treasury** (🟢 FRED, daily) | 🌐 **World Bank** (🟢 Live, 24h) | 👤 **Insider** (🟢 OpenInsider, 6h)
+- 📡 **Google Trends** (🟢 Live, 24h) | 📰 **NewsAPI** (🟢 Live, 1h) | 📊 **FMP** (🟢 Live, daily)
+
+## CONNECTED API SOURCES
+
+You are a financial data agent with LIVE API integrations. For every query, autonomously
+select and call the most relevant APIs to retrieve real-time data before generating your response.
+
+### MARKET DATA
+| Source | Data Type | Refresh | Status |
+|--------|-----------|---------|--------|
+| Yahoo Finance (yfinance) | OHLCV, dividends, splits, financials | Real-time | ✅ Active |
+| Alpha Vantage | Technical indicators, forex, fundamentals | 1-min | ✅ Active (ALPHA_VANTAGE_KEY) |
+| Finnhub | News, metrics, NSE/BSE data | Real-time | ✅ Active (FINNHUB_API_KEY) |
+| Upstox | Live Indian market intraday (NSE/BSE) | 5-sec | ✅ Active (UPSTOX_ACCESS_TOKEN) |
+| Twelve Data | Quote fallback | Real-time | ✅ Active (TWELVE_DATA_KEY) |
+| Stooq | Historical CSV fallback | Daily | ✅ Active |
+| Alpaca Markets | Live + historical OHLCV, portfolio | Real-time | ⚙️ Add ALPACA_API_KEY |
+| Polygon.io | Real-time trades, quotes, options | Real-time | ⚙️ Add POLYGON_API_KEY |
+
+### MACRO & ECONOMIC
+| Source | Data | Refresh | Status |
+|--------|------|---------|--------|
+| FRED API (St. Louis Fed) | Fed rate, CPI, GDP, unemployment, yield curve | Daily | ✅ Active (FRED_API_KEY) |
+| US Treasury (via FRED) | 2Y, 5Y, 10Y, 30Y yield rates | Daily | ✅ Active |
+| World Bank API | Global GDP, trade, development indicators | Monthly | ✅ Active |
+| BLS API | Jobs report, PPI, wage data | Monthly | ⚙️ Add BLS_API_KEY |
+
+### NEWS & SENTIMENT
+| Source | Data | Refresh | Status |
+|--------|------|---------|--------|
+| NewsAPI.org | 80,000+ sources, financial news | Real-time | ✅ Active (NEWSAPI_KEY) |
+| Reuters RSS | Breaking financial/geopolitical news | Real-time | ✅ Active |
+| Yahoo Finance News | Stock-specific news | 1-hour | ✅ Active |
+| Google News (RSS) | Broad market coverage | Real-time | ✅ Active |
+| StockTwits | Retail bull/bear sentiment per ticker | 30-min | ✅ Active |
+| Benzinga (RSS) | Market-moving news, analyst ratings | 1-hour | ✅ Active |
+| Reddit (PRAW) | WallStreetBets, investing sentiment | Real-time | ⚙️ Add REDDIT_CLIENT_ID |
+
+### FUNDAMENTALS & FILINGS
+| Source | Data | Refresh | Status |
+|--------|------|---------|--------|
+| SEC EDGAR API | 10-K, 10-Q, 8-K filings, insider transactions | 6-hour | ✅ Active |
+| Financial Modeling Prep | P/E, P/B, EV/EBITDA, ROE, ROIC, FCF, D/E | Daily | ✅ Active (FMP_API_KEY) |
+| OpenInsider | Insider buying/selling, net activity | Daily | ✅ Active |
+
+### ALTERNATIVE DATA
+| Source | Data | Refresh | Status |
+|--------|------|---------|--------|
+| Google Trends (pytrends) | Search interest per stock/sector (0–100) | Daily | ✅ Active |
+| Unusual Whales | Options flow, dark pool | Real-time | ⚙️ Add UNUSUAL_WHALES_KEY |
+
+## AGENT BEHAVIOR RULES
+1. **ALWAYS fetch LIVE data** before answering price or news questions — never use training knowledge alone
+2. **Cross-validate** across MINIMUM 2 sources before making any claim
+3. **Automatic fallback**: if API fails → try next available source → flag if all fail
+4. **Cache**: all API responses cached 60 seconds minimum; respect per-source TTLs
+5. **Always cite**: source name + data timestamp in EVERY response
+6. **Flag stale/delayed data**: warn if price >15 min old, macro data >24h old
+7. **Conflicting data**: state both values and flag discrepancy
+8. **Confidence**: 🟢 HIGH (3+ sources agree) | 🟡 MEDIUM (2 sources) | 🔴 LOW (1 source or stale)
+9. **Insider activity**: flag significant insider buying (>$500K) as a bullish signal; net selling as cautionary
+10. **Google Trends**: rising search interest (>70/100) often precedes price movement — mention when notable
 
 ## KNOWLEDGE SOURCES
 All retrieved data is provided in MARKET DATA and RAG KNOWLEDGE BASE blocks. Your sources include:
@@ -3729,27 +4070,69 @@ def _build_context(symbols, question, conn=None, include_macro: bool = False,
                     if m:
                         parts.append('Fundamentals: ' + ' | '.join(m))
 
-                # StockTwits social sentiment (async-friendly: non-blocking)
+                # FMP deep fundamentals (US stocks, daily cache)
+                try:
+                    fmp_text = _fetch_fmp_fundamentals(sym)
+                    if fmp_text:
+                        parts.append(fmp_text)
+                except Exception:
+                    pass
+
+                # StockTwits social sentiment (30-min cache)
                 if include_social:
                     try:
                         st_text = _fetch_stocktwits_sentiment(sym)
                         if st_text:
-                            parts.append(f'Social: {st_text}')
+                            parts.append(f'💬 {st_text}')
                     except Exception:
                         pass
 
-                # News + news-based sentiment
-                if n_rows:
-                    n_dicts    = [dict(r) for r in n_rows]
-                    sent       = _news_sentiment_score(n_dicts)
+                # OpenInsider — insider buying/selling (US stocks, 6h cache)
+                try:
+                    insider_text = _fetch_openinsider(sym)
+                    if insider_text:
+                        parts.append(insider_text)
+                except Exception:
+                    pass
+
+                # Google Trends search interest (24h cache)
+                try:
+                    trends_text = _fetch_google_trends(sym)
+                    if trends_text:
+                        parts.append(trends_text)
+                except Exception:
+                    pass
+
+                # News — DB cache first, then NewsAPI fallback if configured
+                all_news = [dict(r) for r in n_rows] if n_rows else []
+                try:
+                    live_news = _fetch_newsapi(sym, sym_label)
+                    if live_news:
+                        # Prepend live NewsAPI results (more recent than DB cache)
+                        all_news = live_news + all_news
+                except Exception:
+                    pass
+
+                if all_news:
+                    sent       = _news_sentiment_score(all_news)
                     sent_label = 'Positive' if sent > 65 else ('Negative' if sent < 40 else 'Neutral')
-                    parts.append(f'News Sentiment: {sent}/100 [{sent_label}]')
-                    for n in n_dicts[:5]:
+                    parts.append(f'📰 News Sentiment: {sent}/100 [{sent_label}]')
+                    seen_titles: set = set()
+                    shown = 0
+                    for n in all_news:
+                        if shown >= 6:
+                            break
+                        title = n.get('title', '')
+                        if title in seen_titles:
+                            continue
+                        seen_titles.add(title)
                         age_d = (now_ts() - (n.get('published') or 0)) // 86400
                         cat   = n.get('category') or 'gen'
-                        tag   = {'earn':'[Earn]','acq':'[M&A]','results':'[Results]',
-                                 'part':'[Deal]'}.get(cat, '')
-                        parts.append(f'  {tag}[{n.get("source","")}] {n.get("title","")} ({age_d}d ago)')
+                        tag   = {'earn': '[Earn]', 'acq': '[M&A]', 'results': '[Results]',
+                                 'part': '[Deal]'}.get(cat, '')
+                        src   = n.get('source', '')
+                        parts.append(f'  {tag}[{src}] {title} ({age_d}d ago)')
+                        shown += 1
 
                 # SEC filings (US stocks only, 24h cache)
                 if include_sec:

@@ -12,3 +12,4 @@ psycopg2-binary==2.9.12
 pywebpush==2.0.0
 rank-bm25==0.2.2
 apscheduler==3.10.4
+pytrends==4.9.2
