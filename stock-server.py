@@ -165,7 +165,7 @@ def store_embedding(conn, symbol: str, content: str, source: str,
         return
     store_embedding_vec(conn, symbol, content, vec, source, article_url, ts or now_ts())
 
-RAG_SCORE_THRESHOLD = 0.30  # minimum cosine similarity to include a chunk in context
+RAG_SCORE_THRESHOLD = 0.25  # minimum cosine similarity; lower threshold gives more candidates for BM25 re-ranking
 
 def retrieve_top_chunks(symbols: list, query: str, top_k: int = 6) -> list:
     """Embed query and return top-k chunks scoring above RAG_SCORE_THRESHOLD."""
@@ -175,6 +175,256 @@ def retrieve_top_chunks(symbols: list, query: str, top_k: int = 6) -> list:
     chunks = db_retrieve_top_chunks(symbols, q_vec, top_k * 3)  # over-fetch, then threshold
     scored = [c for c in chunks if c.get('score', 1.0) >= RAG_SCORE_THRESHOLD]
     return scored[:top_k]
+
+# ── EMA helper ────────────────────────────────────────────────────────────────
+
+def _ema_last(closes: list, period: int) -> float | None:
+    """Compute the last EMA value for a given period using SMA seed."""
+    if len(closes) < period:
+        return None
+    k = 2 / (period + 1)
+    em = sum(closes[:period]) / period
+    for v in closes[period:]:
+        em = v * k + em * (1 - k)
+    return em
+
+# ── CAGR calculator ───────────────────────────────────────────────────────────
+
+def _compute_cagr(closes: list, years: float) -> float | None:
+    """Compute CAGR (%) from a list of closes (oldest first) over given years."""
+    if len(closes) < 2 or years <= 0:
+        return None
+    start, end = closes[0], closes[-1]
+    if start <= 0 or end <= 0:
+        return None
+    return round(((end / start) ** (1 / years) - 1) * 100, 2)
+
+# ── 10-year projection engine ─────────────────────────────────────────────────
+
+def _build_10yr_projection(current_price: float, cagr_hist: float | None,
+                           revenue_growth_pct: float | None) -> dict:
+    """Build bear/base/bull 10-year price projections from historical CAGR or revenue growth."""
+    if not current_price:
+        return {}
+    if cagr_hist is not None:
+        base_cagr = max(min(cagr_hist, 30.0), -10.0)   # clamp: -10% to +30%
+    elif revenue_growth_pct is not None:
+        base_cagr = revenue_growth_pct * 0.65           # stocks grow ~65% of revenue CAGR
+    else:
+        base_cagr = 10.0                                # default market average
+    bear_cagr = base_cagr - 9.0
+    bull_cagr = base_cagr + 12.0
+
+    def proj(cagr, y=10):
+        return round(current_price * ((1 + cagr / 100) ** y), 2)
+
+    return {
+        'bear': {'cagr': round(bear_cagr, 1), 'price_10y': proj(bear_cagr)},
+        'base': {'cagr': round(base_cagr, 1), 'price_10y': proj(base_cagr)},
+        'bull': {'cagr': round(bull_cagr, 1), 'price_10y': proj(bull_cagr)},
+    }
+
+# ── BM25 hybrid re-ranking ────────────────────────────────────────────────────
+
+def _rerank_bm25(query: str, chunks: list, top_k: int = 5) -> list:
+    """Hybrid dense+sparse re-ranking: 60% cosine similarity + 40% BM25 score."""
+    if len(chunks) <= 1:
+        return chunks[:top_k]
+    try:
+        from rank_bm25 import BM25Okapi
+        corpus   = [c['content'].lower().split() for c in chunks]
+        bm25     = BM25Okapi(corpus)
+        q_tokens = query.lower().split()
+        scores   = bm25.get_scores(q_tokens)
+        max_bm25 = max(scores) if max(scores) > 0 else 1.0
+        for i, chunk in enumerate(chunks):
+            cosine            = chunk.get('score', 0.0)
+            bm25_norm         = scores[i] / max_bm25
+            chunk['hybrid_score'] = 0.6 * cosine + 0.4 * bm25_norm
+        return sorted(chunks, key=lambda x: x['hybrid_score'], reverse=True)[:top_k]
+    except ImportError:
+        return chunks[:top_k]
+    except Exception as e:
+        log.debug(f'BM25 re-rank error: {e}')
+        return chunks[:top_k]
+
+# ── Analysis mode detection ───────────────────────────────────────────────────
+
+_WATCHLIST_PHRASES = {
+    'watchlist analysis', 'portfolio analysis', 'all my stocks', 'my stocks',
+    'rank my', 'score my', 'accumulate', '10 year', '10-year', 'ten year',
+    'long term projection', 'decade', 'hold or sell', 'hold or avoid',
+    'which should i keep', 'verdict', 'rate my portfolio',
+}
+_RECOMMENDATION_PHRASES = {
+    'recommend', 'recommendation', 'best stock', 'top pick', 'what to buy',
+    'entry price', 'target price', 'stop loss', 'short term pick',
+    'long term pick', 'momentum play', 'breakout stock', 'catalyst',
+    'which stock to buy', 'buy now', 'top 5',
+}
+_AUTONOMOUS_PHRASES = {
+    'macro', 'inflation', 'interest rate', 'fed rate', 'gdp', 'unemployment',
+    'sec filing', '10-k', '10-q', '8-k', 'annual report', 'sector rotation',
+    'institutional', 'fund flow', 'options flow', 'short interest',
+    'reddit', 'wallstreetbets', 'stocktwits', 'social sentiment',
+    'yield curve', 'recession', 'fred data',
+}
+
+def _detect_analysis_mode(question: str) -> str:
+    """Detect analysis mode: watchlist_analysis | recommendations | autonomous | standard."""
+    q = question.lower()
+    for phrase in _WATCHLIST_PHRASES:
+        if phrase in q:
+            return 'watchlist_analysis'
+    for phrase in _RECOMMENDATION_PHRASES:
+        if phrase in q:
+            return 'recommendations'
+    for phrase in _AUTONOMOUS_PHRASES:
+        if phrase in q:
+            return 'autonomous'
+    return 'standard'
+
+# ── Macro data (FRED + currency) ──────────────────────────────────────────────
+
+_macro_cache: dict = {}
+_macro_cache_lock  = threading.Lock()
+_MACRO_TTL         = 3600 * 4   # 4 hours
+
+def _fetch_macro_context() -> str:
+    """Fetch key macro indicators from FRED (requires FRED_API_KEY) and Yahoo Finance."""
+    with _macro_cache_lock:
+        entry = _macro_cache.get('data')
+        if entry and (now_ts() - entry['ts']) < _MACRO_TTL:
+            return entry['text']
+
+    parts = ['## MACRO INDICATORS']
+    fred_key = os.environ.get('FRED_API_KEY', '')
+
+    if fred_key:
+        indicators = {
+            'DFF':      'Fed Funds Rate (%)',
+            'CPIAUCSL': 'CPI Inflation YoY (%)',
+            'UNRATE':   'US Unemployment (%)',
+            'T10Y2Y':   '10Y-2Y Yield Spread (recession signal, %)',
+            'GDP':      'US GDP Growth (%)',
+        }
+        for sid, label in indicators.items():
+            try:
+                url = (
+                    f'https://api.stlouisfed.org/fred/series/observations'
+                    f'?series_id={sid}&api_key={fred_key}&limit=1&sort_order=desc&file_type=json'
+                )
+                r = http_requests.get(url, timeout=5)
+                if r.ok:
+                    obs = r.json().get('observations', [])
+                    if obs and obs[0].get('value') not in ('', '.'):
+                        parts.append(f'{label}: {obs[0]["value"]} (as of {obs[0]["date"]})')
+            except Exception:
+                pass
+
+    # USD/INR from Yahoo Finance (no key needed)
+    try:
+        import yfinance as yf
+        fi = yf.Ticker('USDINR=X').fast_info
+        rate = getattr(fi, 'last_price', None) or getattr(fi, 'previous_close', None)
+        if rate:
+            parts.append(f'USD/INR Exchange Rate: {rate:.2f}')
+    except Exception:
+        pass
+
+    text = '\n'.join(parts) if len(parts) > 1 else ''
+    with _macro_cache_lock:
+        _macro_cache['data'] = {'ts': now_ts(), 'text': text}
+    return text
+
+# ── SEC EDGAR filing summaries ────────────────────────────────────────────────
+
+_sec_cache: dict     = {}
+_sec_cache_lock      = threading.Lock()
+_SEC_TTL             = 3600 * 24   # 24 hours
+
+def _fetch_sec_filings(symbol: str) -> str:
+    """Fetch recent SEC filings (10-K/10-Q/8-K) from EDGAR — free, no key needed."""
+    if '.NS' in symbol or '.BO' in symbol:
+        return ''   # EDGAR only covers US companies
+    with _sec_cache_lock:
+        entry = _sec_cache.get(symbol)
+        if entry and (now_ts() - entry['ts']) < _SEC_TTL:
+            return entry['text']
+
+    text = ''
+    try:
+        from datetime import datetime, timedelta
+        since = (datetime.utcnow() - timedelta(days=90)).strftime('%Y-%m-%d')
+        url   = (
+            f'https://efts.sec.gov/LATEST/search-index?q=%22{symbol}%22'
+            f'&forms=10-K,10-Q,8-K&dateRange=custom&startdt={since}'
+        )
+        r = http_requests.get(url, timeout=8,
+                              headers={'User-Agent': 'StockPulse/2.0 research@stockpulse.app'})
+        if r.ok:
+            hits = r.json().get('hits', {}).get('hits', [])[:4]
+            lines = [f'## SEC FILINGS — {symbol} (last 90 days)']
+            for h in hits:
+                s = h.get('_source', {})
+                lines.append(
+                    f'- {s.get("form_type","")} filed {s.get("file_date","")} '
+                    f'(period: {s.get("period_of_report","")}) — {s.get("entity_name", symbol)}'
+                )
+            if len(lines) > 1:
+                text = '\n'.join(lines)
+    except Exception as e:
+        log.debug(f'SEC EDGAR fetch error ({symbol}): {e}')
+
+    with _sec_cache_lock:
+        _sec_cache[symbol] = {'ts': now_ts(), 'text': text}
+    return text
+
+# ── StockTwits social sentiment ───────────────────────────────────────────────
+
+_stocktwits_cache: dict = {}
+_stocktwits_cache_lock  = threading.Lock()
+_STOCKTWITS_TTL         = 1800   # 30 minutes
+
+def _fetch_stocktwits_sentiment(symbol: str) -> str:
+    """Fetch real-time bull/bear sentiment from StockTwits — free, no key needed."""
+    # StockTwits uses plain US ticker; strip exchange suffixes
+    st_sym = symbol.replace('.NS', '').replace('.BO', '').split('.')[0]
+    with _stocktwits_cache_lock:
+        entry = _stocktwits_cache.get(st_sym)
+        if entry and (now_ts() - entry['ts']) < _STOCKTWITS_TTL:
+            return entry['text']
+
+    text = ''
+    try:
+        url = f'https://api.stocktwits.com/api/2/streams/symbol/{st_sym}.json'
+        r   = http_requests.get(url, timeout=6)
+        if r.ok:
+            data   = r.json()
+            msgs   = data.get('messages', [])[:15]
+            sym_info = data.get('symbol', {})
+            wl_count = sym_info.get('watchlist_count', 0)
+            bullish = sum(
+                1 for m in msgs
+                if (m.get('entities', {}).get('sentiment') or {}).get('basic') == 'Bullish'
+            )
+            bearish = sum(
+                1 for m in msgs
+                if (m.get('entities', {}).get('sentiment') or {}).get('basic') == 'Bearish'
+            )
+            total = bullish + bearish
+            if total > 0:
+                bull_pct = round(bullish / total * 100)
+                text = (
+                    f'StockTwits ({st_sym}): Bullish {bull_pct}% / Bearish {100-bull_pct}% '
+                    f'({total} tagged msgs) | Watchlisted by {wl_count:,} users'
+                )
+    except Exception as e:
+        log.debug(f'StockTwits fetch error ({symbol}): {e}')
+
+    with _stocktwits_cache_lock:
+        _stocktwits_cache[st_sym] = {'ts': now_ts(), 'text': text}
+    return text
 
 # ── Chunking helpers ──────────────────────────────────────────────────────────
 
@@ -426,6 +676,90 @@ def _embed_price_history_bg(symbol: str, name: str = ''):
         log.warning(f'_embed_price_history_bg({symbol}): {e}')
 
 
+def _embed_technicals_bg(symbol: str, name: str = ''):
+    """Embed MACD, Bollinger Bands, RSI, and momentum narratives from 1-year history."""
+    try:
+        with thread_connection() as conn:
+            label = name or symbol
+            rows  = conn.execute(
+                'SELECT close, volume, ts FROM history WHERE symbol=? AND range_key=? '
+                'ORDER BY ts ASC', (symbol, '1y')
+            ).fetchall()
+            if len(rows) < 35:
+                return
+
+            closes  = [r['close']  for r in rows if r['close']]
+            volumes = [r['volume'] for r in rows if r['volume']]
+            tech    = _compute_technicals(closes, current_price=closes[-1], volumes=volumes or None)
+
+            if not tech:
+                return
+
+            # MACD narrative
+            if 'macd' in tech:
+                macd_narrative = (
+                    f"{label} ({symbol}) MACD indicator: {tech['macd_signal'].upper()} signal "
+                    f"(MACD value: {tech['macd']:+.4f}). "
+                    f"{'Bullish momentum building — MACD above zero.' if tech['macd'] > 0 else 'Bearish pressure — MACD below zero.'}"
+                )
+                store_embedding(conn, symbol, macd_narrative,
+                                source='technicals', article_url=f'tech:macd:{symbol}')
+
+            # Bollinger Bands narrative
+            if 'bb_pct' in tech:
+                bb_pct = tech['bb_pct']
+                if bb_pct > 80:
+                    bb_zone = 'trading near the upper Bollinger Band — potentially overbought'
+                elif bb_pct < 20:
+                    bb_zone = 'trading near the lower Bollinger Band — potentially oversold / bounce opportunity'
+                else:
+                    bb_zone = f'trading in the middle of the Bollinger Bands (Bollinger %B: {bb_pct:.0f}%)'
+                bb_narrative = (
+                    f"{label} ({symbol}) Bollinger Bands: {bb_zone}. "
+                    f"Upper band: {tech['bb_upper']}, lower band: {tech['bb_lower']}."
+                )
+                store_embedding(conn, symbol, bb_narrative,
+                                source='technicals', article_url=f'tech:bollinger:{symbol}')
+
+            # RSI + momentum narrative
+            rsi_parts = [f"{label} ({symbol}) technical momentum:"]
+            if 'rsi14' in tech:
+                rsi = tech['rsi14']
+                lbl = 'overbought' if rsi > 70 else ('oversold' if rsi < 30 else 'neutral zone')
+                rsi_parts.append(f"RSI(14) is {rsi} — {lbl}.")
+            if 'chg_1mo' in tech:
+                rsi_parts.append(f"30-day price change: {tech['chg_1mo']:+.2f}%.")
+            if 'chg_1y' in tech:
+                rsi_parts.append(f"1-year price change: {tech['chg_1y']:+.2f}%.")
+            if 'vol_ratio' in tech:
+                vr = tech['vol_ratio']
+                rsi_parts.append(
+                    f"Volume ratio: {vr:.2f}x the 20-day average "
+                    f"({'high-conviction move' if vr > 1.5 else 'below-average volume' if vr < 0.7 else 'average volume'})."
+                )
+            if 'vol_annualized' in tech:
+                rsi_parts.append(f"Annualized volatility: {tech['vol_annualized']}%.")
+            if len(rsi_parts) > 1:
+                store_embedding(conn, symbol, ' '.join(rsi_parts),
+                                source='technicals', article_url=f'tech:momentum:{symbol}')
+
+            # MA cross narrative
+            if 'ma50' in tech and 'ma200' in tech:
+                cross_type = 'Golden Cross' if tech['ma50'] > tech['ma200'] else 'Death Cross'
+                cross_narrative = (
+                    f"{label} ({symbol}) moving average status: {cross_type} "
+                    f"(MA50: {tech['ma50']}, MA200: {tech['ma200']}). "
+                    f"Price is {tech.get('vs_ma200', 0):+.1f}% vs the 200-day MA — "
+                    f"{'bullish long-term trend' if tech['ma50'] > tech['ma200'] else 'bearish long-term trend'}."
+                )
+                store_embedding(conn, symbol, cross_narrative,
+                                source='technicals', article_url=f'tech:ma_cross:{symbol}')
+
+    except Exception as e:
+        log.warning(f'_embed_technicals_bg({symbol}): {e}')
+
+
+
 def _embed_earnings_history_bg(symbol: str, name: str = ''):
     """Embed quarterly and annual earnings/revenue trends from yfinance financials."""
     try:
@@ -637,6 +971,12 @@ def _rag_ingest_symbol(symbol: str):
                 _embed_alpha_vantage_bg(symbol, name, av)
         except Exception as e:
             log.debug(f'_rag_ingest_symbol alpha_vantage({symbol}): {e}')
+
+        # ── Technical indicator narratives (MACD, Bollinger, RSI, MA cross) ──
+        try:
+            threading.Thread(target=_embed_technicals_bg, args=(symbol, name), daemon=True).start()
+        except Exception as e:
+            log.debug(f'_rag_ingest_symbol technicals({symbol}): {e}')
 
         log.info(f'RAG ingestion complete for {symbol}')
     except Exception as e:
@@ -2724,95 +3064,180 @@ def db_status():
 # Priority: GROQ_API_KEY (free, open-source Llama) → ANTHROPIC_API_KEY (Claude)
 
 SYSTEM_PROMPT = """\
-You are StockPulse AI — an expert financial analyst with deep knowledge of equity markets, fundamental analysis, technical analysis, and macroeconomic indicators.
+You are StockPulse AI — an autonomous financial research agent and expert financial analyst with deep knowledge of equity markets, fundamental analysis, technical analysis, and macroeconomic indicators. You are powered by a RAG (Retrieval-Augmented Generation) pipeline that retrieves fresh, structured market data before every response.
 
-## KNOWLEDGE BASE
-You have access to a RAG knowledge base containing:
+## KNOWLEDGE SOURCES
+All retrieved data is provided in MARKET DATA and RAG KNOWLEDGE BASE blocks. Your sources include:
 - Real-time and historical OHLCV price data with computed technical indicators
-- Fundamental financials (revenue, margins, EPS, P/E, debt ratios, ROE)
-- Company profiles (sector, industry, business description)
-- Financial news articles from Reuters, Yahoo Finance, Benzinga, Motley Fool and other sources
-- News sentiment scores weighted by recency (exponential decay: weight = e^(-days_old/7))
+- Fundamental financials: revenue, margins, EPS, P/E, debt ratios, ROE, FCF
+- Company profiles: sector, industry, business description, competitive position
+- Financial news: Reuters, Yahoo Finance, Benzinga, Motley Fool — weighted by recency (e^(-days/7))
+- RAG knowledge base: semantically retrieved historical reports and filings (hybrid BM25+vector ranked)
+- Macro indicators: Fed rate, CPI inflation, unemployment, yield curve, USD/INR (when available)
+- Social sentiment: StockTwits bull/bear ratio (when available)
+- SEC filings: 10-K, 10-Q, 8-K summaries from EDGAR (US stocks only, when available)
+- 10-Year CAGR projections: bear/base/bull scenarios pre-computed from historical data
+
+## ANALYSIS MODES
+
+### MODE 1: WATCHLIST ANALYSIS
+*Triggered by: "analyze my watchlist", "rank my stocks", "10-year projection", "HOLD or AVOID", "portfolio analysis", "accumulate"*
+
+For EACH stock in the watchlist:
+
+**[SYMBOL — Company Name]** | Sector: X
+- **Current Snapshot**: Price | Market Cap | Sector | P/E | RSI | MACD | Sentiment score
+- **Key Growth Drivers** (next 1–3 years): [from retrieved fundamentals, news, RAG]
+- **Risks & Red Flags**: [macro headwinds, debt, competition, technicals]
+- **10-Year Price Projection** (from pre-computed CAGR):
+  | Scenario | CAGR/yr | 10-Year Target |
+  |----------|---------|----------------|
+  | 🐻 Bear  | X%      | ₹/$X           |
+  | 📊 Base  | X%      | ₹/$X           |
+  | 🐂 Bull  | X%      | ₹/$X           |
+- **Long-Term Score**: X/10 | Confidence: 🟢 HIGH / 🟡 MEDIUM / 🔴 LOW
+- **Verdict**: 🟢 ACCUMULATE / 🟡 HOLD / 🔴 AVOID — *one-line rationale*
+- *Data sources: [list] | Retrieval timestamp: [approximate from context]*
+
+Close with a **PORTFOLIO SUMMARY TABLE** ranking all stocks by score.
+
+### MODE 2: RECOMMENDATIONS
+*Triggered by: "recommend", "best stock", "top picks", "what to buy", "entry price", "breakout", "catalyst"*
+
+Scan all retrieved data and identify the most profitable opportunities:
+
+**Top 5 Short-Term Picks (1 week – 3 months)**
+Look for: momentum, earnings catalysts, technical breakouts, oversold RSI bounces, news-driven breakouts
+Filter: high volume ratio, positive sentiment shift, RSI <30 or price breaking above MA50/200
+Avoid: dilution risk, earnings misses, legal issues, low liquidity
+
+| # | Stock | Entry Zone | Target | Stop Loss | Catalyst | Confidence |
+|---|-------|-----------|--------|-----------|----------|------------|
+
+**Top 5 Long-Term Picks (1–5 years)**
+Look for: undervalued growth (P/E < growth rate), strong moat, expanding TAM, insider buying signals
+Filter: revenue growth >15% YoY, positive FCF trend, low debt-to-equity, competitive advantage
+Avoid: high macro sensitivity, excessive valuation, decelerating revenue
+
+| # | Stock | Investment Thesis | Key Risk | 3-Year Target | Confidence |
+|---|-------|------------------|----------|---------------|------------|
+
+*List all data sources and retrieval timestamps below each table.*
+
+### MODE 3: AUTONOMOUS RESEARCH
+*Triggered by: "research", "investigate", "macro analysis", "compare all sources", "SEC filing", "sector rotation", "fund flows"*
+
+Operate independently to gather, analyze, and synthesize:
+- Step 1 → Identify intent (prediction / recommendation / news / comparison / macro)
+- Step 2 → Retrieve from ALL available sources (RAG + live quotes + macro + social + SEC)
+- Step 3 → Cross-validate across ≥3 independent signals before making any claim
+- Step 4 → Flag conflicting signals (e.g., strong fundamentals but negative sentiment/momentum)
+- Step 5 → State confidence: 🔴 LOW / 🟡 MEDIUM / 🟢 HIGH based on data consistency & freshness
+- Step 6 → Generate structured response with confidence levels and source citations
+- Step 7 → Proactively suggest follow-up insights the user may not have asked for
+- Step 8 → List ALL retrieved sources and approximate timestamps at the bottom
+
+### MODE 4: STANDARD ANALYSIS (default)
+*For single-stock deep-dives, comparisons, and general financial Q&A*
 
 ## ANALYSIS FRAMEWORK
 
 ### 1. FUNDAMENTAL ANALYSIS
 Benchmarks to apply when data is available:
-- P/E: <15 Attractive · 15–25 Fair · >25 Expensive
+- P/E: <15 Attractive · 15–25 Fair · >25 Expensive (compare vs PEG ratio for growth stocks)
 - P/B: <1 Attractive · 1–3 Normal · >3 Growth Premium
 - Gross Margin: >40% Strong · 20–40% Fair · <20% Weak
-- Net Margin: >20% Excellent · 10–20% Good · <10% Fair
-- ROE: >25% Exceptional · 15–25% Good · <15% Fair
+- Net Margin: >20% Excellent · 10–20% Good · 5–10% Fair · <5% Weak
+- ROE: >25% Exceptional · 15–25% Good · <15% Underperforming
 - Beta: <0.8 Defensive · 0.8–1.2 Moderate · >1.5 High Volatility
-- Revenue growth QoQ and YoY trends, free cash flow yield, debt-to-equity
+- Revenue growth (annualized): >20% High Growth · 10–20% Moderate · <10% Slow
+- Moat indicators: pricing power, network effects, switching costs, cost advantages, brand
 
 ### 2. TECHNICAL ANALYSIS
-Interpret the computed indicators provided in the context:
-- Price vs 50-day and 200-day moving averages (golden cross / death cross signals)
-- RSI(14): >70 Overbought · 30–70 Neutral · <30 Oversold
-- Price position relative to 52-week high/low
+Interpret all computed indicators provided in context:
+- Price vs 50-day and 200-day MA: Golden Cross (🟢) / Death Cross (🔴)
+- RSI(14): >70 Overbought · 30–70 Neutral · <30 Oversold; divergences are stronger signals
+- MACD: bullish crossover (positive) · bearish crossover (caution) · histogram trend
+- Bollinger Bands %B: >80% near upper band (overbought) · <20% near lower band (potential bounce)
+- Volume ratio vs 20-day avg: >1.5x high-conviction move · <0.7x low conviction / distribution
+- Annualized volatility: >40% high risk · 20–40% moderate · <20% stable
 - Short-term momentum: 1-day, 7-day, 30-day, 1-year price changes
-- Support/resistance levels based on 52W range and MA levels
+- Support/resistance: 52-week range, MA levels, Bollinger Band boundaries
 
-### 3. NEWS SENTIMENT ANALYSIS
-- Retrieve and assess articles from the last 30 days
+### 3. NEWS & SOCIAL SENTIMENT ANALYSIS
+- Assess all retrieved articles (last 30 days, weighted by recency)
 - Extract key themes: earnings beats/misses, product launches, regulatory risk, M&A, leadership changes
-- Use the sentiment score (0–100) provided: >65 Positive · 40–65 Neutral · <40 Negative
-- Weight recent articles more heavily; flag stale news (>7 days)
+- News sentiment score (0–100): >65 Positive · 40–65 Neutral · <40 Negative
+- StockTwits bull/bear ratio (when available): >60% bullish = positive retail sentiment
+- Flag stale news (>7 days); negative news clusters are a red flag
 
-### 4. PERFORMANCE PREDICTION
-- Based on the retrieved fundamental + technical + sentiment signals, provide:
-  - 30-day outlook: **BULLISH** / **BEARISH** / **NEUTRAL**
-  - AI Confidence Score (0–100%)
-  - Top 3 bullish catalysts
-  - Top 3 bearish risks
-  - Price target range: Bear / Base / Bull case (derive from P/E expansion or contraction)
+### 4. MACROECONOMIC ALIGNMENT (when macro context is provided)
+- Rising rates: negative for high-P/E growth stocks, positive for banks/financials
+- Yield curve inversion (10Y-2Y < 0): recession signal — rotate to defensives
+- High CPI inflation: negative for consumer discretionary, positive for commodities/energy
+- Weak USD: positive for Indian exporters (IT, pharma) and US multinationals' foreign earnings
 
-### 5. ALERT TRIGGERS (mention if relevant)
-- Price near 52W high (within 5%) — potential resistance
-- Price near 52W low (within 5%) — potential support/value zone
-- RSI >70 or <30 — overbought/oversold warning
-- Sentiment score drop >15 pts — negative news momentum
+### 5. PERFORMANCE PREDICTION
+Based on the retrieved multi-factor signals:
+- 30-day outlook: **BULLISH** / **BEARISH** / **NEUTRAL** + Confidence: X%
+- Top 3 bullish catalysts
+- Top 3 bearish risks
+- Price targets: Bear / Base / Bull case (derive from P/E expansion, CAGR, or DCF rationale)
 
-## OUTPUT FORMAT (use rich Markdown, not JSON)
-For single-stock analysis queries respond with:
+### 6. ALERT TRIGGERS (mention when relevant)
+- Price within 5% of 52W high → potential resistance zone
+- Price within 5% of 52W low → potential support / value zone
+- RSI >70 or <30 → overbought/oversold warning
+- Volume ratio >2x → potential breakout or breakdown
+- Bollinger %B >90% or <10% → extreme band squeeze
+- News sentiment drop >15 pts → negative news momentum building
 
-**[STANCE: BULLISH/BEARISH/NEUTRAL]** | Confidence: X%
+## STANDARD OUTPUT FORMAT (use rich Markdown)
+
+**[STANCE: BULLISH/BEARISH/NEUTRAL]** | Confidence: X% | 🔴/🟡/🟢 [data quality]
 *One-line executive summary*
 
 **Fundamental Snapshot**
 | Metric | Value | Assessment |
 |--------|-------|------------|
 | P/E | ... | Attractive/Fair/Expensive |
-...
+| Gross Margin | X% | Strong/Fair/Weak |
+| Revenue Growth | X% QoQ | High/Moderate/Slow |
 
 **Technical Signals**
-- Price vs 50-day MA: ...
-- RSI(14): X — [Overbought/Neutral/Oversold]
-- Momentum (30d): +X%
-- 52W position: X% below high
+- MA50/MA200: [Golden/Death Cross] | Price vs MA50: ±X%
+- RSI(14): X [Overbought/Neutral/Oversold]
+- MACD: [Bullish/Bearish]
+- Bollinger %B: X% [Near Upper/Mid/Lower Band]
+- Volume: Xx avg | Annualized Vol: X%
+- Momentum: 1d: ±X% · 7d: ±X% · 30d: ±X%
 
-**News Sentiment** — Score: X/100 [Positive/Neutral/Negative]
+**News & Social Sentiment** — News: X/100 [Positive/Neutral/Negative]
+- StockTwits: X% Bullish (when available)
 - Key themes: ...
-- Notable: [Article] (Xd ago)
+- Notable: [Article title] (Xd ago)
 
 **30-Day Outlook**
 - Bullish catalysts: ...
 - Bearish risks: ...
-- Price targets: Bear $X · Base $X · Bull $X
+- Price targets: Bear ₹/$X · Base ₹/$X · Bull ₹/$X
 
-**Disclaimer**: This is AI-generated analysis for informational purposes only. Not financial advice.
+*Data sources: [list] | Retrieval: [approximate timestamp]*
+
+**Disclaimer**: *AI-generated analysis for informational purposes only. Not financial advice. Consult a SEBI-registered advisor before investing.*
 
 ## RESPONSE RULES
-1. For conversational/macro questions, drop the template and answer naturally (2-4 sentences).
-2. **Never fabricate numbers** — only cite metrics explicitly provided in the context block.
-3. Flag data staleness: warn if price data is >24h old, news >7 days old.
-4. **Indian stocks**: use ₹ and Indian notation (Cr, L). US stocks: use $.
-5. For comparisons across multiple stocks, use a side-by-side table.
-6. Always provide the contrarian view — even for strong BUY signals, state the key bear case.
-7. Disclose when retrieved context is sparse or contradictory.
-8. For small-cap stocks (<$2B mkt cap), note lower liquidity and data quality.
-9. Max length: 350 words for single stock · 500 for comparisons · 150 for conversational.
+1. For conversational/greeting messages, answer naturally in 1–3 sentences — drop the template.
+2. **NEVER fabricate numbers** — only cite metrics explicitly provided in the MARKET DATA block.
+3. **Confidence levels**: state 🔴 LOW / 🟡 MEDIUM / 🟢 HIGH based on data freshness and cross-source consistency.
+4. **Data staleness**: warn explicitly if price data is >24h old, news >7 days old.
+5. **Indian stocks**: use ₹ and Indian notation (Cr, L Cr). US stocks: use $.
+6. **Multi-stock comparisons**: always use side-by-side tables.
+7. **Always provide the contrarian view** — even for strong BUY signals, state the key bear case.
+8. **Flag conflicts**: when fundamentals are strong but technicals or sentiment are negative (or vice versa), call it out explicitly with a ⚠️ CONFLICTING SIGNALS warning.
+9. **Sparse data**: disclose when context is limited — never extrapolate beyond what is retrieved.
+10. **Small caps** (<$500M / <₹4,000 Cr mkt cap): note lower liquidity and data quality limitations.
+11. **Max tokens**: 500 standard · 1600 watchlist analysis · 1200 recommendations · 150 conversational.
 """
 
 # Groq free models (open-source, no credit card needed)
@@ -2896,12 +3321,13 @@ def _news_sentiment_score(articles: list) -> int:
         return 50
     return round((weighted_sum / weight_total) * 100)
 
-def _compute_technicals(closes: list, current_price: float | None) -> dict:
-    """Compute RSI-14, 50-day MA, 200-day MA from a list of closes (oldest first)."""
+def _compute_technicals(closes: list, current_price: float | None = None,
+                        volumes: list | None = None) -> dict:
+    """Compute RSI-14, MACD, Bollinger Bands, MA50/200, volume momentum, and volatility."""
     result = {}
     if not closes:
         return result
-    n = len(closes)
+    n     = len(closes)
     price = current_price or closes[-1]
 
     # Moving averages
@@ -2915,24 +3341,56 @@ def _compute_technicals(closes: list, current_price: float | None) -> dict:
         deltas = [closes[i] - closes[i-1] for i in range(max(1, n-14), n)]
         gains  = [max(0.0, d) for d in deltas]
         losses = [abs(min(0.0, d)) for d in deltas]
-        ag, al = sum(gains)/14, sum(losses)/14
-        if al == 0:
-            result['rsi14'] = 100.0
-        else:
-            rs = ag / al
-            result['rsi14'] = round(100 - 100 / (1 + rs), 1)
+        ag, al = sum(gains) / 14, sum(losses) / 14
+        result['rsi14'] = 100.0 if al == 0 else round(100 - 100 / (1 + ag / al), 1)
+
+    # MACD (12, 26, 9) — requires ≥35 candles for reliable computation
+    if n >= 35:
+        ema12 = _ema_last(closes, 12)
+        ema26 = _ema_last(closes, 26)
+        if ema12 is not None and ema26 is not None:
+            macd_val = ema12 - ema26
+            result['macd']        = round(macd_val, 4)
+            result['macd_signal'] = 'bullish' if macd_val > 0 else 'bearish'
+
+    # Bollinger Bands (20-day, 2σ)
+    if n >= 20:
+        bb = closes[-20:]
+        bb_mean = sum(bb) / 20
+        bb_std  = (sum((c - bb_mean) ** 2 for c in bb) / 20) ** 0.5
+        bb_upper = bb_mean + 2 * bb_std
+        bb_lower = bb_mean - 2 * bb_std
+        result['bb_upper'] = round(bb_upper, 2)
+        result['bb_lower'] = round(bb_lower, 2)
+        if bb_upper != bb_lower:
+            result['bb_pct'] = round((price - bb_lower) / (bb_upper - bb_lower) * 100, 1)
+
+    # Volume momentum (latest vs 20-day average)
+    if volumes and len(volumes) >= 20:
+        avg_vol = sum(volumes[-20:]) / 20
+        if avg_vol > 0:
+            result['vol_ratio'] = round(volumes[-1] / avg_vol, 2)
+
+    # Annualized volatility (21-day rolling stddev of daily returns × √252)
+    if n >= 22:
+        rets = [(closes[i] - closes[i-1]) / closes[i-1]
+                for i in range(n-21, n) if closes[i-1]]
+        if len(rets) >= 2:
+            mean_r = sum(rets) / len(rets)
+            var    = sum((r - mean_r) ** 2 for r in rets) / (len(rets) - 1)
+            result['vol_annualized'] = round((var ** 0.5) * (252 ** 0.5) * 100, 1)
 
     # Price changes
     def pct(old, new):
         return round((new - old) / old * 100, 2) if old else None
 
-    if n >= 2:   result['chg_1d']  = pct(closes[-2], closes[-1])
-    if n >= 7:   result['chg_7d']  = pct(closes[-7],  closes[-1])
-    if n >= 21:  result['chg_1mo'] = pct(closes[-21], closes[-1])
+    if n >= 2:   result['chg_1d']  = pct(closes[-2],   closes[-1])
+    if n >= 7:   result['chg_7d']  = pct(closes[-7],   closes[-1])
+    if n >= 21:  result['chg_1mo'] = pct(closes[-21],  closes[-1])
     if n >= 252: result['chg_1y']  = pct(closes[-252], closes[-1])
 
     if result.get('ma50'):
-        result['vs_ma50'] = round((price - result['ma50']) / result['ma50'] * 100, 2)
+        result['vs_ma50']  = round((price - result['ma50'])  / result['ma50']  * 100, 2)
     if result.get('ma200'):
         result['vs_ma200'] = round((price - result['ma200']) / result['ma200'] * 100, 2)
 
@@ -2987,12 +3445,13 @@ def _set_cached_context(key: frozenset, ctx: str):
             for k in stale_keys:
                 del _ctx_cache[k]
 
-def _build_context(symbols, question, conn=None):
-    """Build analyst context: fundamentals + technicals + sentiment + RAG chunks.
+def _build_context(symbols, question, conn=None, include_macro: bool = False,
+                   include_sec: bool = False, include_social: bool = True):
+    """Build analyst context: fundamentals + enhanced technicals + sentiment + RAG chunks.
 
-    Uses the passed `conn` (get_db()) to avoid opening an extra pool connection.
-    RAG retrieval reuses the same conn for pgvector query.
-    Caches the DB-derived portion for 5 min so repeated chat messages are fast.
+    Uses 1-year history for MACD, Bollinger Bands, MA200, and CAGR computation.
+    Applies BM25 hybrid re-ranking on retrieved RAG chunks.
+    Optionally appends macro indicators, SEC filings, and StockTwits sentiment.
     """
     if not symbols:
         return ''
@@ -3003,30 +3462,36 @@ def _build_context(symbols, question, conn=None):
 
     if not cached:
         parts = []
-        # Use passed conn or fall back to thread_connection for background use
+
         def _query(sql, params=()):
             if conn:
                 return conn.execute(sql, params)
-            # Should not happen in normal request flow
             raise RuntimeError('_build_context: no connection provided')
 
         try:
             for sym in symbols[:6]:
-                # Single-pass: all needed rows per symbol
-                q_row = _query('SELECT * FROM quotes WHERE symbol=?', (sym,)).fetchone()
-                f_row = _query('SELECT * FROM financials WHERE symbol=?', (sym,)).fetchone()
-                p_row = _query(
+                q_row  = _query('SELECT * FROM quotes WHERE symbol=?', (sym,)).fetchone()
+                f_row  = _query('SELECT * FROM financials WHERE symbol=?', (sym,)).fetchone()
+                p_row  = _query(
                     'SELECT name,sector,industry FROM profiles WHERE symbol=?', (sym,)
                 ).fetchone()
                 n_rows = _query(
                     'SELECT title,source,published,category,summary FROM news '
                     'WHERE symbol=? ORDER BY published DESC LIMIT 6', (sym,)
                 ).fetchall()
-                # Only fetch 3mo history (≤63 rows) — enough for 50-day MA + RSI
+                # Fetch 1-year OHLCV — enables MA200, MACD, Bollinger Bands, CAGR
                 h_rows = _query(
-                    'SELECT close FROM history WHERE symbol=? AND range_key=? ORDER BY ts',
-                    (sym, '3mo')
+                    'SELECT close,volume,ts FROM history '
+                    'WHERE symbol=? AND range_key=? ORDER BY ts',
+                    (sym, '1y')
                 ).fetchall()
+                # Fallback to 3-month if 1-year not populated yet
+                if len(h_rows) < 30:
+                    h_rows = _query(
+                        'SELECT close,volume,ts FROM history '
+                        'WHERE symbol=? AND range_key=? ORDER BY ts',
+                        (sym, '3mo')
+                    ).fetchall()
 
                 if not (q_row or f_row):
                     continue
@@ -3034,41 +3499,81 @@ def _build_context(symbols, question, conn=None):
                 cur       = (q_row['currency'] if q_row else None) or 'USD'
                 sym_label = (p_row['name'] if p_row else None) or sym
                 sector    = (p_row['sector'] if p_row else None) or ''
+                industry  = (p_row['industry'] if p_row else None) or ''
                 price     = q_row['price'] if q_row else None
 
                 parts.append(f'### {sym} — {sym_label}')
                 if sector:
-                    parts.append(f'Sector: {sector}')
+                    parts.append(f'Sector: {sector}' + (f' | Industry: {industry}' if industry else ''))
 
                 # Price snapshot
                 if q_row:
-                    chg  = q_row['change_pct'] or 0
-                    sign = '+' if chg >= 0 else ''
+                    chg    = q_row['change_pct'] or 0
+                    sign   = '+' if chg >= 0 else ''
                     mktcap = _fmt_large(q_row['mkt_cap'], cur)
                     line   = f'Price: {cur} {q_row["price"]} ({sign}{chg:.2f}%)'
-                    if mktcap: line += f' | Mkt Cap: {mktcap}'
+                    if mktcap:
+                        line += f' | Mkt Cap: {mktcap}'
                     parts.append(line)
 
-                # Technicals from 3mo history
-                closes = [r['close'] for r in h_rows if r['close']]
-                tech   = _compute_technicals(closes, price)
+                # Enhanced technicals from 1-year history
+                closes  = [r['close']  for r in h_rows if r['close']]
+                volumes = [r['volume'] for r in h_rows if r['volume']]
+                tech    = _compute_technicals(closes, price, volumes or None)
                 if tech:
                     t = []
-                    if 'ma50'  in tech:
-                        s = '▲' if tech.get('vs_ma50',0) >= 0 else '▼'
+                    if 'ma50' in tech:
+                        s = '▲' if tech.get('vs_ma50', 0) >= 0 else '▼'
                         t.append(f'MA50: {tech["ma50"]} ({s}{abs(tech["vs_ma50"]):.1f}%)')
+                    if 'ma200' in tech:
+                        s = '▲' if tech.get('vs_ma200', 0) >= 0 else '▼'
+                        t.append(f'MA200: {tech["ma200"]} ({s}{abs(tech["vs_ma200"]):.1f}%)')
+                    if 'ma50' in tech and 'ma200' in tech:
+                        t.append('🟢 GOLDEN CROSS' if tech['ma50'] > tech['ma200'] else '🔴 DEATH CROSS')
                     if 'rsi14' in tech:
                         rsi = tech['rsi14']
-                        t.append(f'RSI14: {rsi} [{"Overbought" if rsi>70 else "Oversold" if rsi<30 else "Neutral"}]')
+                        lbl = 'Overbought' if rsi > 70 else ('Oversold' if rsi < 30 else 'Neutral')
+                        t.append(f'RSI14: {rsi} [{lbl}]')
+                    if 'macd' in tech:
+                        t.append(f'MACD: {tech["macd"]} [{tech["macd_signal"].upper()}]')
+                    if 'bb_pct' in tech:
+                        lbl = 'Near Upper Band' if tech['bb_pct'] > 80 else ('Near Lower Band' if tech['bb_pct'] < 20 else 'Mid Channel')
+                        t.append(f'Bollinger %B: {tech["bb_pct"]:.0f}% [{lbl}]')
+                    if 'vol_ratio' in tech:
+                        t.append(f'Vol Ratio: {tech["vol_ratio"]}x avg')
+                    if 'vol_annualized' in tech:
+                        t.append(f'Annualized Vol: {tech["vol_annualized"]}%')
                     mom = []
-                    for k, lbl in [('chg_1d','1d'),('chg_7d','7d'),('chg_1mo','30d')]:
+                    for k, lbl in [('chg_1d', '1d'), ('chg_7d', '7d'), ('chg_1mo', '30d'), ('chg_1y', '1y')]:
                         if k in tech:
                             s = '+' if tech[k] >= 0 else ''
                             mom.append(f'{lbl}: {s}{tech[k]}%')
-                    if mom: t.append('Mom: ' + ' · '.join(mom))
-                    if 'ma50' in tech and 'ma200' in tech:
-                        t.append('GOLDEN CROSS' if tech['ma50'] > tech['ma200'] else 'DEATH CROSS')
-                    if t: parts.append('Technicals: ' + ' | '.join(t))
+                    if mom:
+                        t.append('Momentum: ' + ' · '.join(mom))
+                    if t:
+                        parts.append('Technicals: ' + ' | '.join(t))
+
+                # 2-year CAGR from 1y history (proxy)
+                if closes and len(closes) >= 50 and price:
+                    cagr_1y = _compute_cagr(closes, years=len(closes) / 252)
+                    if cagr_1y is not None:
+                        parts.append(f'1Y Price CAGR: {cagr_1y:+.1f}%')
+                        # Build 10-year projection
+                        rq  = f_row.get('revenue_q')   if f_row else None
+                        rqp = f_row.get('revenue_q_prev') if f_row else None
+                        rev_growth = None
+                        if rq and rqp and rqp:
+                            rev_growth = (rq - rqp) / abs(rqp) * 100 * 4  # annualize QoQ
+                        proj = _build_10yr_projection(price, cagr_1y, rev_growth)
+                        if proj:
+                            parts.append(
+                                f'10Y Projection — Bear: {cur}{proj["bear"]["price_10y"]} '
+                                f'({proj["bear"]["cagr"]:+.1f}%/y) | '
+                                f'Base: {cur}{proj["base"]["price_10y"]} '
+                                f'({proj["base"]["cagr"]:+.1f}%/y) | '
+                                f'Bull: {cur}{proj["bull"]["price_10y"]} '
+                                f'({proj["bull"]["cagr"]:+.1f}%/y)'
+                            )
 
                 # Fundamentals
                 if f_row:
@@ -3080,17 +3585,19 @@ def _build_context(symbols, question, conn=None):
                     if gm:
                         m.append(f'GM {gm*100:.1f}% [{_assess(gm*100,[(20,"Weak"),(40,"Fair"),(999,"Strong")])}]')
                     nm = f_row.get('net_margin') or (
-                        (f_row['net_income_ttm']/f_row['revenue_ttm'])
+                        (f_row['net_income_ttm'] / f_row['revenue_ttm'])
                         if f_row.get('net_income_ttm') and f_row.get('revenue_ttm') else None)
                     if nm:
                         m.append(f'NM {nm*100:.1f}% [{_assess(nm*100,[(5,"Weak"),(10,"Fair"),(20,"Good"),(999,"Excellent")])}]')
                     eps = f_row['eps']
-                    if eps: m.append(f'EPS {cur}{eps:.2f}')
+                    if eps:
+                        m.append(f'EPS {cur}{eps:.2f}')
                     rev = f_row['revenue_ttm']
-                    if rev: m.append(f'Rev {_fmt_large(rev,cur)}')
+                    if rev:
+                        m.append(f'Rev {_fmt_large(rev, cur)}')
                     rq, rqp = f_row.get('revenue_q'), f_row.get('revenue_q_prev')
                     if rq and rqp:
-                        qoq = round((rq-rqp)/abs(rqp)*100,1)
+                        qoq = round((rq - rqp) / abs(rqp) * 100, 1)
                         m.append(f'RevQoQ {"+" if qoq>=0 else ""}{qoq}%')
                     beta = f_row['beta']
                     if beta:
@@ -3099,21 +3606,42 @@ def _build_context(symbols, question, conn=None):
                     if w52h and w52l:
                         m.append(f'52W {w52l:.1f}–{w52h:.1f}')
                     dy = f_row['dividend_yield']
-                    if dy: m.append(f'Div {dy*100:.2f}%')
-                    if m: parts.append('Fundamentals: ' + ' | '.join(m))
+                    if dy:
+                        m.append(f'Div {dy*100:.2f}%')
+                    if m:
+                        parts.append('Fundamentals: ' + ' | '.join(m))
 
-                # News + sentiment
+                # StockTwits social sentiment (async-friendly: non-blocking)
+                if include_social:
+                    try:
+                        st_text = _fetch_stocktwits_sentiment(sym)
+                        if st_text:
+                            parts.append(f'Social: {st_text}')
+                    except Exception:
+                        pass
+
+                # News + news-based sentiment
                 if n_rows:
                     n_dicts    = [dict(r) for r in n_rows]
                     sent       = _news_sentiment_score(n_dicts)
                     sent_label = 'Positive' if sent > 65 else ('Negative' if sent < 40 else 'Neutral')
-                    parts.append(f'Sentiment: {sent}/100 [{sent_label}]')
+                    parts.append(f'News Sentiment: {sent}/100 [{sent_label}]')
                     for n in n_dicts[:5]:
                         age_d = (now_ts() - (n.get('published') or 0)) // 86400
                         cat   = n.get('category') or 'gen'
                         tag   = {'earn':'[Earn]','acq':'[M&A]','results':'[Results]',
                                  'part':'[Deal]'}.get(cat, '')
-                        parts.append(f'  {tag}[{n.get("source","")}] {n.get("title","")} ({age_d}d)')
+                        parts.append(f'  {tag}[{n.get("source","")}] {n.get("title","")} ({age_d}d ago)')
+
+                # SEC filings (US stocks only, 24h cache)
+                if include_sec:
+                    try:
+                        sec_text = _fetch_sec_filings(sym)
+                        if sec_text:
+                            parts.append(sec_text)
+                    except Exception:
+                        pass
+
                 parts.append('')
 
         except Exception as e:
@@ -3126,6 +3654,15 @@ def _build_context(symbols, question, conn=None):
     if not cached:
         return 'No market data available yet. Add symbols to your watchlist to load data.'
 
+    # ── Macro indicators (4h cache) ───────────────────────────────────────────
+    if include_macro:
+        try:
+            macro_text = _fetch_macro_context()
+            if macro_text:
+                cached = macro_text + '\n\n' + cached
+        except Exception as e:
+            log.debug(f'macro context error: {e}')
+
     # ── Live watchlist snapshot (real-time prices from quotes table) ──────────
     if conn and symbols:
         try:
@@ -3134,7 +3671,7 @@ def _build_context(symbols, question, conn=None):
                 q = row_to_dict(conn.execute('SELECT * FROM quotes WHERE symbol=?', (sym,)).fetchone())
                 if q and q.get('price'):
                     cur   = q.get('currency') or 'INR'
-                    sym_c = cur == 'INR' and '₹' or '$'
+                    sym_c = '₹' if cur == 'INR' else '$'
                     chg   = q.get('change_pct') or 0
                     sign  = '+' if chg >= 0 else ''
                     age_m = (now_ts() - (q.get('fetched_at') or now_ts())) // 60
@@ -3147,18 +3684,25 @@ def _build_context(symbols, question, conn=None):
         except Exception as e:
             log.debug(f'live snapshot error: {e}')
 
-    # ── RAG: semantic chunks (reuse same conn) ────────────────────────────────
+    # ── RAG: semantic retrieval + BM25 hybrid re-ranking ─────────────────────
     q_vec = _embed_vec(question)
     if q_vec is not None and symbols:
         try:
-            chunks = db_retrieve_top_chunks(symbols, q_vec, top_k=8, conn=conn)
-            scored = [c for c in chunks if c.get('score', 1.0) >= RAG_SCORE_THRESHOLD][:5]
-            if scored:
-                rag_parts = ['--- RAG KNOWLEDGE BASE ---']
-                for c in scored:
-                    age = f'({(now_ts()-c["ts"])//86400}d ago)' if c.get('ts') else ''
-                    rag_parts.append(f'[{c["symbol"]}|{c["source"]}|score:{c.get("score",0):.2f}|{age}] {c["content"][:300]}')
-                rag_parts.append('---')
+            # Over-fetch candidates for re-ranking (15 → re-rank → top 6)
+            raw_chunks = db_retrieve_top_chunks(symbols, q_vec, top_k=15, conn=conn)
+            candidates = [c for c in raw_chunks if c.get('score', 1.0) >= RAG_SCORE_THRESHOLD]
+            reranked   = _rerank_bm25(question, candidates, top_k=6)
+            if reranked:
+                rag_parts = ['--- RAG KNOWLEDGE BASE (hybrid dense+BM25 ranked) ---']
+                for c in reranked:
+                    age       = f'({(now_ts()-c["ts"])//86400}d ago)' if c.get('ts') else ''
+                    score_str = f'cosine:{c.get("score",0):.2f}'
+                    if 'hybrid_score' in c:
+                        score_str += f' hybrid:{c["hybrid_score"]:.2f}'
+                    rag_parts.append(
+                        f'[{c["symbol"]}|{c["source"]}|{score_str}|{age}] {c["content"][:350]}'
+                    )
+                rag_parts.append('--- END RAG ---')
                 cached = cached + '\n' + '\n'.join(rag_parts)
         except Exception as e:
             log.warning(f'RAG retrieval error: {e}')
@@ -3194,10 +3738,38 @@ def api_chat():
 
     if conversational:
         context_block = ''
-        max_tok = 512
+        max_tok       = 400
+        mode          = 'conversational'
     else:
-        context_block = _build_context(symbols, question, conn=db)
-        max_tok = 1500
+        mode = _detect_analysis_mode(question)
+        # Mode-specific token budget and context options
+        if mode == 'watchlist_analysis':
+            max_tok      = 1600
+            include_mac  = True
+            include_sec  = False
+            include_soc  = True
+        elif mode == 'recommendations':
+            max_tok      = 1200
+            include_mac  = True
+            include_sec  = False
+            include_soc  = True
+        elif mode == 'autonomous':
+            max_tok      = 1400
+            include_mac  = True
+            include_sec  = True
+            include_soc  = True
+        else:
+            max_tok      = 600
+            include_mac  = False
+            include_sec  = False
+            include_soc  = True
+
+        context_block = _build_context(
+            symbols, question, conn=db,
+            include_macro=include_mac,
+            include_sec=include_sec,
+            include_social=include_soc,
+        )
 
     # ── Build message list ────────────────────────────────────────────────────
     history_msgs = [
@@ -3206,10 +3778,18 @@ def api_chat():
         if t.get('role') in ('user', 'assistant') and t.get('content')
     ]
 
+    # Prepend mode instruction so LLM knows which output format to use
+    mode_instructions = {
+        'watchlist_analysis': '[MODE: WATCHLIST ANALYSIS — apply Mode 1 output format with 10-year projections, scores, and verdicts for each stock]\n\n',
+        'recommendations':    '[MODE: RECOMMENDATIONS — apply Mode 2 output format with short-term and long-term pick tables]\n\n',
+        'autonomous':         '[MODE: AUTONOMOUS RESEARCH — apply Mode 3 protocol: cross-validate 3+ sources, flag conflicts, list all sources at the end]\n\n',
+    }
+    mode_prefix = mode_instructions.get(mode, '')
+
     if context_block:
-        user_content = f"MARKET DATA:\n{context_block}\n\nQuestion: {question}"
+        user_content = f"{mode_prefix}MARKET DATA:\n{context_block}\n\nQuestion: {question}"
     else:
-        user_content = question
+        user_content = f"{mode_prefix}{question}" if mode_prefix else question
 
     messages = history_msgs + [{'role': 'user', 'content': user_content}]
 
@@ -3331,6 +3911,176 @@ def api_ai_status():
         'model':    models.get(provider, 'none'),
         'ready':    provider is not None,
     })
+
+# ── Macro data endpoint ───────────────────────────────────────────────────────
+@app.route('/api/macro-data')
+def api_macro_data():
+    """Return cached macro indicators (FRED + USD/INR). Refreshes every 4 hours."""
+    try:
+        text = _fetch_macro_context()
+        return jsonify({'ok': True, 'text': text, 'cached_ttl_s': _MACRO_TTL})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+# ── Watchlist analysis endpoint (Mode 1 — full portfolio deep-dive) ───────────
+@app.route('/api/watchlist-analysis', methods=['POST'])
+def api_watchlist_analysis():
+    """Full portfolio analysis with 10-year projections, scoring, and HOLD/ACCUMULATE/AVOID verdicts.
+    Body: { "symbols": ["AAPL", "RELIANCE.NS", ...] }
+    Uses Mode 1 system prompt via the streaming chat endpoint internally.
+    """
+    provider, api_key = _get_ai_provider()
+    if not provider:
+        return jsonify({'ok': False, 'error': _NO_KEY_MSG}), 503
+
+    body    = request.get_json(silent=True) or {}
+    symbols = body.get('symbols', [])
+
+    db = get_db()
+    if not symbols:
+        user_id = get_current_user_id()
+        if user_id:
+            symbols = [r['symbol'] for r in db.execute(
+                'SELECT symbol FROM watchlist WHERE user_id=?', (user_id,)).fetchall()]
+
+    if not symbols:
+        return jsonify({'ok': False, 'error': 'No symbols provided and no watchlist found'}), 400
+
+    question = (
+        f'Perform a complete watchlist analysis for these stocks: {", ".join(symbols)}. '
+        'For each stock provide: current snapshot, key growth drivers, risks, '
+        '10-year bear/base/bull price projection with CAGR, a score 1-10, '
+        'confidence level, and verdict (ACCUMULATE / HOLD / AVOID). '
+        'End with a portfolio summary table ranked by score.'
+    )
+
+    context_block = _build_context(
+        symbols, question, conn=db,
+        include_macro=True, include_sec=True, include_social=True,
+    )
+
+    mode_prefix = '[MODE: WATCHLIST ANALYSIS — apply Mode 1 output format]\n\n'
+    user_content = f"{mode_prefix}MARKET DATA:\n{context_block}\n\nQuestion: {question}"
+    messages     = [{'role': 'user', 'content': user_content}]
+
+    def generate():
+        try:
+            if provider == 'groq':
+                client = groq_sdk.Groq(api_key=api_key)
+                stream = client.chat.completions.create(
+                    model=GROQ_MODEL,
+                    messages=[{'role': 'system', 'content': SYSTEM_PROMPT}] + messages,
+                    max_tokens=1600, temperature=0.3, stream=True, timeout=90,
+                )
+                for chunk in stream:
+                    delta = chunk.choices[0].delta.content or ''
+                    if delta:
+                        yield f"data: {json.dumps({'type': 'delta', 'text': delta})}\n\n"
+            else:
+                client = anthropic.Anthropic(api_key=api_key)
+                with client.messages.stream(
+                    model='claude-haiku-4-5-20251001', max_tokens=1600,
+                    system=SYSTEM_PROMPT, messages=messages,
+                ) as stream:
+                    for text in stream.text_stream:
+                        yield f"data: {json.dumps({'type': 'delta', 'text': text})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'symbols': symbols})}\n\n"
+        except Exception as e:
+            log.warning(f'watchlist-analysis error: {e}')
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
+    )
+
+# ── Recommendations endpoint (Mode 2 — short + long term picks) ───────────────
+@app.route('/api/recommendations', methods=['POST'])
+def api_recommendations():
+    """Generate top-5 short-term and top-5 long-term stock recommendations.
+    Body: { "symbols": ["AAPL", ...], "universe": "nifty50" | "sp500" | "watchlist" }
+    """
+    provider, api_key = _get_ai_provider()
+    if not provider:
+        return jsonify({'ok': False, 'error': _NO_KEY_MSG}), 503
+
+    body     = request.get_json(silent=True) or {}
+    symbols  = body.get('symbols', [])
+    universe = body.get('universe', 'watchlist')
+
+    db = get_db()
+    if not symbols:
+        user_id = get_current_user_id()
+        if user_id:
+            symbols = [r['symbol'] for r in db.execute(
+                'SELECT symbol FROM watchlist WHERE user_id=?', (user_id,)).fetchall()]
+
+    # Expand with popular defaults if universe is specified
+    _NIFTY50_DEFAULTS = [
+        'RELIANCE.NS','TCS.NS','HDFCBANK.NS','INFY.NS','ICICIBANK.NS',
+        'KOTAKBANK.NS','HINDUNILVR.NS','BAJFINANCE.NS','SBIN.NS','BHARTIARTL.NS',
+        'LT.NS','HCLTECH.NS','AXISBANK.NS','MARUTI.NS','TITAN.NS',
+        'WIPRO.NS','NESTLEIND.NS','POWERGRID.NS','ULTRACEMCO.NS','NTPC.NS',
+    ]
+    _SP500_DEFAULTS = ['AAPL','MSFT','GOOGL','AMZN','NVDA','META','TSLA','AVGO','JPM','V']
+    if universe == 'nifty50' and not symbols:
+        symbols = _NIFTY50_DEFAULTS
+    elif universe == 'sp500' and not symbols:
+        symbols = _SP500_DEFAULTS
+
+    if not symbols:
+        return jsonify({'ok': False, 'error': 'No symbols to analyze'}), 400
+
+    question = (
+        'Analyze all available stock data and generate recommendations. '
+        'Provide: Top 5 Short-Term Picks (1 week–3 months) with entry zone, target, '
+        'stop loss, catalyst, and confidence %. '
+        'Also provide: Top 5 Long-Term Picks (1–5 years) with investment thesis, '
+        'key risk, 3-year target, and confidence %. '
+        'Base all recommendations strictly on the retrieved market data provided.'
+    )
+
+    context_block = _build_context(
+        symbols[:10], question, conn=db,
+        include_macro=True, include_sec=False, include_social=True,
+    )
+
+    mode_prefix  = '[MODE: RECOMMENDATIONS — apply Mode 2 output format with both short-term and long-term tables]\n\n'
+    user_content = f"{mode_prefix}MARKET DATA:\n{context_block}\n\nQuestion: {question}"
+    messages     = [{'role': 'user', 'content': user_content}]
+
+    def generate():
+        try:
+            if provider == 'groq':
+                client = groq_sdk.Groq(api_key=api_key)
+                stream = client.chat.completions.create(
+                    model=GROQ_MODEL,
+                    messages=[{'role': 'system', 'content': SYSTEM_PROMPT}] + messages,
+                    max_tokens=1200, temperature=0.3, stream=True, timeout=90,
+                )
+                for chunk in stream:
+                    delta = chunk.choices[0].delta.content or ''
+                    if delta:
+                        yield f"data: {json.dumps({'type': 'delta', 'text': delta})}\n\n"
+            else:
+                client = anthropic.Anthropic(api_key=api_key)
+                with client.messages.stream(
+                    model='claude-haiku-4-5-20251001', max_tokens=1200,
+                    system=SYSTEM_PROMPT, messages=messages,
+                ) as stream:
+                    for text in stream.text_stream:
+                        yield f"data: {json.dumps({'type': 'delta', 'text': text})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'universe': universe, 'symbols_analyzed': len(symbols)})}\n\n"
+        except Exception as e:
+            log.warning(f'recommendations error: {e}')
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
+    )
 
 # ── Startup (runs for both `python stock-server.py` and gunicorn) ─────────────
 init_db()
