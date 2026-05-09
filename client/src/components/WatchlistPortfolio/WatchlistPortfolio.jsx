@@ -1,12 +1,175 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
 import { useWatchlist } from '../../hooks/useWatchlist';
+import { fmtPrice } from '../../utils/currency';
 import Portfolio from '../Portfolio/Portfolio';
 import './WatchlistPortfolio.scss';
 
-function fmt(n) {
-  if (!n && n !== 0) return '—';
-  return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/* ── Markdown renderer (mirrors Chat.jsx) ──────────────────────────────────── */
+function parseMarkdown(text) {
+  return text
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/`(.*?)`/g, '<code style="background:var(--card2);padding:1px 4px;border-radius:3px">$1</code>')
+    .replace(/^### (.+)$/gm, '<h4 style="margin:8px 0 4px;font-size:13px;color:var(--accent)">$1</h4>')
+    .replace(/^## (.+)$/gm,  '<h3 style="margin:10px 0 5px;font-size:14px">$1</h3>')
+    .replace(/^\- (.+)$/gm,  '<li style="margin:2px 0 2px 14px">$1</li>')
+    .replace(/\n\n/g, '<br/><br/>')
+    .replace(/\n/g,   '<br/>');
+}
+
+/* ── Quick questions pre-wired to the portfolio ────────────────────────────── */
+const PORTFOLIO_QUESTIONS = [
+  { label: '📊 Portfolio health',  q: 'Give me an overall health check of my watchlist. Which stocks look strong and which are weak right now?' },
+  { label: '🛒 Best buy now',      q: 'Which stock in my watchlist has the best buy opportunity right now based on technicals and valuation?' },
+  { label: '⚠️ Biggest risks',    q: 'What are the top 3 risks across my current watchlist I should be aware of?' },
+  { label: '📈 Top momentum',      q: 'Which stocks in my watchlist have the strongest price momentum right now?' },
+];
+
+/* ── Inline portfolio AI chat ──────────────────────────────────────────────── */
+function PortfolioChat({ symbols, token }) {
+  const [open,      setOpen]      = useState(false);
+  const [messages,  setMessages]  = useState([]);
+  const [input,     setInput]     = useState('');
+  const [streaming, setStreaming]  = useState(false);
+  const abortRef  = useRef(null);
+  const bottomRef = useRef(null);
+
+  useEffect(() => {
+    if (open) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, open]);
+
+  async function send(question) {
+    const q = (question || input).trim();
+    if (!q || streaming) return;
+    setInput('');
+    setOpen(true);
+
+    setMessages(prev => [...prev,
+      { role: 'user',      content: q },
+      { role: 'assistant', content: '' },
+    ]);
+    setStreaming(true);
+
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+
+    try {
+      const res = await fetch('/api/chat', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ question: q, symbols, token }),
+        signal:  ctrl.signal,
+      });
+
+      const reader  = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const ev = JSON.parse(line.slice(6));
+            if (ev.type === 'delta') {
+              setMessages(prev => {
+                const up   = [...prev];
+                const last = up[up.length - 1];
+                if (last?.role === 'assistant')
+                  up[up.length - 1] = { ...last, content: last.content + ev.text };
+                return up;
+              });
+            }
+          } catch { /* malformed chunk — skip */ }
+        }
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        setMessages(prev => {
+          const up = [...prev];
+          up[up.length - 1] = { role: 'assistant', content: 'Something went wrong — please try again.' };
+          return up;
+        });
+      }
+    } finally {
+      setStreaming(false);
+      abortRef.current = null;
+    }
+  }
+
+  function stop() {
+    abortRef.current?.abort();
+    setStreaming(false);
+  }
+
+  const onKey = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  };
+
+  return (
+    <div className={`wl-ai ${open ? 'wl-ai--open' : ''}`}>
+      {/* ── Collapsed / toggle bar ─── */}
+      <button className="wl-ai__toggle" onClick={() => setOpen(o => !o)}>
+        <span className="wl-ai__toggle-icon">✦</span>
+        <span className="wl-ai__toggle-label">Ask AI about your watchlist</span>
+        <span className="wl-ai__toggle-chevron">{open ? '▾' : '▴'}</span>
+      </button>
+
+      {open && (
+        <div className="wl-ai__body">
+          {/* ── Quick-question chips (show when no messages or between responses) ── */}
+          {!streaming && (
+            <div className="wl-ai__chips">
+              {PORTFOLIO_QUESTIONS.map(a => (
+                <button key={a.label} className="wl-ai__chip" onClick={() => send(a.q)}>
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* ── Message thread ─── */}
+          {messages.length > 0 && (
+            <div className="wl-ai__messages">
+              {messages.map((m, i) => (
+                <div key={i} className={`wl-ai__msg wl-ai__msg--${m.role}`}>
+                  {m.role === 'assistant' ? (
+                    m.content
+                      ? <div dangerouslySetInnerHTML={{ __html: parseMarkdown(m.content) }} />
+                      : <span className="wl-ai__dots"><span/><span/><span/></span>
+                  ) : m.content}
+                </div>
+              ))}
+              <div ref={bottomRef} />
+            </div>
+          )}
+
+          {/* ── Input row ─── */}
+          <div className="wl-ai__input-row">
+            <input
+              className="wl-ai__input"
+              placeholder="Ask about your portfolio…"
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={onKey}
+              disabled={streaming}
+              autoComplete="off"
+            />
+            {streaming ? (
+              <button className="wl-ai__send wl-ai__send--stop" onClick={stop} title="Stop">■</button>
+            ) : (
+              <button className="wl-ai__send" onClick={() => send()} disabled={!input.trim()} title="Send">↑</button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* ── Drag handle SVG ────────────────────────────────────────────────────────── */
@@ -71,7 +234,7 @@ function WatchlistRow({
       <div className="wl-row__right">
         {quote ? (
           <div className="wl-row__prices">
-            <span className={`wl-row__price ${flash}`}>₹{fmt(quote.price)}</span>
+            <span className={`wl-row__price ${flash}`}>{fmtPrice(quote.price, quote.currency)}</span>
             <span className={`wl-row__chg ${up ? 'up' : 'down'}`}>
               {up ? '+' : ''}{quote.change_pct?.toFixed(2)}%
             </span>
@@ -185,6 +348,8 @@ export default function WatchlistPortfolio() {
     setDragOverIdx(null);
   }
 
+  const symbols = watchlist.map(s => s.symbol);
+
   return (
     <div className="mylist">
       <div className="tab-bar">
@@ -280,6 +445,10 @@ export default function WatchlistPortfolio() {
 
         {tab === 'portfolio' && <Portfolio />}
       </div>
+
+      {tab === 'watchlist' && watchlist.length > 0 && (
+        <PortfolioChat symbols={symbols} token={state.token} />
+      )}
     </div>
   );
 }
