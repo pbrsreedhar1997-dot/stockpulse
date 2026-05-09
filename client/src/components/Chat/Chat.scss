@@ -87,12 +87,22 @@
     }
   }
 
+  &__section-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text3);
+    align-self: flex-start;
+    margin-top: 6px;
+  }
+
   &__quick-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
     justify-content: center;
-    margin-top: 4px;
+    margin-top: 2px;
   }
 
   &__quick-bar {
@@ -259,6 +269,75 @@
   &--sm {
     padding: 4px 10px;
     font-size: 11px;
+  }
+
+  &--predict {
+    border-color: rgba(168, 85, 247, 0.35);
+    color: #c084fc;
+    background: rgba(168, 85, 247, 0.08);
+
+    &:hover {
+      border-color: rgba(168, 85, 247, 0.6);
+      color: #d8b4fe;
+      background: rgba(168, 85, 247, 0.15);
+    }
+  }
+}
+
+/* ── Predict bar ────────────────────────────────────────────────────────────── */
+.predict-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 420px;
+  background: var(--card);
+  border: 1px solid rgba(168, 85, 247, 0.35);
+  border-radius: 10px;
+  padding: 6px 8px 6px 12px;
+  transition: border-color 0.13s;
+
+  &:focus-within {
+    border-color: rgba(168, 85, 247, 0.7);
+    box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.1);
+  }
+
+  &__icon {
+    font-size: 15px;
+    flex-shrink: 0;
+  }
+
+  &__input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    font-size: 13px;
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.3px;
+    min-width: 0;
+
+    &::placeholder { color: var(--text3); font-family: inherit; letter-spacing: 0; }
+  }
+
+  &__btn {
+    padding: 5px 13px;
+    border-radius: 7px;
+    background: rgba(168, 85, 247, 0.2);
+    border: 1px solid rgba(168, 85, 247, 0.4);
+    color: #c084fc;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: all 0.13s;
+
+    &:hover:not(:disabled) {
+      background: rgba(168, 85, 247, 0.35);
+      color: #d8b4fe;
+    }
+    &:disabled { opacity: 0.35; cursor: not-allowed; }
   }
 }
 

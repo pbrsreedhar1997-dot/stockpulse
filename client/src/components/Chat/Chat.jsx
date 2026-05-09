@@ -3,13 +3,57 @@ import { useChat } from '../../hooks/useChat';
 import './Chat.scss';
 
 const QUICK_ACTIONS = [
-  { label: '📊 Analyse Reliance',  question: 'Give me a full analysis of Reliance — fundamentals, technicals, news sentiment, ensemble score, and bear/base/bull price targets.' },
-  { label: '📈 TCS Technical',     question: 'What is the technical setup for TCS? Cover MA cross, RSI, MACD, Bollinger Bands, and volume trend.' },
+  { label: '📊 Analyse Reliance',       question: 'Give me a full analysis of Reliance — fundamentals, technicals, news sentiment, and price targets.' },
+  { label: '📈 TCS Technicals',         question: 'What is the technical setup for TCS? Cover MA cross, RSI, MACD, Bollinger Bands, ATR, and volume trend.' },
   { label: '💰 HDFC Bank Fundamentals', question: 'How are HDFC Bank fundamentals? P/E, margins, ROE, debt levels, and revenue growth.' },
-  { label: '📰 Infosys News',      question: 'What does the recent news say about Infosys? Summarise sentiment and key themes.' },
-  { label: '⚠️ Adani Risks',       question: 'What are the top risks for Adani Enterprises?' },
-  { label: '🎯 SBI Price Targets', question: 'What are the bear, base, and bull case price targets for SBI for the next 30 days?' },
+  { label: '📰 Infosys News',           question: 'What does the recent news say about Infosys? Summarise sentiment and key themes.' },
+  { label: '⚠️ Adani Risks',           question: 'What are the top risks for Adani Enterprises right now?' },
+  { label: '🌍 Macro Outlook',          question: 'What is the current macroeconomic environment? Cover interest rates, inflation, yield curve, and impact on Indian IT and banking sectors.' },
 ];
+
+/* Prediction-specific quick actions */
+const PREDICT_ACTIONS = [
+  { label: '🔮 Predict Reliance',  sym: 'RELIANCE.NS' },
+  { label: '🔮 Predict TCS',       sym: 'TCS.NS'      },
+  { label: '🔮 Predict AAPL',      sym: 'AAPL'        },
+  { label: '🔮 Predict Infosys',   sym: 'INFY.NS'     },
+];
+
+function predictQuestion(sym) {
+  return `Give me a complete price prediction for ${sym} using the 4-model ensemble framework. ` +
+    `Show ensemble scores for Technical, Fundamental, Sentiment, and Macro models (0–100 each). ` +
+    `Then provide bear/base/bull price targets for 1-month, 6-month, and 12-month horizons. ` +
+    `Include DCF fair value estimate, ATR-based risk, VWAP and Ichimoku cloud signal, and overall prediction confidence.`;
+}
+
+/* ── Predict bar — symbol input shortcut in the welcome screen ─────────────── */
+function PredictBar({ onSubmit }) {
+  const [sym, setSym] = useState('');
+  const submit = () => {
+    const s = sym.trim().toUpperCase();
+    if (!s) return;
+    onSubmit(predictQuestion(s));
+    setSym('');
+  };
+  const onKey = (e) => { if (e.key === 'Enter') submit(); };
+  return (
+    <div className="predict-bar">
+      <span className="predict-bar__icon">🔮</span>
+      <input
+        className="predict-bar__input"
+        placeholder="Enter symbol, e.g. AAPL or RELIANCE.NS"
+        value={sym}
+        onChange={e => setSym(e.target.value)}
+        onKeyDown={onKey}
+        autoComplete="off"
+        spellCheck={false}
+      />
+      <button className="predict-bar__btn" onClick={submit} disabled={!sym.trim()}>
+        Predict ↑
+      </button>
+    </div>
+  );
+}
 
 function parseMarkdown(text) {
   return text
@@ -25,9 +69,10 @@ function parseMarkdown(text) {
 
 export default function Chat() {
   const { messages, streaming, send, stop, clear } = useChat();
-  const [input, setInput] = useState('');
+  const [input,    setInput]    = useState('');
+  const [predSym,  setPredSym]  = useState('');
   const messagesEndRef = useRef(null);
-  const inputRef = useRef(null);
+  const inputRef       = useRef(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -76,8 +121,23 @@ export default function Chat() {
             </div>
             <h3>AI Stock Analyst</h3>
             <p>
-              Just mention a stock by name or ticker and I'll pull live price, technicals (RSI, MACD, Bollinger Bands), fundamentals, and news sentiment automatically.
+              Ask about any stock — live price, technicals, fundamentals, news sentiment, and full AI price predictions.
             </p>
+
+            {/* ── Predict bar ───────────────────────────────────────────────── */}
+            <div className="chat__section-label">🔮 Price Predictions</div>
+            <PredictBar onSubmit={submit} />
+            <div className="chat__quick-actions">
+              {PREDICT_ACTIONS.map(a => (
+                <button key={a.label} className="quick-btn quick-btn--predict"
+                  onClick={() => submit(predictQuestion(a.sym))}>
+                  {a.label}
+                </button>
+              ))}
+            </div>
+
+            {/* ── General analysis ─────────────────────────────────────────── */}
+            <div className="chat__section-label">📊 Analysis &amp; Research</div>
             <div className="chat__quick-actions">
               {QUICK_ACTIONS.map(a => (
                 <button key={a.label} className="quick-btn" onClick={() => submit(a.question)}>
@@ -116,7 +176,13 @@ export default function Chat() {
 
       {messages.length > 0 && !streaming && (
         <div className="chat__quick-bar">
-          {QUICK_ACTIONS.slice(0, 4).map(a => (
+          {PREDICT_ACTIONS.slice(0, 2).map(a => (
+            <button key={a.label} className="quick-btn quick-btn--sm quick-btn--predict"
+              onClick={() => submit(predictQuestion(a.sym))}>
+              {a.label}
+            </button>
+          ))}
+          {QUICK_ACTIONS.slice(0, 3).map(a => (
             <button key={a.label} className="quick-btn quick-btn--sm" onClick={() => submit(a.question)}>
               {a.label}
             </button>

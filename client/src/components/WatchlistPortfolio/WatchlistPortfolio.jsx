@@ -22,6 +22,7 @@ function parseMarkdown(text) {
 const PORTFOLIO_QUESTIONS = [
   { label: '📊 Portfolio health',  q: 'Give me an overall health check of my watchlist. Which stocks look strong and which are weak right now?' },
   { label: '🛒 Best buy now',      q: 'Which stock in my watchlist has the best buy opportunity right now based on technicals and valuation?' },
+  { label: '🔮 Predict my picks',  q: 'Run a price prediction for each stock in my watchlist. For each, give an ensemble score, dominant signal, and 1-month bear/base/bull price target.' },
   { label: '⚠️ Biggest risks',    q: 'What are the top 3 risks across my current watchlist I should be aware of?' },
   { label: '📈 Top momentum',      q: 'Which stocks in my watchlist have the strongest price momentum right now?' },
 ];
@@ -126,7 +127,11 @@ function PortfolioChat({ symbols, token }) {
           {!streaming && (
             <div className="wl-ai__chips">
               {PORTFOLIO_QUESTIONS.map(a => (
-                <button key={a.label} className="wl-ai__chip" onClick={() => send(a.q)}>
+                <button
+                  key={a.label}
+                  className={`wl-ai__chip${a.label.includes('Predict') ? ' wl-ai__chip--predict' : ''}`}
+                  onClick={() => send(a.q)}
+                >
                   {a.label}
                 </button>
               ))}
