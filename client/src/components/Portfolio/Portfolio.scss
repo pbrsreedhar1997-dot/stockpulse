@@ -4,6 +4,9 @@
   max-width: 1060px;
   margin: 0 auto;
   animation: tab-slide-in 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+
+  @media (max-width: 640px) { padding: 12px; }
+  @media (max-width: 420px) { padding: 10px 8px; }
 }
 
 .pf-header {
@@ -54,7 +57,8 @@
   margin-bottom: 20px;
 
   @media (max-width: 860px) { grid-template-columns: repeat(3, 1fr); }
-  @media (max-width: 520px) { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 520px) { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  @media (max-width: 360px) { grid-template-columns: 1fr 1fr; gap: 6px; }
 }
 
 .pf-summary__card {
@@ -68,6 +72,9 @@
   transition: all 0.2s;
   position: relative;
   overflow: hidden;
+
+  @media (max-width: 520px) { padding: 12px 14px; }
+  @media (max-width: 360px) { padding: 10px 11px; border-radius: var(--radius); }
 
   &::before {
     content: '';
@@ -135,6 +142,9 @@
     border-color: var(--border2);
     box-shadow: 0 2px 12px rgba(0,0,0,0.18);
   }
+
+  @media (max-width: 520px) { padding: 12px 14px; }
+  @media (max-width: 360px) { padding: 10px 11px; }
 }
 
 .pf-card__top {
@@ -142,6 +152,9 @@
   align-items: flex-start;
   gap: 12px;
   margin-bottom: 12px;
+  flex-wrap: wrap;
+
+  @media (max-width: 400px) { gap: 8px; }
 }
 
 .pf-card__symbol {
@@ -205,11 +218,14 @@
 /* ── Stats grid ──────────────────────────────────────────────────────────────── */
 .pf-card__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
   gap: 8px 12px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border);
   margin-bottom: 10px;
+
+  @media (max-width: 420px) { grid-template-columns: repeat(3, 1fr); gap: 6px 8px; }
+  @media (max-width: 320px) { grid-template-columns: repeat(2, 1fr); }
 }
 
 .pf-card__kv {
@@ -434,12 +450,14 @@
   }
 
   &__body {
-    padding: 16px;
-    max-height: 480px;
+    padding: 14px 16px;
+    max-height: 360px;
     overflow-y: auto;
     font-size: 13px;
-    line-height: 1.6;
+    line-height: 1.65;
     color: var(--text2);
+
+    @media (max-width: 520px) { max-height: 280px; padding: 12px 14px; }
 
     strong { color: var(--text); font-weight: 600; }
     em { color: var(--text3); font-style: normal; }
@@ -547,6 +565,8 @@
   justify-content: center;
   z-index: 1000;
   padding: 16px;
+
+  @media (max-width: 520px) { padding: 0; align-items: flex-end; }
 }
 
 .pf-modal {
@@ -559,6 +579,12 @@
   animation: fadeIn 0.15s ease-out;
   max-height: 90vh;
   overflow-y: auto;
+
+  @media (max-width: 520px) {
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    max-height: 92vh;
+    animation: slideInUp 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  }
 }
 
 .pf-modal__header {
@@ -728,6 +754,8 @@
   justify-content: center;
   z-index: 1001;
   padding: 16px;
+
+  @media (max-width: 520px) { padding: 0; align-items: flex-end; }
 }
 
 .pf-hist-modal {
@@ -738,54 +766,87 @@
   max-width: 700px;
   box-shadow: var(--shadow);
   animation: fadeIn 0.18s ease-out;
+
+  @media (max-width: 520px) {
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    max-width: 100%;
+    animation: slideInUp 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  }
 }
 
 .pf-hist-header {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 16px 20px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--border);
+
+  @media (max-width: 420px) { padding: 12px 14px; gap: 8px; }
+}
+
+.pf-hist-info { flex: 1; min-width: 0; }
+
+.pf-hist-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .pf-hist-title {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 .pf-hist-sym {
-  font-size: 11px;
-  color: var(--accent);
+  font-size: 15px;
+  color: var(--text);
   font-family: 'JetBrains Mono', monospace;
   font-weight: 700;
+  letter-spacing: 0.3px;
+}
+.pf-hist-from {
+  font-size: 10.5px;
+  color: var(--text3);
+  margin-top: 2px;
+  font-family: 'JetBrains Mono', monospace;
 }
 
 .pf-hist-pnl {
-  margin-left: auto;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 2px;
   font-family: 'JetBrains Mono', monospace;
   font-weight: 700;
-  font-size: 16px;
+  font-size: 15px;
+  flex-shrink: 0;
+  &.up   { color: var(--up);   }
+  &.down { color: var(--down); }
   small { font-size: 11px; opacity: 0.85; }
+
+  @media (max-width: 360px) { font-size: 13px; }
 }
 
 .pf-hist-close {
-  margin-left: 4px;
-  width: 28px; height: 28px;
-  border-radius: 4px;
+  width: 30px; height: 30px;
+  border-radius: 6px;
   display: flex; align-items: center; justify-content: center;
   font-size: 18px; color: var(--text3);
+  flex-shrink: 0;
   &:hover { background: var(--down-dim); color: var(--down); }
 }
 
 .pf-hist-body {
-  height: 300px;
+  height: 280px;
   padding: 12px 14px 14px;
   position: relative;
   canvas { height: 100% !important; }
+
+  @media (max-width: 520px) { height: 240px; }
+  @media (max-width: 360px) { height: 200px; }
 }
 
 .pf-hist-load, .pf-hist-err {
@@ -796,4 +857,78 @@
   gap: 12px;
   color: var(--text3);
   font-size: 13px;
+}
+
+/* ── Header responsive ───────────────────────────────────────────────────────── */
+.pf-header {
+  @media (max-width: 420px) {
+    margin-bottom: 14px;
+
+    &__title { font-size: 15px; }
+  }
+}
+
+.pf-add-btn {
+  @media (max-width: 420px) {
+    padding: 6px 13px;
+    font-size: 12px;
+  }
+}
+
+/* ── Card badges mobile wrap ─────────────────────────────────────────────────── */
+.pf-card__badges {
+  @media (max-width: 400px) {
+    order: 3;
+    width: 100%;
+    flex-wrap: wrap;
+  }
+}
+
+.pf-card__id {
+  @media (max-width: 400px) { flex: 1; min-width: 0; }
+}
+
+/* ── Advice section mobile ───────────────────────────────────────────────────── */
+.pf-card__advice {
+  @media (max-width: 520px) {
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+
+.pf-card__advice-levels {
+  @media (max-width: 520px) {
+    gap: 10px;
+  }
+}
+
+/* ── 52W range bar mobile ────────────────────────────────────────────────────── */
+.pf-card__range {
+  @media (max-width: 360px) {
+    span { font-size: 9px; }
+  }
+}
+
+/* ── AI panel mobile ─────────────────────────────────────────────────────────── */
+.pf-ai-panel {
+  @media (max-width: 520px) {
+    &__header { padding: 9px 13px; flex-wrap: wrap; gap: 8px; }
+    &__title  { font-size: 11.5px; gap: 5px; }
+  }
+}
+
+/* ── Modal form row mobile ───────────────────────────────────────────────────── */
+.pf-modal__row {
+  @media (max-width: 400px) {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+}
+
+/* ── Summary cards mobile text ───────────────────────────────────────────────── */
+.pf-summary__card {
+  @media (max-width: 360px) {
+    strong { font-size: 14px; }
+    span   { font-size: 9px;  }
+  }
 }

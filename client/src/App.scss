@@ -853,3 +853,52 @@
   .tab-bar__tab { padding: 12px 10px; font-size: 12px; }
   .tab-content { padding: 10px; }
 }
+
+/* ── Additional mobile fixes ─────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  /* Prevent content from going under the mobile nav */
+  .main-content {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* Tighter tab bar on mobile */
+  .tab-bar { padding: 0 8px; }
+  .tab-bar__tab { padding: 11px 10px; font-size: 12.5px; }
+
+  /* User chip shows only avatar on mobile */
+  .user-chip__name { display: none; }
+
+  /* Compact be-pill */
+  .be-pill { display: none; }
+}
+
+@media (max-width: 480px) {
+  /* Logo: hide text on very small screens */
+  .header__logo span { display: none; }
+
+  /* Tighter header */
+  .header { padding: 0 8px 0 10px; gap: 4px; }
+
+  /* Market pulse panel: full width */
+  .market-pulse__panel {
+    left: 0;
+    right: 0;
+    min-width: unset;
+  }
+}
+
+/* ── Touch tap target minimum ────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .pf-icon-btn,
+  .pf-hist-close,
+  .pf-ai-panel__close,
+  .pf-modal__close {
+    width: 34px;
+    height: 34px;
+  }
+
+  .nav-btn,
+  .mobile-nav__tab {
+    min-height: 44px;
+  }
+}

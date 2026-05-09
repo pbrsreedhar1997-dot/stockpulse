@@ -33,96 +33,34 @@ function parseMarkdown(text) {
 }
 
 function buildAIPrompt(h, action) {
-  const sym      = h.symbol.replace(/\.(NS|BO)$/i, '');
-  const name     = h.name || sym;
-  const pnlSign  = (h.pnl_pct ?? 0) >= 0 ? '+' : '';
-  const pnlPctStr = `${pnlSign}${fmt(h.pnl_pct)}%`;
-  const pnlAbsStr = `${(h.pnl ?? 0) >= 0 ? '+' : ''}₹${fmt(Math.abs(h.pnl ?? 0))}`;
+  const sym = h.symbol.replace(/\.(NS|BO)$/i, '');
+  const pnlSign = (h.pnl_pct ?? 0) >= 0 ? '+' : '';
 
   let holdPeriod = '';
   if (h.purchase_date) {
     const days = (Date.now() / 1000 - h.purchase_date) / 86400;
-    if (days < 30) holdPeriod = `${Math.round(days)} days`;
-    else if (days < 365) holdPeriod = `${Math.round(days / 30)} months`;
-    else holdPeriod = `${(days / 365).toFixed(1)} years`;
+    if (days < 30)  holdPeriod = `, ${Math.round(days)}d held`;
+    else if (days < 365) holdPeriod = `, ${Math.round(days / 30)}mo held`;
+    else holdPeriod = `, ${(days / 365).toFixed(1)}yr held`;
   }
 
-  const posLine = [
-    `${h.shares} shares`,
-    `avg buy ₹${fmt(h.avg_price)}`,
-    `current ₹${fmt(h.current_price)}`,
-    `P&L: ${pnlPctStr} (${pnlAbsStr})`,
-    holdPeriod ? `held ${holdPeriod}` : null,
-  ].filter(Boolean).join(' | ');
+  const ctx = `${sym}: ${h.shares} shares @ ₹${fmt(h.avg_price)} → ₹${fmt(h.current_price)} (${pnlSign}${fmt(h.pnl_pct)}%${holdPeriod})`;
 
-  const header = `Portfolio AI Analysis — ${sym} (${name})\nPosition: ${posLine}\n\n`;
-
-  const prompts = {
-    BUY_MORE:
-      header +
-      `My AI system recommends BUYING MORE of ${sym}. Provide a full conviction analysis:\n` +
-      `1. **Technical Entry Signal**: Is now a good entry? Analyse RSI, MACD, moving averages, support/resistance, and momentum.\n` +
-      `2. **Fundamental Valuation**: Is the stock undervalued? Cover P/E, revenue growth, ROE, profit margins, and debt levels.\n` +
-      `3. **News & Catalysts**: What do recent news and analyst calls indicate? Any upcoming catalysts?\n` +
-      `4. **Macro & Sector**: Current macro environment impact on this sector. Tailwinds or headwinds?\n` +
-      `5. **Peer Comparison**: How is ${sym} performing vs sector peers right now?\n` +
-      `6. **Price Targets**: Bear/Base/Bull targets for 3-month and 12-month horizons.\n` +
-      `7. **Buy More Probability**: Give a 0–100 probability score for adding to this position now with clear reasoning.\n\n` +
-      `Be specific with numbers. Use all available RAG data including live prices and recent news.`,
-
-    HOLD:
-      header +
-      `My AI system recommends HOLDING ${sym}. Explain clearly why holding is the right decision:\n` +
-      `1. **Key Catalysts**: What near-term and long-term catalysts could drive this higher?\n` +
-      `2. **Technical Levels**: Key support levels to maintain, resistance levels to watch, trend direction.\n` +
-      `3. **Fundamental Trend**: Are margins and revenue improving? Any earnings upgrades?\n` +
-      `4. **Recent News Sentiment**: Any positive or negative developments in the last 30 days?\n` +
-      `5. **Top Risks**: What are the top 2–3 risks to the hold thesis?\n` +
-      `6. **Signal Triggers**: What would flip this to a BUY signal? What would trigger a SELL?\n` +
-      `7. **Hold Probability**: 0–100 probability this is a winning hold for 12 months.\n\n` +
-      `Provide bull and bear price targets for 6-month and 12-month horizons.`,
-
-    REVIEW:
-      header +
-      `This position is flagged for REVIEW — it appears to be underperforming. Do a forensic deep-dive:\n` +
-      `1. **Root Cause**: Why has ${sym} underperformed? Fundamental deterioration, sector weakness, or macro headwinds?\n` +
-      `2. **News Investigation**: What do the latest news articles reveal about this company? Any major concerns?\n` +
-      `3. **Recovery Thesis**: Is there a credible path to recovery in 6–12 months? What needs to happen?\n` +
-      `4. **Technical Picture**: Is the stock forming a base/bottom, or still in a downtrend?\n` +
-      `5. **Probabilities**: Give two separate probabilities (0–100): (a) meaningful recovery (+20%), (b) further decline (-20%).\n` +
-      `6. **Clear Verdict**: Should I CUT LOSSES NOW (with exit price target), or HOLD FOR RECOVERY (with target + timeline)?\n\n` +
-      `Be brutally honest. Use all recent news, technicals, fundamentals, and macro data available.`,
-
-    SELL_PARTIAL:
-      header +
-      `My AI system recommends PARTIAL PROFIT BOOKING on ${sym}. Analyse the exit strategy:\n` +
-      `1. **Overbought Check**: Is the stock technically overbought? (RSI >70, near resistance, Bollinger upper band?)\n` +
-      `2. **Valuation Stretch**: Is the P/E or P/B premium vs historical average or sector peers?\n` +
-      `3. **Near-term Risks**: Any macro events, earnings results, or headwinds that could trigger a pullback?\n` +
-      `4. **Optimal Exit Plan**: What % to book (25%? 50%?) at what specific price levels?\n` +
-      `5. **Hold Rationale**: Why keep the remaining position? What's the next upside target?\n` +
-      `6. **Correction Probability**: 0–100 probability of a 10%+ correction from current price in the next 3 months.\n\n` +
-      `Give specific price levels for the partial exit and the remaining position's target.`,
-
-    SELL:
-      header +
-      `My AI system recommends SELLING ${sym}. Provide a full justification:\n` +
-      `1. **Exit Case**: What are the 3 strongest reasons to sell now?\n` +
-      `2. **Counter Arguments**: Is there any remaining bull case for staying in?\n` +
-      `3. **Optimal Exit Level**: What's the best price to sell at — is there a better level than current price?\n` +
-      `4. **Downside Risk**: If I don't sell now, what's the bear case price target and timeline?\n` +
-      `5. **Exit Probability**: 0–100 probability that selling now is the right decision vs waiting 30–60 days.\n\n` +
-      `Give a clear action plan with specific price levels.`,
+  const actionLabels = {
+    BUY_MORE: 'BUY MORE', HOLD: 'HOLD', REVIEW: 'REVIEW (underperforming)',
+    SELL_PARTIAL: 'SELL PARTIAL', SELL: 'SELL',
   };
 
-  return prompts[action] ?? (
-    header +
-    `Give me a comprehensive AI probability analysis of this ${sym} position:\n` +
-    `1. Technical setup and momentum\n2. Fundamental valuation\n3. Recent news and sentiment\n` +
-    `4. Macro and sector trends\n5. Peer comparison\n` +
-    `6. Bear/Base/Bull price targets for 3-month and 12-month horizons\n` +
-    `7. Clear action recommendation (Buy More / Hold / Sell Partial / Sell) with probability score (0–100).`
-  );
+  return `${ctx}. Recommendation: ${actionLabels[action] || action}.
+
+Reply in EXACTLY this format, max 5 lines, under 75 words total:
+[1 sentence verdict with the key reason]
+• Signal: [strongest technical or fundamental signal right now]
+• Outlook: [price direction next 1–3 months with rough target]
+• Risk: [single biggest risk to watch]
+Target ₹[price] · Stop ₹[price] · Confidence [N]%
+
+Use real data. Be specific with prices. No headers or extra text.`;
 }
 
 // ── Holding AI Analysis Panel ─────────────────────────────────────────────────
@@ -185,13 +123,18 @@ const fmt = (n, d = 2) => {
 };
 
 // ── Holding History Chart ──────────────────────────────────────────────────────
-function HoldingHistoryChart({ symbol, onClose }) {
-  const api     = useApi();
+function HoldingHistoryChart({ holding, onClose }) {
+  const symbol     = holding.symbol;
+  const api        = useApi();
   const canvasRef  = useRef(null);
   const chartRef   = useRef(null);
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
+
+  const purchDateLabel = holding.purchase_date
+    ? new Date(holding.purchase_date * 1000).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+    : null;
 
   useEffect(() => {
     api.get(`/api/portfolio/history/${symbol}`)
@@ -212,35 +155,41 @@ function HoldingHistoryChart({ symbol, onClose }) {
     const cost    = data.invested;
     const lastVal = pts[pts.length - 1]?.value ?? cost;
     const isUp    = lastVal >= cost;
-    const accent  = isUp ? '#00c896' : '#ff4560';
     const grid    = isDark ? 'rgba(255,255,255,0.055)' : 'rgba(0,0,0,0.055)';
     const txt     = isDark ? '#6b7a8d' : '#8693a4';
     const ctx     = canvasRef.current.getContext('2d');
+    const h       = canvasRef.current.offsetHeight || 220;
 
-    const grad = ctx.createLinearGradient(0, 0, 0, 220);
-    grad.addColorStop(0,   isUp ? 'rgba(0,200,150,0.25)' : 'rgba(255,69,96,0.2)');
-    grad.addColorStop(1,   'rgba(0,0,0,0)');
+    // Gradient: green fill if up, red fill if down
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    if (isUp) {
+      grad.addColorStop(0, 'rgba(0,200,150,0.28)');
+      grad.addColorStop(1, 'rgba(0,200,150,0)');
+    } else {
+      grad.addColorStop(0, 'rgba(255,69,96,0.22)');
+      grad.addColorStop(1, 'rgba(255,69,96,0)');
+    }
 
     chartRef.current = new Chart(ctx, {
       type: 'line',
       data: {
         datasets: [
           {
-            label: 'Portfolio Value',
+            label: 'Holding Value',
             data:  pts.map(p => ({ x: p.ts * 1000, y: p.value })),
-            borderColor: accent,
+            borderColor: isUp ? '#10D98C' : '#FF4560',
             borderWidth: 2,
             backgroundColor: grad,
             fill: true,
             pointRadius: 0,
-            pointHoverRadius: 4,
+            pointHoverRadius: 5,
             tension: 0.3,
             order: 1,
           },
           {
-            label: 'Cost Basis',
+            label: `Cost ₹${data.avg_price?.toLocaleString('en-IN')}`,
             data:  pts.map(p => ({ x: p.ts * 1000, y: cost })),
-            borderColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)',
+            borderColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.22)',
             borderWidth: 1.5,
             borderDash: [5, 5],
             backgroundColor: 'transparent',
@@ -257,7 +206,7 @@ function HoldingHistoryChart({ symbol, onClose }) {
         plugins: {
           legend: {
             display: true,
-            labels: { color: txt, font: { size: 11 }, boxWidth: 14, padding: 16 },
+            labels: { color: txt, font: { size: 11 }, boxWidth: 12, padding: 14 },
           },
           tooltip: {
             backgroundColor: isDark ? 'rgba(10,14,26,0.96)' : 'rgba(255,255,255,0.97)',
@@ -268,7 +217,19 @@ function HoldingHistoryChart({ symbol, onClose }) {
             padding: 10,
             cornerRadius: 8,
             callbacks: {
-              label: c => `${c.dataset.label}: ₹${c.raw.y?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+              title: items => {
+                const d = new Date(items[0].parsed.x);
+                return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+              },
+              label: c => {
+                const v = c.raw.y;
+                const diff = v - cost;
+                const pct  = cost ? ((diff / cost) * 100).toFixed(2) : 0;
+                if (c.dataset.order === 1) {
+                  return ` ₹${v?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}  (${diff >= 0 ? '+' : ''}${pct}%)`;
+                }
+                return ` Cost basis: ₹${v?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+              },
             },
           },
         },
@@ -276,7 +237,7 @@ function HoldingHistoryChart({ symbol, onClose }) {
           x: {
             type: 'time',
             time: { unit: pts.length > 200 ? 'month' : pts.length > 60 ? 'week' : 'day' },
-            grid: { color: grid }, ticks: { color: txt, maxTicksLimit: 8, font: { size: 10 } },
+            grid: { color: grid }, ticks: { color: txt, maxTicksLimit: 6, font: { size: 10 } },
             border: { display: false },
           },
           y: {
@@ -303,13 +264,18 @@ function HoldingHistoryChart({ symbol, onClose }) {
     <div className="pf-hist-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="pf-hist-modal">
         <div className="pf-hist-header">
-          <div>
-            <div className="pf-hist-title">Investment History</div>
-            <div className="pf-hist-sym">{symbol.replace(/\.(NS|BO)$/i, '')}</div>
+          <div className="pf-hist-info">
+            <div className="pf-hist-top">
+              <span className="pf-hist-sym">{symbol.replace(/\.(NS|BO)$/i, '')}</span>
+              <span className="pf-hist-title">Investment History</span>
+            </div>
+            {purchDateLabel && (
+              <div className="pf-hist-from">From {purchDateLabel} to today</div>
+            )}
           </div>
           {pnl != null && (
             <div className={`pf-hist-pnl ${pnl >= 0 ? 'up' : 'down'}`}>
-              <span>{pnl >= 0 ? '▲' : '▼'} {pnl >= 0 ? '+' : ''}₹{fmt(pnl)}</span>
+              <span>{pnl >= 0 ? '▲' : '▼'} {pnl >= 0 ? '+' : ''}₹{fmt(Math.abs(pnl))}</span>
               <small>{pnlPct >= 0 ? '+' : ''}{fmt(pnlPct)}%</small>
             </div>
           )}
@@ -533,7 +499,7 @@ function HoldingCard({ h, onEdit, onRemove, onHistory, onAnalyse, aiPanelOpen })
           )}
         </div>
         <div className="pf-card__btns">
-          <button className="pf-icon-btn" onClick={() => onHistory(h.symbol)} title="Investment history">📈</button>
+          <button className="pf-icon-btn" onClick={() => onHistory(h)} title="Investment history">📈</button>
           <button className="pf-icon-btn pf-icon-btn--edit" onClick={() => onEdit(h)} title="Edit">✎</button>
           <button className="pf-icon-btn pf-icon-btn--del" onClick={() => onRemove(h.symbol)} title="Remove">×</button>
         </div>
@@ -702,7 +668,7 @@ export default function Portfolio() {
                 h={h}
                 onEdit={h => setModal({ symbol: h.symbol, name: h.name, holding: h })}
                 onRemove={handleRemove}
-                onHistory={sym => setHistory(sym)}
+                onHistory={h => setHistory(h)}
                 onAnalyse={() => setAiPanel(
                   aiPanel?.holding?.symbol === h.symbol ? null
                     : { holding: h, action: h.recommendation?.action || 'HOLD' }
@@ -733,7 +699,7 @@ export default function Portfolio() {
         />
       )}
 
-      {history && <HoldingHistoryChart symbol={history} onClose={() => setHistory(null)} />}
+      {history && <HoldingHistoryChart holding={history} onClose={() => setHistory(null)} />}
     </div>
   );
 }
