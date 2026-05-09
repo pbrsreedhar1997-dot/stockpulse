@@ -74,6 +74,25 @@
   /* Glass */
   --glass-bg:    rgba(8, 12, 23, 0.75);
   --glass-border: rgba(255, 255, 255, 0.07);
+
+  /* Chrome surfaces — header, tab bar, mobile nav */
+  --chrome-bg:     rgba(8, 12, 23, 0.90);
+  --chrome-tab-bg: rgba(8, 12, 23, 0.60);
+  --chrome-mob-bg: rgba(8, 12, 23, 0.92);
+
+  /* Hover tints for interactive chrome elements */
+  --nav-hover:    rgba(255, 255, 255, 0.055);
+  --nav-hover2:   rgba(255, 255, 255, 0.07);
+  --nav-text:     #7A8FAA;
+  --nav-text-hover: #C8D4E8;
+  --nav-active-text: var(--accent);
+  --nav-active-bg:   var(--accent-dim);
+
+  /* Tab colours */
+  --tab-text:        #4E6380;
+  --tab-text-hover:  #96AACC;
+  --tab-text-active: #EDF1FB;
+  --tab-hover-glow:  rgba(232, 168, 56, 0.06);
 }
 
 [data-theme='light'] {
@@ -93,12 +112,31 @@
   --shadow-glow: 0 0 24px rgba(232, 168, 56, 0.12);
   --up-dim:      rgba(16, 217, 140, 0.10);
   --down-dim:    rgba(255, 69, 96, 0.10);
-  --accent-dim:  rgba(232, 168, 56, 0.11);
-  --accent-glow: rgba(232, 168, 56, 0.05);
+  --accent-dim:  rgba(232, 168, 56, 0.13);
+  --accent-glow: rgba(232, 168, 56, 0.06);
   --cyan-dim:    rgba(0, 212, 255, 0.08);
   --purple-dim:  rgba(168, 85, 247, 0.09);
   --glass-bg:    rgba(240, 244, 255, 0.80);
   --glass-border: rgba(255, 255, 255, 0.60);
+
+  /* Chrome surfaces — light frosted glass */
+  --chrome-bg:     rgba(255, 255, 255, 0.93);
+  --chrome-tab-bg: rgba(245, 248, 255, 0.92);
+  --chrome-mob-bg: rgba(255, 255, 255, 0.97);
+
+  /* Hover tints — legible slate-blue on white */
+  --nav-hover:    rgba(30, 60, 120, 0.07);
+  --nav-hover2:   rgba(30, 60, 120, 0.10);
+  --nav-text:     #3D5270;
+  --nav-text-hover: #152340;
+  --nav-active-text: #9A6408;
+  --nav-active-bg:   rgba(232, 168, 56, 0.15);
+
+  /* Tab colours — crisp ink hierarchy */
+  --tab-text:        #5C728A;
+  --tab-text-hover:  #2B3F5C;
+  --tab-text-active: #0F1E36;
+  --tab-hover-glow:  rgba(232, 168, 56, 0.09);
 }
 
 /* ── Reset ─────────────────────────────────────────────────────────────────── */
