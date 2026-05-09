@@ -16,7 +16,12 @@
   }
 
   &__header-left { flex: 1; min-width: 0; }
-  &__header-right { flex-shrink: 0; }
+  &__header-right {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
 
   &__title {
     font-size: 18px;
@@ -124,6 +129,66 @@
     color: var(--down);
     margin-bottom: 12px;
     font-size: 13px;
+    flex-shrink: 0;
+  }
+}
+
+/* ── Scan progress bar ─────────────────────────────────────────────────────── */
+.sc-scan-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+
+  &__track {
+    flex: 1;
+    height: 3px;
+    background: var(--border2);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  &__fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--cyan), var(--accent));
+    border-radius: 3px;
+    transition: width 1s ease;
+    animation: scan-shimmer 2s ease-in-out infinite;
+  }
+
+  &__label {
+    font-size: 10.5px;
+    color: var(--text3);
+    white-space: nowrap;
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+@keyframes scan-shimmer {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.7; }
+}
+
+/* ── Live scanning badge ───────────────────────────────────────────────────── */
+.sc-live-badge {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--cyan);
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid rgba(0, 212, 255, 0.22);
+  background: rgba(0, 212, 255, 0.07);
+
+  &__dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--cyan);
+    animation: live-pulse 1.4s ease-in-out infinite;
     flex-shrink: 0;
   }
 }

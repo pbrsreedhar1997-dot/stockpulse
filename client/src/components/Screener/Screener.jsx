@@ -354,6 +354,23 @@ function AllPicksTable({ stocks, onPick }) {
   );
 }
 
+// ─── Scan progress bar ───────────────────────────────────────────────────────
+function ScanProgress({ scanStatus, stockCount }) {
+  if (!scanStatus) return null;
+  const { done, total, found } = scanStatus;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  return (
+    <div className="sc-scan-bar">
+      <div className="sc-scan-bar__track">
+        <div className="sc-scan-bar__fill" style={{ width: `${pct}%` }} />
+      </div>
+      <span className="sc-scan-bar__label">
+        Scanning {done}/{total} stocks · {found ?? stockCount} found · {pct}%
+      </span>
+    </div>
+  );
+}
+
 // ─── Main Screener ────────────────────────────────────────────────────────────
 const MODES = [
   { v: 'all',    label: 'All Picks'       },
@@ -362,7 +379,7 @@ const MODES = [
 ];
 
 export default function Screener() {
-  const { stocks, loading, error, load, refresh } = useScreener();
+  const { stocks, loading, scanning, scanStatus, error, load, refresh } = useScreener();
   const { dispatch } = useAppContext();
   const [mode, setMode] = useState('all');
 
@@ -385,18 +402,26 @@ export default function Screener() {
           <h2 className="screener__title">Value Picks</h2>
           <p className="screener__sub">
             {loading && stocks.length === 0
-              ? `Scanning ${'>'}130 stocks across all sectors…`
+              ? 'Scanning 180+ stocks across all sectors…'
               : stocks.length > 0
-                ? `${stocks.length} opportunities · ${valueCnt} value · ${growthCnt} quality · ${turnaroundCnt} turnaround`
+                ? `${stocks.length} stocks · ${valueCnt} value · ${growthCnt} quality · ${turnaroundCnt} turnaround${scanning ? ' · updating…' : ''}`
                 : 'AI-powered stock screener — India large & mid-cap universe'}
           </p>
         </div>
         <div className="screener__header-right">
-          <button className="screener__refresh" onClick={refresh} disabled={loading}>
-            {loading ? <span className="spinner" /> : '↻ Refresh'}
+          {scanning && (
+            <span className="sc-live-badge">
+              <span className="sc-live-badge__dot" /> Scanning
+            </span>
+          )}
+          <button className="screener__refresh" onClick={refresh} disabled={loading && stocks.length === 0}>
+            {loading && stocks.length === 0 ? <span className="spinner" /> : '↻ Refresh'}
           </button>
         </div>
       </div>
+
+      {/* ── Scan progress ──────────────────────────────────────────────────── */}
+      {scanning && <ScanProgress scanStatus={scanStatus} stockCount={stocks.length} />}
 
       {/* ── Mode tabs ──────────────────────────────────────────────────────── */}
       <div className="screener__mode-tabs">
@@ -427,12 +452,12 @@ export default function Screener() {
 
       {error && <div className="screener__error">{error}</div>}
 
-      {/* ── Loading ─────────────────────────────────────────────────────────── */}
+      {/* ── Loading (cold start — nothing in DB yet) ─────────────────────────── */}
       {loading && stocks.length === 0 ? (
         <div className="screener__loading">
           <span className="spinner" />
-          <p>Scanning 130+ stocks — fetching live prices, fundamentals & sector data…</p>
-          <p className="screener__loading-sub">This takes 2–4 minutes. Results appear once ready.</p>
+          <p>Scanning 180+ stocks — fetching live prices, fundamentals & sector data…</p>
+          <p className="screener__loading-sub">Results appear progressively as each stock is scanned.</p>
         </div>
       ) : (
         <>
