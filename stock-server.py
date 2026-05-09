@@ -298,6 +298,72 @@ def _detect_analysis_mode(question: str) -> str:
             return 'autonomous'
     return 'standard'
 
+# ── 7-Intent classifier (maps to retrieval routing per system architecture) ───
+
+_INTENT_PATTERNS: dict = {
+    'price_query': {
+        'phrases': ['current price', 'what is the price', 'trading at', 'how much is', 'price of', 'stock price now'],
+        'keywords': {'price', 'quote', 'trading', 'live', 'tick', 'bid', 'ask'},
+    },
+    'news_sentiment': {
+        'phrases': ['latest news', 'what news', 'recent news', 'what happened', 'any news', 'headlines'],
+        'keywords': {'news', 'sentiment', 'headlines', 'article', 'announcement', 'press'},
+    },
+    'fundamentals': {
+        'phrases': ['earnings report', 'revenue growth', 'pe ratio', 'balance sheet', 'eps trend', 'profit margin', 'free cash flow'],
+        'keywords': {'earnings', 'revenue', 'eps', 'margin', 'pe', 'fundamentals', 'financials', 'debt', 'roe', 'fcf'},
+    },
+    'macro_analysis': {
+        'phrases': ['interest rate', 'fed rate', 'yield curve', 'recession signal', 'inflation rate', 'gdp growth', 'macro environment'],
+        'keywords': {'inflation', 'recession', 'macro', 'gdp', 'fed', 'rates', 'cpi', 'unemployment', 'economy', 'monetary'},
+    },
+    'portfolio_review': {
+        'phrases': ['my watchlist', 'my portfolio', 'my stocks', 'my holdings', 'i own', 'analyze my', 'rate my portfolio'],
+        'keywords': {'portfolio', 'watchlist', 'holdings', 'positions', 'allocation'},
+    },
+    'comparison': {
+        'phrases': ['compare', 'vs ', 'versus', 'better than', 'which is better', 'difference between'],
+        'keywords': {'compare', 'versus', 'better', 'difference', 'between', 'against'},
+    },
+    'prediction': {
+        'phrases': ['will it go up', 'price target', '12 month target', 'next year', 'forecast for', 'where will', 'outlook for'],
+        'keywords': {'predict', 'forecast', 'target', 'projection', 'future', 'expect', 'estimate', 'outlook'},
+    },
+}
+
+def _classify_intent(question: str) -> str:
+    """Classify question into 7 intents for optimal retrieval layer routing.
+    Returns: price_query | news_sentiment | fundamentals | macro_analysis |
+             portfolio_review | comparison | prediction (default)
+    """
+    q = question.lower()
+    for intent, patterns in _INTENT_PATTERNS.items():
+        for phrase in patterns.get('phrases', []):
+            if phrase in q:
+                return intent
+        if set(q.split()) & patterns.get('keywords', set()):
+            return intent
+    return 'prediction'
+
+# ── Q&A pair embedding — Step 7 of retrieval strategy ────────────────────────
+
+def _embed_qa_pair_bg(symbols: list, question: str, answer: str):
+    """Store completed Q&A pair back into vector store for future semantic retrieval.
+    Implements Step 7: 'Store Q&A pair back into vector store.'
+    Capped at 600 chars of answer to keep chunks focused.
+    """
+    if not get_embed_model():
+        return
+    try:
+        with thread_connection() as conn:
+            qa_text = f"[Q&A Memory] Q: {question}\nA: {answer[:600]}"
+            for sym in symbols[:4]:
+                store_embedding(conn, sym, qa_text,
+                                source='qa_memory',
+                                article_url=f'qa:{sym}:{now_ts()}')
+    except Exception as e:
+        log.debug(f'_embed_qa_pair_bg: {e}')
+
 # ── Macro data (FRED + currency) ──────────────────────────────────────────────
 
 _macro_cache: dict = {}
@@ -3078,7 +3144,45 @@ def db_status():
 # Priority: GROQ_API_KEY (free, open-source Llama) → ANTHROPIC_API_KEY (Claude)
 
 SYSTEM_PROMPT = """\
-You are StockPulse AI — an autonomous financial research agent and expert financial analyst with deep knowledge of equity markets, fundamental analysis, technical analysis, and macroeconomic indicators. You are powered by a RAG (Retrieval-Augmented Generation) pipeline that retrieves fresh, structured market data before every response.
+You are StockPulse AI — an autonomous financial research agent and expert financial analyst with deep knowledge of equity markets, fundamental analysis, technical analysis, and macroeconomic indicators. You are powered by a multi-layer RAG (Retrieval-Augmented Generation) pipeline that retrieves fresh, structured market data before every response.
+
+## SYSTEM ARCHITECTURE
+
+### DATA INGESTION PIPELINE (Scheduled + Streaming)
+
+**Scheduled Batch Ingestion:**
+- Every 5 min  → Technical indicators recalculation (RSI, MACD, Bollinger Bands, volume momentum)
+- Every 1 hour → News sentiment refresh (Yahoo Finance, Reuters, Google News, Benzinga)
+- Every 6 hours → Analyst rating changes, insider trading, SEC EDGAR filings (10-K/10-Q/8-K)
+- Every 24 hours → Fundamental data update (earnings, revenue, margins, balance sheet, EPS)
+- Every 24 hours → Macroeconomic indicators (FRED API: CPI, GDP, FEDFUNDS, UNRATE, T10Y2Y)
+- Every 24 hours → Social sentiment refresh (StockTwits bull/bear ratio)
+- Every week → Re-embed and re-index all documents into vector store
+
+### DATA STORAGE LAYERS
+
+- 🔴 **Hot Layer** (in-memory / Redis-like cache, 5-min TTL): live price quotes, streaming ticks, session cache
+- 🟡 **Warm Layer** (PostgreSQL/TimescaleDB): OHLCV history, technical indicators, fundamentals, profiles, news
+- 🔵 **Cold Layer** (Vector Store — 384-dim embeddings, HNSW index): news articles, analyst reports,
+  SEC filings, price narratives, financial summaries, Q&A memory pairs
+- 🟢 **Live API Layer** (on-demand, cached): FRED macro data, StockTwits sentiment, SEC EDGAR
+
+### RETRIEVAL STRATEGY (7-Step)
+
+When a user asks a question, the system executes:
+1. **Classify intent** → price_query / prediction / news_sentiment / fundamentals / macro_analysis / portfolio_review / comparison
+2. **Route to correct layer** → price=Hot, news/filing=Vector, fundamentals=Warm, macro=Live API
+3. **Retrieve in parallel** from all relevant layers
+4. **Re-rank results** by recency + relevance (hybrid BM25 sparse + cosine dense score)
+5. **Pass top-K chunks** + structured data to LLM
+6. **Generate response** with citations and confidence score
+7. **Store Q&A pair** back into vector store for future semantic retrieval
+
+### DATA SOURCE LABELS (use when citing in responses)
+- 📊 **Live Quote** (🔴 Hot, <5 min) | 📈 **Technicals** (🟡 Warm, 5-min refresh)
+- 📰 **News** (🟡 Warm, 1-hour refresh) | 📋 **Fundamentals** (🟡 Warm, daily refresh)
+- 🏛️ **SEC Filing** (🔵 Vector + 🟢 EDGAR, 6-hour refresh) | 🌍 **Macro/FRED** (🟢 Live, daily)
+- 💬 **Social** (🟢 StockTwits, 30-min) | 🧠 **RAG Memory** (🔵 Vector, BM25+cosine ranked)
 
 ## KNOWLEDGE SOURCES
 All retrieved data is provided in MARKET DATA and RAG KNOWLEDGE BASE blocks. Your sources include:
@@ -3827,7 +3931,20 @@ def api_chat():
 
     messages = history_msgs + [{'role': 'user', 'content': user_content}]
 
+    # Classify intent for retrieval routing label (sent with 'done' event)
+    intent = _classify_intent(question) if not conversational else 'conversational'
+
+    def _store_qa(full_answer: str):
+        """Step 7 — embed Q&A pair into vector store after response completes."""
+        if full_answer and symbols and get_embed_model():
+            threading.Thread(
+                target=_embed_qa_pair_bg,
+                args=(symbols, question, full_answer),
+                daemon=True,
+            ).start()
+
     def generate_groq():
+        accumulated = []
         try:
             client = groq_sdk.Groq(api_key=api_key)
             stream = client.chat.completions.create(
@@ -3841,8 +3958,10 @@ def api_chat():
             for chunk in stream:
                 delta = chunk.choices[0].delta.content or ''
                 if delta:
+                    accumulated.append(delta)
                     yield f"data: {json.dumps({'type': 'delta', 'text': delta})}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            _store_qa(''.join(accumulated))
+            yield f"data: {json.dumps({'type': 'done', 'intent': intent, 'mode': mode})}\n\n"
         except groq_sdk.RateLimitError:
             yield f"data: {json.dumps({'type':'error','message':'Groq rate limit reached — wait a moment and retry.'})}\n\n"
         except groq_sdk.APITimeoutError:
@@ -3852,6 +3971,7 @@ def api_chat():
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
     def generate_anthropic():
+        accumulated = []
         try:
             client = anthropic.Anthropic(api_key=api_key)
             with client.messages.stream(
@@ -3859,8 +3979,10 @@ def api_chat():
                 system=SYSTEM_PROMPT, messages=messages,
             ) as stream:
                 for text in stream.text_stream:
+                    accumulated.append(text)
                     yield f"data: {json.dumps({'type': 'delta', 'text': text})}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            _store_qa(''.join(accumulated))
+            yield f"data: {json.dumps({'type': 'done', 'intent': intent, 'mode': mode})}\n\n"
         except anthropic.AuthenticationError:
             yield f"data: {json.dumps({'type': 'error', 'message': 'Invalid ANTHROPIC_API_KEY'})}\n\n"
         except Exception as e:
@@ -4176,6 +4298,137 @@ _preload_default_quotes()
 # This runs in master and in each forked worker, but _maybe_start_screener guards
 # against running twice via the DB cache check.
 threading.Thread(target=_maybe_start_screener, daemon=True).start()
+
+# ── Scheduled RAG ingestion pipeline ─────────────────────────────────────────
+# Implements the timed data refresh schedule from the system architecture.
+# Uses DB timestamp guards to prevent duplicate runs across gunicorn workers.
+
+_SCHED_JOB_TTL = {
+    'rag_technicals': 5  * 60,      # every 5 min
+    'rag_news':       60 * 60,      # every 1 hour
+    'rag_macro':      6  * 3600,    # every 6 hours
+    'rag_fundamentals': 24 * 3600,  # every 24 hours
+    'rag_reindex':    7  * 86400,   # every 7 days (full re-embed)
+}
+
+def _sched_should_run(job_id: str) -> bool:
+    """DB-based coordinator: returns True only if enough time has passed since last run.
+    Prevents duplicate execution across gunicorn workers."""
+    ttl = _SCHED_JOB_TTL.get(job_id, 3600)
+    try:
+        with thread_connection() as conn:
+            row = conn.execute(
+                'SELECT fetched_at FROM screener_cache WHERE screener_id=?',
+                (f'__sched_{job_id}',)
+            ).fetchone()
+            if row and (now_ts() - row['fetched_at']) < ttl:
+                return False
+            conn.execute(
+                'INSERT OR REPLACE INTO screener_cache (screener_id, results, fetched_at) VALUES (?,?,?)',
+                (f'__sched_{job_id}', '{}', now_ts())
+            )
+            conn.commit()
+            return True
+    except Exception:
+        return False
+
+def _sched_refresh_technicals():
+    """Every 5 min: re-embed technical indicator narratives for all active watchlist symbols."""
+    if not _sched_should_run('rag_technicals') or not get_embed_model():
+        return
+    try:
+        with thread_connection() as conn:
+            syms = [r['symbol'] for r in conn.execute(
+                'SELECT DISTINCT symbol FROM watchlist LIMIT 30'
+            ).fetchall()]
+        for sym in syms:
+            threading.Thread(target=_embed_technicals_bg, args=(sym,), daemon=True).start()
+        log.info(f'[Scheduler] technicals refresh: {len(syms)} symbols')
+    except Exception as e:
+        log.debug(f'[Scheduler] technicals error: {e}')
+
+def _sched_refresh_news():
+    """Every 1 hour: refresh news embedding for all watchlist symbols."""
+    if not _sched_should_run('rag_news') or not get_embed_model():
+        return
+    try:
+        with thread_connection() as conn:
+            syms = [r['symbol'] for r in conn.execute(
+                'SELECT DISTINCT symbol FROM watchlist LIMIT 20'
+            ).fetchall()]
+        for sym in syms:
+            try:
+                news = fetch_news(sym)
+                if news:
+                    threading.Thread(target=_embed_articles_bg, args=(sym, news), daemon=True).start()
+            except Exception:
+                pass
+        log.info(f'[Scheduler] news refresh: {len(syms)} symbols')
+    except Exception as e:
+        log.debug(f'[Scheduler] news error: {e}')
+
+def _sched_refresh_macro():
+    """Every 6 hours: invalidate macro cache so fresh FRED data is fetched on next request."""
+    if not _sched_should_run('rag_macro'):
+        return
+    with _macro_cache_lock:
+        _macro_cache.clear()
+    log.info('[Scheduler] macro cache cleared — will refresh from FRED on next request')
+
+def _sched_refresh_fundamentals():
+    """Every 24 hours: re-embed financials and price history for all watchlist symbols."""
+    if not _sched_should_run('rag_fundamentals') or not get_embed_model():
+        return
+    try:
+        with thread_connection() as conn:
+            syms = [r['symbol'] for r in conn.execute(
+                'SELECT DISTINCT symbol FROM watchlist LIMIT 20'
+            ).fetchall()]
+        for sym in syms:
+            try:
+                fin = fetch_financials(sym)
+                if fin:
+                    threading.Thread(target=_embed_financials_bg, args=(sym, fin), daemon=True).start()
+                threading.Thread(target=_embed_price_history_bg, args=(sym,), daemon=True).start()
+            except Exception:
+                pass
+        log.info(f'[Scheduler] fundamentals refresh: {len(syms)} symbols')
+    except Exception as e:
+        log.debug(f'[Scheduler] fundamentals error: {e}')
+
+def _sched_weekly_reindex():
+    """Weekly: full re-embed of all watchlist symbols into vector store."""
+    if not _sched_should_run('rag_reindex') or not get_embed_model():
+        return
+    try:
+        with thread_connection() as conn:
+            syms = [r['symbol'] for r in conn.execute(
+                'SELECT DISTINCT symbol FROM watchlist LIMIT 50'
+            ).fetchall()]
+        log.info(f'[Scheduler] weekly re-index: {len(syms)} symbols')
+        for sym in syms:
+            threading.Thread(target=_rag_ingest_symbol, args=(sym,), daemon=True).start()
+    except Exception as e:
+        log.debug(f'[Scheduler] reindex error: {e}')
+
+def _start_rag_scheduler():
+    """Start APScheduler background scheduler for timed data ingestion pipeline."""
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        scheduler = BackgroundScheduler(daemon=True)
+        scheduler.add_job(_sched_refresh_technicals,  'interval', minutes=5,   id='rag_technicals',   max_instances=1)
+        scheduler.add_job(_sched_refresh_news,        'interval', hours=1,     id='rag_news',         max_instances=1)
+        scheduler.add_job(_sched_refresh_macro,       'interval', hours=6,     id='rag_macro',        max_instances=1)
+        scheduler.add_job(_sched_refresh_fundamentals,'interval', hours=24,    id='rag_fundamentals', max_instances=1)
+        scheduler.add_job(_sched_weekly_reindex,      'interval', days=7,      id='rag_reindex',      max_instances=1)
+        scheduler.start()
+        log.info('[Scheduler] RAG ingestion pipeline started (5m/1h/6h/24h/7d jobs)')
+    except ImportError:
+        log.info('[Scheduler] apscheduler not installed — scheduled RAG refresh disabled. pip install apscheduler')
+    except Exception as e:
+        log.warning(f'[Scheduler] failed to start: {e}')
+
+threading.Thread(target=_start_rag_scheduler, daemon=True).start()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
