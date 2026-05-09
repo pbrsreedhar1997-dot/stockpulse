@@ -7,6 +7,7 @@ import 'chartjs-adapter-date-fns';
 import { usePortfolio } from '../../hooks/usePortfolio';
 import { useAppContext } from '../../contexts/AppContext';
 import { useApi } from '../../hooks/useApi';
+import { useChat } from '../../hooks/useChat';
 import './Portfolio.scss';
 
 Chart.register(CategoryScale, LinearScale, TimeScale, Tooltip, Legend, LineController, LineElement, PointElement, Filler);
@@ -18,6 +19,165 @@ const REC_META = {
   SELL:         { label: 'Sell',         cls: 'sell'   },
   REVIEW:       { label: 'Review',       cls: 'review' },
 };
+
+function parseMarkdown(text) {
+  return text
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/`(.*?)`/g, '<code style="background:var(--card2);padding:1px 4px;border-radius:3px">$1</code>')
+    .replace(/^### (.+)$/gm, '<h4 style="margin:10px 0 5px;font-size:13px;color:var(--accent)">$1</h4>')
+    .replace(/^## (.+)$/gm, '<h3 style="margin:12px 0 6px;font-size:14px">$1</h3>')
+    .replace(/^\- (.+)$/gm, '<li style="margin:3px 0 3px 16px">$1</li>')
+    .replace(/\n\n/g, '<br/><br/>')
+    .replace(/\n/g, '<br/>');
+}
+
+function buildAIPrompt(h, action) {
+  const sym      = h.symbol.replace(/\.(NS|BO)$/i, '');
+  const name     = h.name || sym;
+  const pnlSign  = (h.pnl_pct ?? 0) >= 0 ? '+' : '';
+  const pnlPctStr = `${pnlSign}${fmt(h.pnl_pct)}%`;
+  const pnlAbsStr = `${(h.pnl ?? 0) >= 0 ? '+' : ''}₹${fmt(Math.abs(h.pnl ?? 0))}`;
+
+  let holdPeriod = '';
+  if (h.purchase_date) {
+    const days = (Date.now() / 1000 - h.purchase_date) / 86400;
+    if (days < 30) holdPeriod = `${Math.round(days)} days`;
+    else if (days < 365) holdPeriod = `${Math.round(days / 30)} months`;
+    else holdPeriod = `${(days / 365).toFixed(1)} years`;
+  }
+
+  const posLine = [
+    `${h.shares} shares`,
+    `avg buy ₹${fmt(h.avg_price)}`,
+    `current ₹${fmt(h.current_price)}`,
+    `P&L: ${pnlPctStr} (${pnlAbsStr})`,
+    holdPeriod ? `held ${holdPeriod}` : null,
+  ].filter(Boolean).join(' | ');
+
+  const header = `Portfolio AI Analysis — ${sym} (${name})\nPosition: ${posLine}\n\n`;
+
+  const prompts = {
+    BUY_MORE:
+      header +
+      `My AI system recommends BUYING MORE of ${sym}. Provide a full conviction analysis:\n` +
+      `1. **Technical Entry Signal**: Is now a good entry? Analyse RSI, MACD, moving averages, support/resistance, and momentum.\n` +
+      `2. **Fundamental Valuation**: Is the stock undervalued? Cover P/E, revenue growth, ROE, profit margins, and debt levels.\n` +
+      `3. **News & Catalysts**: What do recent news and analyst calls indicate? Any upcoming catalysts?\n` +
+      `4. **Macro & Sector**: Current macro environment impact on this sector. Tailwinds or headwinds?\n` +
+      `5. **Peer Comparison**: How is ${sym} performing vs sector peers right now?\n` +
+      `6. **Price Targets**: Bear/Base/Bull targets for 3-month and 12-month horizons.\n` +
+      `7. **Buy More Probability**: Give a 0–100 probability score for adding to this position now with clear reasoning.\n\n` +
+      `Be specific with numbers. Use all available RAG data including live prices and recent news.`,
+
+    HOLD:
+      header +
+      `My AI system recommends HOLDING ${sym}. Explain clearly why holding is the right decision:\n` +
+      `1. **Key Catalysts**: What near-term and long-term catalysts could drive this higher?\n` +
+      `2. **Technical Levels**: Key support levels to maintain, resistance levels to watch, trend direction.\n` +
+      `3. **Fundamental Trend**: Are margins and revenue improving? Any earnings upgrades?\n` +
+      `4. **Recent News Sentiment**: Any positive or negative developments in the last 30 days?\n` +
+      `5. **Top Risks**: What are the top 2–3 risks to the hold thesis?\n` +
+      `6. **Signal Triggers**: What would flip this to a BUY signal? What would trigger a SELL?\n` +
+      `7. **Hold Probability**: 0–100 probability this is a winning hold for 12 months.\n\n` +
+      `Provide bull and bear price targets for 6-month and 12-month horizons.`,
+
+    REVIEW:
+      header +
+      `This position is flagged for REVIEW — it appears to be underperforming. Do a forensic deep-dive:\n` +
+      `1. **Root Cause**: Why has ${sym} underperformed? Fundamental deterioration, sector weakness, or macro headwinds?\n` +
+      `2. **News Investigation**: What do the latest news articles reveal about this company? Any major concerns?\n` +
+      `3. **Recovery Thesis**: Is there a credible path to recovery in 6–12 months? What needs to happen?\n` +
+      `4. **Technical Picture**: Is the stock forming a base/bottom, or still in a downtrend?\n` +
+      `5. **Probabilities**: Give two separate probabilities (0–100): (a) meaningful recovery (+20%), (b) further decline (-20%).\n` +
+      `6. **Clear Verdict**: Should I CUT LOSSES NOW (with exit price target), or HOLD FOR RECOVERY (with target + timeline)?\n\n` +
+      `Be brutally honest. Use all recent news, technicals, fundamentals, and macro data available.`,
+
+    SELL_PARTIAL:
+      header +
+      `My AI system recommends PARTIAL PROFIT BOOKING on ${sym}. Analyse the exit strategy:\n` +
+      `1. **Overbought Check**: Is the stock technically overbought? (RSI >70, near resistance, Bollinger upper band?)\n` +
+      `2. **Valuation Stretch**: Is the P/E or P/B premium vs historical average or sector peers?\n` +
+      `3. **Near-term Risks**: Any macro events, earnings results, or headwinds that could trigger a pullback?\n` +
+      `4. **Optimal Exit Plan**: What % to book (25%? 50%?) at what specific price levels?\n` +
+      `5. **Hold Rationale**: Why keep the remaining position? What's the next upside target?\n` +
+      `6. **Correction Probability**: 0–100 probability of a 10%+ correction from current price in the next 3 months.\n\n` +
+      `Give specific price levels for the partial exit and the remaining position's target.`,
+
+    SELL:
+      header +
+      `My AI system recommends SELLING ${sym}. Provide a full justification:\n` +
+      `1. **Exit Case**: What are the 3 strongest reasons to sell now?\n` +
+      `2. **Counter Arguments**: Is there any remaining bull case for staying in?\n` +
+      `3. **Optimal Exit Level**: What's the best price to sell at — is there a better level than current price?\n` +
+      `4. **Downside Risk**: If I don't sell now, what's the bear case price target and timeline?\n` +
+      `5. **Exit Probability**: 0–100 probability that selling now is the right decision vs waiting 30–60 days.\n\n` +
+      `Give a clear action plan with specific price levels.`,
+  };
+
+  return prompts[action] ?? (
+    header +
+    `Give me a comprehensive AI probability analysis of this ${sym} position:\n` +
+    `1. Technical setup and momentum\n2. Fundamental valuation\n3. Recent news and sentiment\n` +
+    `4. Macro and sector trends\n5. Peer comparison\n` +
+    `6. Bear/Base/Bull price targets for 3-month and 12-month horizons\n` +
+    `7. Clear action recommendation (Buy More / Hold / Sell Partial / Sell) with probability score (0–100).`
+  );
+}
+
+// ── Holding AI Analysis Panel ─────────────────────────────────────────────────
+function HoldingAIPanel({ holding, action, onClose }) {
+  const { messages, streaming, send, stop, clear } = useChat();
+  const sentRef = useRef(false);
+  const bodyRef = useRef(null);
+  const rec = REC_META[action] || REC_META.HOLD;
+
+  useEffect(() => {
+    if (sentRef.current) return;
+    sentRef.current = true;
+    clear();
+    const prompt = buildAIPrompt(holding, action);
+    send(prompt, { symbols: [holding.symbol] });
+  }, []);
+
+  useEffect(() => {
+    if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+  }, [messages]);
+
+  const aiMsg = messages.find(m => m.role === 'assistant');
+
+  return (
+    <div className="pf-ai-panel">
+      <div className="pf-ai-panel__header">
+        <div className="pf-ai-panel__title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+          </svg>
+          <span>AI Analysis</span>
+          <span className={`pf-rec pf-rec--${rec.cls}`}>{rec.label}</span>
+          <span className="pf-ai-panel__sym">{holding.symbol.replace(/\.(NS|BO)$/i, '')}</span>
+        </div>
+        <div className="pf-ai-panel__controls">
+          {streaming && (
+            <button className="pf-ai-panel__stop" onClick={stop}>■ Stop</button>
+          )}
+          <button className="pf-ai-panel__close" onClick={onClose} title="Close">×</button>
+        </div>
+      </div>
+      <div className="pf-ai-panel__body" ref={bodyRef}>
+        {!aiMsg?.content && streaming && (
+          <div className="pf-ai-panel__thinking">
+            <span /><span /><span />
+          </div>
+        )}
+        {aiMsg?.content && (
+          <div className="pf-ai-panel__text"
+            dangerouslySetInnerHTML={{ __html: parseMarkdown(aiMsg.content) }} />
+        )}
+      </div>
+    </div>
+  );
+}
 
 const fmt = (n, d = 2) => {
   if (n == null || isNaN(n)) return '—';
@@ -342,7 +502,7 @@ function HoldingModal({ holding, onClose, onSave, initialSymbol = '', initialNam
 }
 
 // ── Holding Card ──────────────────────────────────────────────────────────────
-function HoldingCard({ h, onEdit, onRemove, onHistory }) {
+function HoldingCard({ h, onEdit, onRemove, onHistory, onAnalyse, aiPanelOpen }) {
   const up  = h.pnl >= 0;
   const rec = REC_META[h.recommendation?.action] || REC_META.HOLD;
 
@@ -351,14 +511,23 @@ function HoldingCard({ h, onEdit, onRemove, onHistory }) {
     : null;
 
   return (
-    <div className="pf-card">
+    <div className={`pf-card ${aiPanelOpen ? 'pf-card--ai-active' : ''}`}>
       <div className="pf-card__top">
         <div className="pf-card__id">
           <div className="pf-card__symbol">{h.symbol.replace(/\.(NS|BO)$/i, '')}</div>
           <div className="pf-card__name">{h.name}</div>
         </div>
         <div className="pf-card__badges">
-          <span className={`pf-rec pf-rec--${rec.cls}`}>{rec.label}</span>
+          <button
+            className={`pf-rec pf-rec--${rec.cls} pf-rec--clickable ${aiPanelOpen ? 'pf-rec--open' : ''}`}
+            onClick={onAnalyse}
+            title="Click for AI analysis"
+          >
+            {rec.label}
+            <svg className="pf-rec__spark" width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/>
+            </svg>
+          </button>
           {h.stop_loss && (
             <span className="pf-sl-pill">SL ₹{fmt(h.stop_loss)}</span>
           )}
@@ -429,9 +598,10 @@ function HoldingCard({ h, onEdit, onRemove, onHistory }) {
 export default function Portfolio() {
   const { state, dispatch } = useAppContext();
   const { portfolio, fetchPortfolio, addHolding, updateHolding, removeHolding } = usePortfolio();
-  const [modal,   setModal]   = useState(null); // {symbol, name, holding?}
-  const [history, setHistory] = useState(null); // symbol string for history modal
-  const [loading, setLoading] = useState(false);
+  const [modal,     setModal]     = useState(null); // {symbol, name, holding?}
+  const [history,   setHistory]   = useState(null); // symbol string for history modal
+  const [aiPanel,   setAiPanel]   = useState(null); // {holding, action}
+  const [loading,   setLoading]   = useState(false);
 
   useEffect(() => {
     if (!state.token) return;
@@ -527,13 +697,26 @@ export default function Portfolio() {
       ) : (
         <div className="pf-list">
           {holdings.map(h => (
-            <HoldingCard
-              key={h.symbol}
-              h={h}
-              onEdit={h => setModal({ symbol: h.symbol, name: h.name, holding: h })}
-              onRemove={handleRemove}
-              onHistory={sym => setHistory(sym)}
-            />
+            <React.Fragment key={h.symbol}>
+              <HoldingCard
+                h={h}
+                onEdit={h => setModal({ symbol: h.symbol, name: h.name, holding: h })}
+                onRemove={handleRemove}
+                onHistory={sym => setHistory(sym)}
+                onAnalyse={() => setAiPanel(
+                  aiPanel?.holding?.symbol === h.symbol ? null
+                    : { holding: h, action: h.recommendation?.action || 'HOLD' }
+                )}
+                aiPanelOpen={aiPanel?.holding?.symbol === h.symbol}
+              />
+              {aiPanel?.holding?.symbol === h.symbol && (
+                <HoldingAIPanel
+                  holding={aiPanel.holding}
+                  action={aiPanel.action}
+                  onClose={() => setAiPanel(null)}
+                />
+              )}
+            </React.Fragment>
           ))}
         </div>
       )}

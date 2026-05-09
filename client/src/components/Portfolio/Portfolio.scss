@@ -316,6 +316,7 @@
 .pf-rec {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
   padding: 3px 10px;
   border-radius: 20px;
   font-size: 10.5px;
@@ -327,6 +328,161 @@
   &--hold   { background: var(--accent-dim); color: var(--accent); border: 1px solid rgba(232,168,56,0.25); }
   &--sell   { background: var(--down-dim);   color: var(--down);   border: 1px solid rgba(255,69,96,0.25); }
   &--review { background: rgba(245,158,11,0.12); color: var(--warn); border: 1px solid rgba(245,158,11,0.25); }
+
+  &--clickable {
+    cursor: pointer;
+    transition: all 0.15s;
+    &:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      filter: brightness(1.15);
+    }
+    &:active { transform: translateY(0); }
+  }
+
+  &--open {
+    box-shadow: 0 0 0 2px currentColor;
+    filter: brightness(1.1);
+  }
+
+  &__spark {
+    opacity: 0.7;
+    flex-shrink: 0;
+  }
+}
+
+.pf-card--ai-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 4px 20px rgba(232,168,56,0.15);
+}
+
+/* ── AI Analysis Panel ───────────────────────────────────────────────────────── */
+.pf-ai-panel {
+  background: var(--card);
+  border: 1px solid var(--border2);
+  border-top: 2px solid var(--accent);
+  border-radius: 0 0 var(--radius) var(--radius);
+  margin-top: -6px;
+  animation: pf-ai-slide 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  overflow: hidden;
+
+  @keyframes pf-ai-slide {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  &__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--card2);
+    gap: 12px;
+  }
+
+  &__title {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text2);
+
+    svg { color: var(--accent); flex-shrink: 0; }
+    > span:first-of-type { color: var(--text); }
+  }
+
+  &__sym {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text3);
+    font-weight: 700;
+    letter-spacing: 0.3px;
+  }
+
+  &__controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  &__stop {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--down);
+    background: var(--down-dim);
+    border: 1px solid rgba(255,69,96,0.25);
+    border-radius: 4px;
+    padding: 3px 9px;
+    transition: background 0.12s;
+    &:hover { background: rgba(255,69,96,0.2); }
+  }
+
+  &__close {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    color: var(--text3);
+    transition: background 0.12s, color 0.12s;
+    &:hover { background: var(--down-dim); color: var(--down); }
+  }
+
+  &__body {
+    padding: 16px;
+    max-height: 480px;
+    overflow-y: auto;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text2);
+
+    strong { color: var(--text); font-weight: 600; }
+    em { color: var(--text3); font-style: normal; }
+    h3 { color: var(--text); margin: 12px 0 6px; font-size: 14px; }
+    h4 { color: var(--accent); margin: 10px 0 5px; font-size: 13px; }
+    li { margin: 3px 0 3px 16px; }
+    code {
+      background: var(--card2);
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+    }
+  }
+
+  &__thinking {
+    display: flex;
+    gap: 5px;
+    padding: 4px 0;
+
+    span {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: pf-ai-dot 1.2s infinite;
+      &:nth-child(2) { animation-delay: 0.2s; }
+      &:nth-child(3) { animation-delay: 0.4s; }
+    }
+  }
+
+  &__text {
+    animation: pf-ai-fadein 0.2s ease-out;
+    @keyframes pf-ai-fadein {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+  }
+}
+
+@keyframes pf-ai-dot {
+  0%, 60%, 100% { opacity: 0.2; transform: scale(0.85); }
+  30%           { opacity: 1;   transform: scale(1.1); }
 }
 
 /* ── Gate / Empty / Loading ──────────────────────────────────────────────────── */
