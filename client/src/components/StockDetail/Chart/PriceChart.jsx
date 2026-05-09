@@ -6,6 +6,8 @@ import {
 import { CandlestickController, CandlestickElement } from 'chartjs-chart-financial';
 import 'chartjs-adapter-date-fns';
 import { useStocks } from '../../../hooks/useStocks';
+import { useAppContext } from '../../../contexts/AppContext';
+import { fmtPrice } from '../../../utils/currency';
 import './PriceChart.scss';
 
 Chart.register(
@@ -36,6 +38,8 @@ export default function PriceChart({ symbol }) {
   const [candles, setCandles]     = useState(null);
   const [stats, setStats]         = useState(null);
   const { fetchHistory } = useStocks();
+  const { state } = useAppContext();
+  const cur = state.quotes[symbol]?.currency || (symbol?.match(/\.(NS|BO)$/i) ? 'INR' : 'USD');
 
   useEffect(() => {
     let cancelled = false;
@@ -293,19 +297,19 @@ export default function PriceChart({ symbol }) {
         <div className="price-chart__stats-bar">
           <div className="price-chart__stat">
             <span>Open</span>
-            <strong>₹{stats.open?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+            <strong>{fmtPrice(stats.open, cur)}</strong>
           </div>
           <div className="price-chart__stat">
             <span>High</span>
-            <strong className="up">₹{stats.high?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+            <strong className="up">{fmtPrice(stats.high, cur)}</strong>
           </div>
           <div className="price-chart__stat">
             <span>Low</span>
-            <strong className="down">₹{stats.low?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+            <strong className="down">{fmtPrice(stats.low, cur)}</strong>
           </div>
           <div className="price-chart__stat">
             <span>Close</span>
-            <strong>₹{stats.close?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+            <strong>{fmtPrice(stats.close, cur)}</strong>
           </div>
           <div className={`price-chart__stat price-chart__stat--chg ${up ? 'up' : 'down'}`}>
             <span>Period Chg</span>
