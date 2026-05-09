@@ -1,14 +1,188 @@
+/* ── Chat history sidebar ──────────────────────────────────────────────────── */
+.chat-history {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 280px;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(-100%);
+  transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+  box-shadow: 4px 0 24px rgba(0,0,0,0.3);
+
+  &--open { transform: translateX(0); }
+
+  &__backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 99;
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(2px);
+  }
+
+  &__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 14px 12px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  &__title {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text3);
+  }
+
+  &__close {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: var(--text3);
+    transition: background 0.12s, color 0.12s;
+    &:hover { background: var(--card); color: var(--text); }
+  }
+
+  &__new {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 10px 10px 6px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-dim);
+    border: 1px solid rgba(232,168,56,0.2);
+    transition: background 0.13s;
+    flex-shrink: 0;
+
+    span { font-size: 16px; font-weight: 700; }
+
+    &:hover { background: rgba(232,168,56,0.18); }
+  }
+
+  &__list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0 8px;
+
+    &::-webkit-scrollbar { width: 4px; }
+    &::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+  }
+
+  &__empty {
+    padding: 20px 16px;
+    font-size: 12.5px;
+    color: var(--text3);
+    line-height: 1.6;
+    text-align: center;
+  }
+
+  &__item {
+    position: relative;
+    padding: 10px 36px 10px 14px;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+    transition: background 0.1s;
+
+    &:hover {
+      background: rgba(255,255,255,0.03);
+      .chat-history__item-del { opacity: 1; }
+    }
+
+    &--active {
+      background: var(--accent-glow);
+      border-left-color: var(--accent);
+    }
+  }
+
+  &__item-title {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__item-meta {
+    font-size: 10.5px;
+    color: var(--text3);
+    margin-top: 3px;
+  }
+
+  &__item-del {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    color: var(--text3);
+    opacity: 0;
+    transition: opacity 0.12s, background 0.12s, color 0.12s;
+
+    &:hover { background: var(--down-dim); color: var(--down); }
+  }
+}
+
+/* ── Main chat ─────────────────────────────────────────────────────────────── */
 .chat {
   display: flex;
   flex-direction: column;
   height: 100%;
+  position: relative;
   animation: tab-slide-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+
+  &__history-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text3);
+    flex-shrink: 0;
+    transition: background 0.13s, color 0.13s;
+    margin-right: 2px;
+
+    svg { width: 16px; height: 16px; }
+
+    &:hover { background: var(--card); color: var(--text); }
+
+    &--active {
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+  }
+
+  &__header-info { flex: 1; min-width: 0; }
+
+  &__header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
   &__header {
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    padding: 20px 26px 16px;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 20px 12px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
     background: rgba(8,12,23,0.5);

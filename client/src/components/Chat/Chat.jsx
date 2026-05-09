@@ -1,5 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useChat } from '../../hooks/useChat';
+import { useAppContext } from '../../contexts/AppContext';
 import './Chat.scss';
 
 const QUICK_ACTIONS = [
@@ -11,7 +12,6 @@ const QUICK_ACTIONS = [
   { label: '🌍 Macro Outlook',          question: 'What is the current macroeconomic environment? Cover interest rates, inflation, yield curve, and impact on Indian IT and banking sectors.' },
 ];
 
-/* Prediction-specific quick actions */
 const PREDICT_ACTIONS = [
   { label: '🔮 Predict Reliance',  sym: 'RELIANCE.NS' },
   { label: '🔮 Predict TCS',       sym: 'TCS.NS'      },
@@ -26,31 +26,16 @@ function predictQuestion(sym) {
     `Include DCF fair value estimate, ATR-based risk, VWAP and Ichimoku cloud signal, and overall prediction confidence.`;
 }
 
-/* ── Predict bar — symbol input shortcut in the welcome screen ─────────────── */
 function PredictBar({ onSubmit }) {
   const [sym, setSym] = useState('');
-  const submit = () => {
-    const s = sym.trim().toUpperCase();
-    if (!s) return;
-    onSubmit(predictQuestion(s));
-    setSym('');
-  };
-  const onKey = (e) => { if (e.key === 'Enter') submit(); };
+  const submit = () => { const s = sym.trim().toUpperCase(); if (!s) return; onSubmit(predictQuestion(s)); setSym(''); };
   return (
     <div className="predict-bar">
       <span className="predict-bar__icon">🔮</span>
-      <input
-        className="predict-bar__input"
-        placeholder="Enter symbol, e.g. AAPL or RELIANCE.NS"
-        value={sym}
-        onChange={e => setSym(e.target.value)}
-        onKeyDown={onKey}
-        autoComplete="off"
-        spellCheck={false}
-      />
-      <button className="predict-bar__btn" onClick={submit} disabled={!sym.trim()}>
-        Predict ↑
-      </button>
+      <input className="predict-bar__input" placeholder="Enter symbol, e.g. AAPL or RELIANCE.NS"
+        value={sym} onChange={e => setSym(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()}
+        autoComplete="off" spellCheck={false} />
+      <button className="predict-bar__btn" onClick={submit} disabled={!sym.trim()}>Predict ↑</button>
     </div>
   );
 }
@@ -67,10 +52,90 @@ function parseMarkdown(text) {
     .replace(/\n/g, '<br/>');
 }
 
+function fmtDate(ts) {
+  const d = new Date(Number(ts) * 1000);
+  const now = new Date();
+  const diff = now - d;
+  if (diff < 60000) return 'Just now';
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+  if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+}
+
+/* ── History sidebar ───────────────────────────────────────────────────────── */
+function HistorySidebar({ open, onClose, token, sessionId, onLoad, onDelete, onNew }) {
+  const [sessions, setSessions] = useState([]);
+  const [loading,  setLoading]  = useState(false);
+  const [deleting, setDeleting] = useState(null);
+
+  const loadSessions = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
+    try {
+      const r = await fetch('/api/chat/sessions', { headers: { 'Authorization': `Bearer ${token}` } });
+      const d = await r.json();
+      if (d.ok) setSessions(d.sessions);
+    } finally { setLoading(false); }
+  }, [token]);
+
+  useEffect(() => { if (open && token) loadSessions(); }, [open, token]);
+
+  async function handleDelete(e, id) {
+    e.stopPropagation();
+    setDeleting(id);
+    await onDelete(id);
+    setSessions(prev => prev.filter(s => s.id !== id));
+    setDeleting(null);
+  }
+
+  return (
+    <div className={`chat-history ${open ? 'chat-history--open' : ''}`}>
+      <div className="chat-history__header">
+        <span className="chat-history__title">Chat History</span>
+        <button className="chat-history__close" onClick={onClose} title="Close">✕</button>
+      </div>
+
+      <button className="chat-history__new" onClick={() => { onNew(); onClose(); }}>
+        <span>+</span> New Chat
+      </button>
+
+      <div className="chat-history__list">
+        {!token ? (
+          <div className="chat-history__empty">Sign in to save and view chat history.</div>
+        ) : loading ? (
+          <div className="chat-history__empty">Loading…</div>
+        ) : !sessions.length ? (
+          <div className="chat-history__empty">No saved chats yet. Start a conversation!</div>
+        ) : sessions.map(s => (
+          <div
+            key={s.id}
+            className={`chat-history__item ${s.id === sessionId ? 'chat-history__item--active' : ''}`}
+            onClick={() => { onLoad(s.id); onClose(); }}
+          >
+            <div className="chat-history__item-title">{s.title}</div>
+            <div className="chat-history__item-meta">{fmtDate(s.updated_at)}</div>
+            <button
+              className="chat-history__item-del"
+              onClick={e => handleDelete(e, s.id)}
+              title="Delete"
+              disabled={deleting === s.id}
+            >
+              {deleting === s.id ? '…' : '×'}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Main Chat component ───────────────────────────────────────────────────── */
 export default function Chat() {
-  const { messages, streaming, send, stop, clear } = useChat();
-  const [input,    setInput]    = useState('');
-  const [predSym,  setPredSym]  = useState('');
+  const { state } = useAppContext();
+  const { messages, streaming, sessionId, send, stop, clear, loadSession, deleteSession } = useChat();
+  const [input,       setInput]       = useState('');
+  const [historyOpen, setHistoryOpen] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef       = useRef(null);
 
@@ -86,24 +151,48 @@ export default function Chat() {
   };
 
   const onKey = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      submit();
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
   };
 
   return (
     <div className="chat">
+      {/* ── History sidebar ── */}
+      <HistorySidebar
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        token={state.token}
+        sessionId={sessionId}
+        onLoad={loadSession}
+        onDelete={deleteSession}
+        onNew={clear}
+      />
+
+      {/* ── Header ── */}
       <div className="chat__header">
-        <div>
+        <button
+          className={`chat__history-btn ${historyOpen ? 'chat__history-btn--active' : ''}`}
+          onClick={() => setHistoryOpen(o => !o)}
+          title="Chat history"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/>
+            <line x1="8" y1="18" x2="21" y2="18"/>
+            <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/>
+            <line x1="3" y1="18" x2="3.01" y2="18"/>
+          </svg>
+        </button>
+        <div className="chat__header-info">
           <h2 className="chat__title">AI Stock Analyst</h2>
-          <p className="chat__sub">Ask about any NSE/BSE stock by name or ticker — e.g. "Analyse Reliance" or "What is TCS PE ratio?"</p>
+          <p className="chat__sub">Ask about any NSE/BSE stock — technicals, fundamentals, news &amp; price predictions</p>
         </div>
-        {messages.length > 0 && (
-          <button className="chat__clear" onClick={clear}>Clear chat</button>
-        )}
+        <div className="chat__header-actions">
+          {messages.length > 0 && (
+            <button className="chat__clear" onClick={clear} title="New chat">New chat</button>
+          )}
+        </div>
       </div>
 
+      {/* ── Messages ── */}
       <div className="chat__messages">
         {messages.length === 0 ? (
           <div className="chat__welcome">
@@ -120,23 +209,18 @@ export default function Chat() {
               </svg>
             </div>
             <h3>AI Stock Analyst</h3>
-            <p>
-              Ask about any stock — live price, technicals, fundamentals, news sentiment, and full AI price predictions.
-            </p>
+            <p>Ask about any stock — live price, technicals, fundamentals, news sentiment, and full AI price predictions.</p>
 
-            {/* ── Predict bar ───────────────────────────────────────────────── */}
             <div className="chat__section-label">🔮 Price Predictions</div>
             <PredictBar onSubmit={submit} />
             <div className="chat__quick-actions">
               {PREDICT_ACTIONS.map(a => (
-                <button key={a.label} className="quick-btn quick-btn--predict"
-                  onClick={() => submit(predictQuestion(a.sym))}>
+                <button key={a.label} className="quick-btn quick-btn--predict" onClick={() => submit(predictQuestion(a.sym))}>
                   {a.label}
                 </button>
               ))}
             </div>
 
-            {/* ── General analysis ─────────────────────────────────────────── */}
             <div className="chat__section-label">📊 Analysis &amp; Research</div>
             <div className="chat__quick-actions">
               {QUICK_ACTIONS.map(a => (
@@ -150,22 +234,22 @@ export default function Chat() {
           messages.map((msg, i) => (
             <div key={i} className={`message message--${msg.role}`}>
               <div className="message__avatar">
-                {msg.role === 'user' ? '👤' : '🤖'}
+                {msg.role === 'user'
+                  ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="7" r="4"/><path d="M2 21c0-5 4-9 10-9s10 4 10 9"/></svg>
+                  : <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="40" height="40" rx="8" stroke="none" fill="var(--accent-dim)"/><polyline points="10 34 18 22 24 28 32 16 38 20" strokeWidth="2.5" stroke="var(--accent)"/></svg>
+                }
               </div>
               <div className="message__bubble">
                 {msg.role === 'assistant' ? (
-                  <div dangerouslySetInnerHTML={{ __html: parseMarkdown(msg.content) }} />
+                  <>
+                    {!msg.content && streaming && i === messages.length - 1 ? (
+                      <span className="message__thinking-dots"><span /><span /><span /></span>
+                    ) : (
+                      <div dangerouslySetInnerHTML={{ __html: parseMarkdown(msg.content) }} />
+                    )}
+                  </>
                 ) : (
                   <div>{msg.content}</div>
-                )}
-                {streaming && i === messages.length - 1 && msg.role === 'assistant' && (
-                  <span className="message__cursor">
-                    {!msg.content && (
-                      <span className="message__thinking-dots">
-                        <span /><span /><span />
-                      </span>
-                    )}
-                  </span>
                 )}
               </div>
             </div>
@@ -174,22 +258,19 @@ export default function Chat() {
         <div ref={messagesEndRef} />
       </div>
 
+      {/* ── Quick bar (mid-conversation) ── */}
       {messages.length > 0 && !streaming && (
         <div className="chat__quick-bar">
           {PREDICT_ACTIONS.slice(0, 2).map(a => (
-            <button key={a.label} className="quick-btn quick-btn--sm quick-btn--predict"
-              onClick={() => submit(predictQuestion(a.sym))}>
-              {a.label}
-            </button>
+            <button key={a.label} className="quick-btn quick-btn--sm quick-btn--predict" onClick={() => submit(predictQuestion(a.sym))}>{a.label}</button>
           ))}
           {QUICK_ACTIONS.slice(0, 3).map(a => (
-            <button key={a.label} className="quick-btn quick-btn--sm" onClick={() => submit(a.question)}>
-              {a.label}
-            </button>
+            <button key={a.label} className="quick-btn quick-btn--sm" onClick={() => submit(a.question)}>{a.label}</button>
           ))}
         </div>
       )}
 
+      {/* ── Input area ── */}
       <div className="chat__input-area">
         <textarea
           ref={inputRef}
@@ -201,15 +282,14 @@ export default function Chat() {
           rows={1}
         />
         {streaming ? (
-          <button className="chat__send chat__send--stop" onClick={stop}>
-            ■ Stop
-          </button>
+          <button className="chat__send chat__send--stop" onClick={stop}>■ Stop</button>
         ) : (
-          <button className="chat__send" onClick={() => submit()} disabled={!input.trim()}>
-            Send ↑
-          </button>
+          <button className="chat__send" onClick={() => submit()} disabled={!input.trim()}>Send ↑</button>
         )}
       </div>
+
+      {/* ── History backdrop ── */}
+      {historyOpen && <div className="chat-history__backdrop" onClick={() => setHistoryOpen(false)} />}
     </div>
   );
 }

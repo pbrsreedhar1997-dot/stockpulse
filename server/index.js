@@ -19,6 +19,7 @@ import screenerRouter from './routes/screener.js';
 import watchlistRouter  from './routes/watchlist.js';
 import portfolioRouter  from './routes/portfolio.js';
 import pushRouter       from './routes/push.js';
+import chatRouter       from './routes/chat.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -39,6 +40,7 @@ app.use('/api/screener',  screenerRouter);
 app.use('/api/watchlist', watchlistRouter);
 app.use('/api/portfolio', portfolioRouter);
 app.use('/api/push',     pushRouter);
+app.use('/api/chat',     chatRouter);
 
 // ── Static React build ────────────────────────────────────────────────────────
 const staticDir = path.join(__dirname, '..', 'static', 'dist', 'browser');

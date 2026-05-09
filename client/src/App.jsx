@@ -142,7 +142,7 @@ function MarketPulse() {
     setLoading(true);
     Promise.all(
       INDICES.map(idx =>
-        fetch(`/api/quote?symbol=${encodeURIComponent(idx.symbol)}`)
+        fetch(`/api/quote/${encodeURIComponent(idx.symbol)}`)
           .then(r => r.json())
           .then(res => ({ ...idx, q: res?.data ?? res }))
           .catch(() => ({ ...idx, q: null }))

@@ -5,12 +5,33 @@ import { useAppContext } from '../contexts/AppContext';
 export function useChat() {
   const { state } = useAppContext();
   const { emit, on } = useWebSocket();
-  const [messages, setMessages] = useState([]);
-  const [streaming, setStreaming] = useState(false);
-  const chatIdRef = useRef(null);
-  // Keep messages ref so callbacks always see latest without re-registering
-  const messagesRef = useRef(messages);
-  useEffect(() => { messagesRef.current = messages; }, [messages]);
+  const [messages,  setMessages]  = useState([]);
+  const [streaming, setStreaming]  = useState(false);
+  const [sessionId, setSessionId]  = useState(null);
+  const chatIdRef    = useRef(null);
+  const messagesRef  = useRef(messages);
+  const sessionIdRef = useRef(null);
+
+  useEffect(() => { messagesRef.current  = messages;  }, [messages]);
+  useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+
+  /* ── Auto-save to DB after each completed response ── */
+  async function saveToDb(msgs) {
+    if (!state.token || !msgs.length) return;
+    const firstUser = msgs.find(m => m.role === 'user');
+    const title = firstUser ? firstUser.content.slice(0, 72) : 'Chat';
+    try {
+      const r = await fetch('/api/chat/sessions', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
+        body:    JSON.stringify({ sessionId: sessionIdRef.current, title, messages: msgs }),
+      });
+      const data = await r.json();
+      if (data.ok && data.sessionId && !sessionIdRef.current) {
+        setSessionId(data.sessionId);
+      }
+    } catch { /* non-critical — ignore save errors */ }
+  }
 
   useEffect(() => {
     const unsubDelta = on('chat_delta', (msg) => {
@@ -29,6 +50,8 @@ export function useChat() {
       if (msg.id !== chatIdRef.current) return;
       setStreaming(false);
       chatIdRef.current = null;
+      /* Save after state settles */
+      setTimeout(() => saveToDb(messagesRef.current), 100);
     });
 
     const unsubError = on('chat_error', (msg) => {
@@ -43,7 +66,7 @@ export function useChat() {
     });
 
     return () => { unsubDelta(); unsubDone(); unsubError(); };
-  }, [on]);
+  }, [on, state.token]);
 
   const send = useCallback((question, opts = {}) => {
     if (!question?.trim() || streaming) return;
@@ -51,9 +74,11 @@ export function useChat() {
     const id = `chat-${Date.now()}`;
     chatIdRef.current = id;
 
-    const userMsg      = { role: 'user',      content: question };
-    const assistantMsg = { role: 'assistant',  content: '' };
-    setMessages(prev => [...prev, userMsg, assistantMsg]);
+    setMessages(prev => [
+      ...prev,
+      { role: 'user',      content: question },
+      { role: 'assistant', content: '' },
+    ]);
     setStreaming(true);
 
     const history = messagesRef.current.slice(-8).map(m => ({ role: m.role, content: m.content }));
@@ -63,14 +88,40 @@ export function useChat() {
   }, [streaming, state.token, emit]);
 
   const stop = useCallback(() => {
-    if (chatIdRef.current) {
-      emit({ type: 'chat_stop', id: chatIdRef.current });
-    }
+    if (chatIdRef.current) emit({ type: 'chat_stop', id: chatIdRef.current });
     setStreaming(false);
     chatIdRef.current = null;
   }, [emit]);
 
-  const clear = useCallback(() => setMessages([]), []);
+  const clear = useCallback(() => {
+    setMessages([]);
+    setSessionId(null);
+  }, []);
 
-  return { messages, streaming, send, stop, clear };
+  /* Load an existing session from DB */
+  const loadSession = useCallback(async (id) => {
+    if (!state.token) return;
+    try {
+      const r = await fetch(`/api/chat/sessions/${id}`, {
+        headers: { 'Authorization': `Bearer ${state.token}` },
+      });
+      const data = await r.json();
+      if (data.ok) {
+        setMessages(data.messages);
+        setSessionId(id);
+      }
+    } catch {}
+  }, [state.token]);
+
+  /* Delete a session from DB */
+  const deleteSession = useCallback(async (id) => {
+    if (!state.token) return;
+    await fetch(`/api/chat/sessions/${id}`, {
+      method:  'DELETE',
+      headers: { 'Authorization': `Bearer ${state.token}` },
+    });
+    if (sessionIdRef.current === id) clear();
+  }, [state.token, clear]);
+
+  return { messages, streaming, sessionId, send, stop, clear, loadSession, deleteSession };
 }

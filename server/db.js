@@ -86,6 +86,25 @@ export async function initDb() {
         created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
       )`);
     await query(`CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id)`);
+    // AI Chat history
+    await query(`
+      CREATE TABLE IF NOT EXISTS chat_sessions (
+        id         SERIAL PRIMARY KEY,
+        user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title      TEXT NOT NULL DEFAULT 'New Chat',
+        created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+        updated_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+      )`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions(user_id)`);
+    await query(`
+      CREATE TABLE IF NOT EXISTS chat_messages (
+        id         SERIAL PRIMARY KEY,
+        session_id INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+        role       TEXT NOT NULL CHECK (role IN ('user','assistant')),
+        content    TEXT NOT NULL,
+        created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+      )`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id)`);
     log.info('PostgreSQL schema ready');
   } catch (err) {
     log.error('DB init failed:', err.message);
