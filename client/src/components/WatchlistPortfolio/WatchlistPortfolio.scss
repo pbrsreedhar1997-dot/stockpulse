@@ -387,12 +387,20 @@
     &::before { opacity: 0.7; }
   }
 
-  /* ── Toggle bar ── */
+  /* ── Toggle row (toggle button + clear) ── */
+  &__toggle-row {
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid transparent;
+
+    .wl-ai--open & { border-bottom-color: var(--border); }
+  }
+
   &__toggle {
     display: flex;
     align-items: center;
     gap: 8px;
-    width: 100%;
+    flex: 1;
     padding: 11px 16px;
     font-size: 12.5px;
     font-weight: 700;
@@ -406,18 +414,28 @@
       color: var(--text);
     }
 
-    .wl-ai--open & {
-      color: var(--purple2);
-      border-bottom: 1px solid var(--border);
-    }
+    .wl-ai--open & { color: var(--purple2); }
+  }
+
+  &__clear {
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text3);
+    border-radius: var(--radius-sm);
+    margin-right: 10px;
+    flex-shrink: 0;
+    transition: background 0.12s, color 0.12s;
+
+    &:hover { background: var(--down-dim); color: var(--down); }
   }
 
   &__toggle-icon {
-    font-size: 14px;
+    width: 15px;
+    height: 15px;
     color: var(--purple);
     flex-shrink: 0;
-    filter: drop-shadow(0 0 6px rgba(168,85,247,0.6));
-    animation: neon-flicker 6s ease-in-out infinite;
+    filter: drop-shadow(0 0 5px rgba(168,85,247,0.5));
   }
 
   &__toggle-label { flex: 1; }

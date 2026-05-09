@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
 import { useWatchlist } from '../../hooks/useWatchlist';
+import { useChat } from '../../hooks/useChat';
 import { fmtPrice } from '../../utils/currency';
 import Portfolio from '../Portfolio/Portfolio';
 import './WatchlistPortfolio.scss';
 
-/* ── Markdown renderer (mirrors Chat.jsx) ──────────────────────────────────── */
+/* ── Markdown renderer ─────────────────────────────────────────────────────── */
 function parseMarkdown(text) {
   return text
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
@@ -18,7 +19,6 @@ function parseMarkdown(text) {
     .replace(/\n/g,   '<br/>');
 }
 
-/* ── Quick questions pre-wired to the portfolio ────────────────────────────── */
 const PORTFOLIO_QUESTIONS = [
   { label: '📊 Portfolio health',  q: 'Give me an overall health check of my watchlist. Which stocks look strong and which are weak right now?' },
   { label: '🛒 Best buy now',      q: 'Which stock in my watchlist has the best buy opportunity right now based on technicals and valuation?' },
@@ -27,180 +27,73 @@ const PORTFOLIO_QUESTIONS = [
   { label: '📈 Top momentum',      q: 'Which stocks in my watchlist have the strongest price momentum right now?' },
 ];
 
-/* ── Inline portfolio AI chat ──────────────────────────────────────────────── */
-function PortfolioChat({ symbols, token }) {
-  const [open,      setOpen]      = useState(false);
-  const [messages,  setMessages]  = useState([]);
-  const [input,     setInput]     = useState('');
-  const [streaming, setStreaming]  = useState(false);
-  const abortRef   = useRef(null);
-  const bottomRef  = useRef(null);
-  const historyRef = useRef([]);   // tracks Q&A pairs for multi-turn RAG context
+/* ── Inline portfolio AI chat — uses same WebSocket as main Chat tab ───────── */
+function PortfolioChat({ symbols }) {
+  const { messages, streaming, send, stop, clear } = useChat();
+  const [open, setOpen] = useState(false);
+  const [input, setInput] = useState('');
+  const bottomRef = useRef(null);
 
   useEffect(() => {
     if (open) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, open]);
 
-  /* Replace the last assistant bubble's content (clears dots regardless of cause) */
-  function setLastAssistant(content) {
-    setMessages(prev => {
-      const up = [...prev];
-      const last = up[up.length - 1];
-      if (last?.role === 'assistant') up[up.length - 1] = { ...last, content };
-      return up;
-    });
-  }
-
-  async function send(question) {
+  function submit(question) {
     const q = (question || input).trim();
-    if (!q || streaming) return;
+    if (!q) return;
     setInput('');
     setOpen(true);
-
-    setMessages(prev => [...prev,
-      { role: 'user',      content: q },
-      { role: 'assistant', content: '' },   // empty = shows dots
-    ]);
-    setStreaming(true);
-
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-    let fullAnswer = '';
-
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const res = await fetch('/api/chat', {
-        method:  'POST',
-        headers,
-        body:    JSON.stringify({
-          question: q,
-          symbols,
-          history: historyRef.current.slice(-6),
-        }),
-        signal:  ctrl.signal,
-      });
-
-      /* ── Non-SSE error response (e.g. 503 No AI key, 400 bad request) ── */
-      if (!res.ok) {
-        let msg = `Server error ${res.status}`;
-        try { const j = await res.json(); if (j.error) msg = j.error; } catch {}
-        setLastAssistant(`⚠️ ${msg}`);
-        return;
-      }
-
-      const reader  = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop();
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const ev = JSON.parse(line.slice(6));
-            if (ev.type === 'delta') {
-              fullAnswer += ev.text;
-              /* Replace whole content so dots disappear as soon as first token arrives */
-              setLastAssistant(fullAnswer);
-            } else if (ev.type === 'error') {
-              /* Server-side error event (rate-limit, timeout, etc.) */
-              setLastAssistant(`⚠️ ${ev.message || 'AI service error — please try again.'}`);
-              return;
-            }
-            /* 'done' event — stream finished cleanly, loop will end naturally */
-          } catch { /* malformed SSE chunk — skip */ }
-        }
-      }
-
-      /* Stream ended with nothing — server may be unavailable */
-      if (!fullAnswer) {
-        setLastAssistant('⚠️ No response received. The AI service may be unavailable — please try again.');
-        return;
-      }
-
-      /* Persist Q&A into history so follow-up questions retain context */
-      historyRef.current = [
-        ...historyRef.current,
-        { role: 'user',      content: q         },
-        { role: 'assistant', content: fullAnswer },
-      ];
-    } catch (err) {
-      if (err.name === 'AbortError') {
-        /* User clicked Stop — keep any partial text, or show stopped notice */
-        if (!fullAnswer) setLastAssistant('✕ Stopped.');
-        /* If we already have partial text it's already in the bubble — leave it */
-      } else {
-        setLastAssistant('⚠️ Could not reach the AI service — check your connection and try again.');
-      }
-    } finally {
-      setStreaming(false);
-      abortRef.current = null;
-    }
-  }
-
-  function stop() {
-    abortRef.current?.abort();
-    /* streaming → false happens in finally; don't double-set to avoid race */
+    send(q, { symbols });
   }
 
   const onKey = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
   };
 
   return (
     <div className={`wl-ai ${open ? 'wl-ai--open' : ''}`}>
-      {/* ── Collapsed / toggle bar ─── */}
-      <button className="wl-ai__toggle" onClick={() => setOpen(o => !o)}>
-        <span className="wl-ai__toggle-icon">✦</span>
-        <span className="wl-ai__toggle-label">Ask AI about your watchlist</span>
-        <span className="wl-ai__toggle-chevron">{open ? '▾' : '▴'}</span>
-      </button>
+      {/* ── Toggle bar ─── */}
+      <div className="wl-ai__toggle-row">
+        <button className="wl-ai__toggle" onClick={() => setOpen(o => !o)}>
+          <svg className="wl-ai__toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          </svg>
+          <span className="wl-ai__toggle-label">Ask AI about your watchlist</span>
+          <span className="wl-ai__toggle-chevron">{open ? '▾' : '▴'}</span>
+        </button>
+        {open && messages.length > 0 && (
+          <button className="wl-ai__clear" onClick={clear} title="Clear chat">
+            Clear
+          </button>
+        )}
+      </div>
 
       {open && (
         <div className="wl-ai__body">
-          {/* ── Quick-question chips (show when no messages or between responses) ── */}
+          {/* ── Quick chips ─── */}
           {!streaming && (
             <div className="wl-ai__chips">
               {PORTFOLIO_QUESTIONS.map(a => (
-                <button
-                  key={a.label}
-                  className={`wl-ai__chip${a.label.includes('Predict') ? ' wl-ai__chip--predict' : ''}`}
-                  onClick={() => send(a.q)}
-                >
+                <button key={a.label} className="wl-ai__chip" onClick={() => submit(a.q)}>
                   {a.label}
                 </button>
               ))}
             </div>
           )}
 
-          {/* ── Message thread ─── */}
+          {/* ── Messages ─── */}
           {messages.length > 0 && (
             <div className="wl-ai__messages">
               {messages.map((m, i) => {
-                const isLast = i === messages.length - 1;
-                /* Show dots only when: empty AND streaming AND it's the last bubble */
+                const isLast  = i === messages.length - 1;
                 const showDots = m.role === 'assistant' && !m.content && streaming && isLast;
-                const isError   = m.role === 'assistant' && m.content?.startsWith('⚠️');
-                const isStopped = m.role === 'assistant' && m.content === '✕ Stopped.';
                 return (
-                  <div
-                    key={i}
-                    className={`wl-ai__msg wl-ai__msg--${m.role}`}
-                    data-error={isError   || undefined}
-                    data-stopped={isStopped || undefined}
-                  >
-                    {m.role === 'assistant' ? (
-                      showDots
+                  <div key={i} className={`wl-ai__msg wl-ai__msg--${m.role}`}>
+                    {m.role === 'assistant'
+                      ? showDots
                         ? <span className="wl-ai__dots"><span/><span/><span/></span>
                         : <div dangerouslySetInnerHTML={{ __html: parseMarkdown(m.content || '') }} />
-                    ) : m.content}
+                      : m.content}
                   </div>
                 );
               })}
@@ -212,7 +105,7 @@ function PortfolioChat({ symbols, token }) {
           <div className="wl-ai__input-row">
             <input
               className="wl-ai__input"
-              placeholder="Ask about your portfolio…"
+              placeholder="Ask about your watchlist…"
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={onKey}
@@ -222,7 +115,7 @@ function PortfolioChat({ symbols, token }) {
             {streaming ? (
               <button className="wl-ai__send wl-ai__send--stop" onClick={stop} title="Stop">■</button>
             ) : (
-              <button className="wl-ai__send" onClick={() => send()} disabled={!input.trim()} title="Send">↑</button>
+              <button className="wl-ai__send" onClick={() => submit()} disabled={!input.trim()} title="Send">↑</button>
             )}
           </div>
         </div>
@@ -506,7 +399,7 @@ export default function WatchlistPortfolio() {
       </div>
 
       {tab === 'watchlist' && watchlist.length > 0 && (
-        <PortfolioChat symbols={symbols} token={state.token} />
+        <PortfolioChat symbols={symbols} />
       )}
     </div>
   );

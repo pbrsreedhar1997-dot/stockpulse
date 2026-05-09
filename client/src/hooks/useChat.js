@@ -45,7 +45,7 @@ export function useChat() {
     return () => { unsubDelta(); unsubDone(); unsubError(); };
   }, [on]);
 
-  const send = useCallback((question) => {
+  const send = useCallback((question, opts = {}) => {
     if (!question?.trim() || streaming) return;
 
     const id = `chat-${Date.now()}`;
@@ -57,9 +57,9 @@ export function useChat() {
     setStreaming(true);
 
     const history = messagesRef.current.slice(-8).map(m => ({ role: m.role, content: m.content }));
+    const symbols = opts.symbols ?? [];
 
-    // No auto-injection of selected stock — server extracts symbols from the question text
-    emit({ type: 'chat', id, question, symbols: [], history, token: state.token });
+    emit({ type: 'chat', id, question, symbols, history, token: state.token });
   }, [streaming, state.token, emit]);
 
   const stop = useCallback(() => {
