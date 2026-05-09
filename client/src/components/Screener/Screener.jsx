@@ -105,6 +105,7 @@ Use real prices from the data above. Be direct and data-driven. Total response u
       symbols:  [],
       history:  [],
       token:    state.token || '',
+      skipRag:  true,   // screener data is self-contained — skip the per-stock RAG fetch
     });
   }, [stocks, status, emit, on, buildPrompt, state.token]);
 

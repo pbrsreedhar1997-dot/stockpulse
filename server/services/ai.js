@@ -979,20 +979,27 @@ function responseDepth(question) {
 // ─────────────────────────────────────────────────────────────────────────────
 // STREAM ENTRY POINTS
 // ─────────────────────────────────────────────────────────────────────────────
-export async function streamChat({ question, symbols = [], history = [], onDelta, onDone, onError }) {
+export async function streamChat({ question, symbols = [], history = [], skipRag = false, onDelta, onDone, onError }) {
   if (!groqClient && !ANTHROPIC_API_KEY) {
     onError('AI not configured — add GROQ_API_KEY to environment variables.');
     return;
   }
   if (!groqClient && ANTHROPIC_API_KEY) {
-    return streamAnthropic({ question, symbols, history, onDelta, onDone, onError });
+    return streamAnthropic({ question, symbols, history, skipRag, onDelta, onDone, onError });
   }
 
   try {
-    const depth    = responseDepth(question);
-    const extracted = await resolveSymbolsFromQuestion(question);
-    const symsToUse = extracted.length ? extracted : symbols;
-    const context  = symsToUse.length ? await buildRagContext(symsToUse) : '';
+    const depth = responseDepth(question);
+
+    // skipRag=true: data is already embedded in the prompt (e.g. screener insights)
+    // — skip the expensive symbol extraction + 6-API-call-per-stock RAG pipeline
+    let context = '';
+    if (!skipRag) {
+      const extracted = await resolveSymbolsFromQuestion(question);
+      const symsToUse = extracted.length ? extracted : symbols;
+      context = symsToUse.length ? await buildRagContext(symsToUse) : '';
+    }
+
     const messages = [
       { role: 'system', content: SYSTEM_PROMPT + context },
       ...history.slice(-10).map(m => ({ role: m.role, content: String(m.content) })),
@@ -1018,14 +1025,19 @@ export async function streamChat({ question, symbols = [], history = [], onDelta
   }
 }
 
-async function streamAnthropic({ question, symbols, history, onDelta, onDone, onError }) {
+async function streamAnthropic({ question, symbols, history, skipRag = false, onDelta, onDone, onError }) {
   try {
     const { default: Anthropic } = await import('@anthropic-ai/sdk');
-    const client   = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
-    const depth    = responseDepth(question);
-    const extracted = await resolveSymbolsFromQuestion(question);
-    const symsToUse = extracted.length ? extracted : symbols;
-    const context  = symsToUse.length ? await buildRagContext(symsToUse) : '';
+    const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+    const depth  = responseDepth(question);
+
+    let context = '';
+    if (!skipRag) {
+      const extracted = await resolveSymbolsFromQuestion(question);
+      const symsToUse = extracted.length ? extracted : symbols;
+      context = symsToUse.length ? await buildRagContext(symsToUse) : '';
+    }
+
     const messages = [
       ...history.slice(-10).map(m => ({ role: m.role, content: String(m.content) })),
       { role: 'user', content: question },

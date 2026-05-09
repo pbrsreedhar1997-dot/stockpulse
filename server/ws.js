@@ -94,13 +94,14 @@ export async function handleWsConnection(ws) {
         break;
 
       case 'chat': {
-        const { id, question, symbols = [], history = [], token } = msg;
+        const { id, question, symbols = [], history = [], token, skipRag = false } = msg;
         if (!id || !question?.trim()) break;
         if (token && !info.userId) info.userId = await resolveToken(token);
         streamChat({
           question:  String(question),
           symbols:   symbols.map(s => String(s).toUpperCase()),
           history:   Array.isArray(history) ? history : [],
+          skipRag:   Boolean(skipRag),
           onDelta:   text => safeSend(ws, { type: 'chat_delta', id, text }),
           onDone:    ()   => safeSend(ws, { type: 'chat_done',  id }),
           onError:   err  => safeSend(ws, { type: 'chat_error', id, error: String(err) }),
