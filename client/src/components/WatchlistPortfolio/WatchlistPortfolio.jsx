@@ -33,12 +33,23 @@ function PortfolioChat({ symbols, token }) {
   const [messages,  setMessages]  = useState([]);
   const [input,     setInput]     = useState('');
   const [streaming, setStreaming]  = useState(false);
-  const abortRef  = useRef(null);
-  const bottomRef = useRef(null);
+  const abortRef   = useRef(null);
+  const bottomRef  = useRef(null);
+  const historyRef = useRef([]);   // tracks Q&A pairs for multi-turn RAG context
 
   useEffect(() => {
     if (open) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, open]);
+
+  /* Replace the last assistant bubble's content (clears dots regardless of cause) */
+  function setLastAssistant(content) {
+    setMessages(prev => {
+      const up = [...prev];
+      const last = up[up.length - 1];
+      if (last?.role === 'assistant') up[up.length - 1] = { ...last, content };
+      return up;
+    });
+  }
 
   async function send(question) {
     const q = (question || input).trim();
@@ -48,20 +59,36 @@ function PortfolioChat({ symbols, token }) {
 
     setMessages(prev => [...prev,
       { role: 'user',      content: q },
-      { role: 'assistant', content: '' },
+      { role: 'assistant', content: '' },   // empty = shows dots
     ]);
     setStreaming(true);
 
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    let fullAnswer = '';
 
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const res = await fetch('/api/chat', {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ question: q, symbols, token }),
+        headers,
+        body:    JSON.stringify({
+          question: q,
+          symbols,
+          history: historyRef.current.slice(-6),
+        }),
         signal:  ctrl.signal,
       });
+
+      /* ── Non-SSE error response (e.g. 503 No AI key, 400 bad request) ── */
+      if (!res.ok) {
+        let msg = `Server error ${res.status}`;
+        try { const j = await res.json(); if (j.error) msg = j.error; } catch {}
+        setLastAssistant(`⚠️ ${msg}`);
+        return;
+      }
 
       const reader  = res.body.getReader();
       const decoder = new TextDecoder();
@@ -73,29 +100,44 @@ function PortfolioChat({ symbols, token }) {
         buf += decoder.decode(value, { stream: true });
         const lines = buf.split('\n');
         buf = lines.pop();
+
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
           try {
             const ev = JSON.parse(line.slice(6));
             if (ev.type === 'delta') {
-              setMessages(prev => {
-                const up   = [...prev];
-                const last = up[up.length - 1];
-                if (last?.role === 'assistant')
-                  up[up.length - 1] = { ...last, content: last.content + ev.text };
-                return up;
-              });
+              fullAnswer += ev.text;
+              /* Replace whole content so dots disappear as soon as first token arrives */
+              setLastAssistant(fullAnswer);
+            } else if (ev.type === 'error') {
+              /* Server-side error event (rate-limit, timeout, etc.) */
+              setLastAssistant(`⚠️ ${ev.message || 'AI service error — please try again.'}`);
+              return;
             }
-          } catch { /* malformed chunk — skip */ }
+            /* 'done' event — stream finished cleanly, loop will end naturally */
+          } catch { /* malformed SSE chunk — skip */ }
         }
       }
+
+      /* Stream ended with nothing — server may be unavailable */
+      if (!fullAnswer) {
+        setLastAssistant('⚠️ No response received. The AI service may be unavailable — please try again.');
+        return;
+      }
+
+      /* Persist Q&A into history so follow-up questions retain context */
+      historyRef.current = [
+        ...historyRef.current,
+        { role: 'user',      content: q         },
+        { role: 'assistant', content: fullAnswer },
+      ];
     } catch (err) {
-      if (err.name !== 'AbortError') {
-        setMessages(prev => {
-          const up = [...prev];
-          up[up.length - 1] = { role: 'assistant', content: 'Something went wrong — please try again.' };
-          return up;
-        });
+      if (err.name === 'AbortError') {
+        /* User clicked Stop — keep any partial text, or show stopped notice */
+        if (!fullAnswer) setLastAssistant('✕ Stopped.');
+        /* If we already have partial text it's already in the bubble — leave it */
+      } else {
+        setLastAssistant('⚠️ Could not reach the AI service — check your connection and try again.');
       }
     } finally {
       setStreaming(false);
@@ -105,7 +147,7 @@ function PortfolioChat({ symbols, token }) {
 
   function stop() {
     abortRef.current?.abort();
-    setStreaming(false);
+    /* streaming → false happens in finally; don't double-set to avoid race */
   }
 
   const onKey = (e) => {
@@ -141,15 +183,27 @@ function PortfolioChat({ symbols, token }) {
           {/* ── Message thread ─── */}
           {messages.length > 0 && (
             <div className="wl-ai__messages">
-              {messages.map((m, i) => (
-                <div key={i} className={`wl-ai__msg wl-ai__msg--${m.role}`}>
-                  {m.role === 'assistant' ? (
-                    m.content
-                      ? <div dangerouslySetInnerHTML={{ __html: parseMarkdown(m.content) }} />
-                      : <span className="wl-ai__dots"><span/><span/><span/></span>
-                  ) : m.content}
-                </div>
-              ))}
+              {messages.map((m, i) => {
+                const isLast = i === messages.length - 1;
+                /* Show dots only when: empty AND streaming AND it's the last bubble */
+                const showDots = m.role === 'assistant' && !m.content && streaming && isLast;
+                const isError   = m.role === 'assistant' && m.content?.startsWith('⚠️');
+                const isStopped = m.role === 'assistant' && m.content === '✕ Stopped.';
+                return (
+                  <div
+                    key={i}
+                    className={`wl-ai__msg wl-ai__msg--${m.role}`}
+                    data-error={isError   || undefined}
+                    data-stopped={isStopped || undefined}
+                  >
+                    {m.role === 'assistant' ? (
+                      showDots
+                        ? <span className="wl-ai__dots"><span/><span/><span/></span>
+                        : <div dangerouslySetInnerHTML={{ __html: parseMarkdown(m.content || '') }} />
+                    ) : m.content}
+                  </div>
+                );
+              })}
               <div ref={bottomRef} />
             </div>
           )}

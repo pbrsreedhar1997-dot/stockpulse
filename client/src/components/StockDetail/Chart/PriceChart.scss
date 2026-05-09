@@ -1,23 +1,25 @@
 .price-chart {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   overflow: hidden;
+  animation: tab-slide-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 
   &__toolbar {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 8px;
-    padding: 12px 16px 10px;
+    padding: 13px 18px 11px;
     border-bottom: 1px solid var(--border);
     flex-wrap: wrap;
+    background: rgba(255,255,255,0.01);
   }
 
   &__ranges, &__type-toggle {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 3px;
   }
 
   /* ── Period stats bar ──────────────────────────────────────────────────── */
@@ -26,8 +28,7 @@
     align-items: stretch;
     border-bottom: 1px solid var(--border);
     overflow-x: auto;
-    padding: 0 4px;
-    background: var(--bg2);
+    background: rgba(255,255,255,0.01);
 
     &::-webkit-scrollbar { display: none; }
   }
@@ -36,37 +37,37 @@
     display: flex;
     flex-direction: column;
     justify-content: center;
-    gap: 2px;
-    padding: 8px 14px;
+    gap: 3px;
+    padding: 9px 16px;
     border-right: 1px solid var(--border);
     flex-shrink: 0;
+    transition: background 0.15s;
 
     &:last-child { border-right: none; }
+    &:hover { background: rgba(255,255,255,0.02); }
 
     span {
-      font-size: 9.5px;
-      font-weight: 600;
+      font-size: 9px;
+      font-weight: 800;
       text-transform: uppercase;
-      letter-spacing: 0.7px;
+      letter-spacing: 0.9px;
       color: var(--text3);
     }
 
     strong {
-      font-size: 12px;
+      font-size: 12.5px;
       font-weight: 700;
       font-family: 'JetBrains Mono', monospace;
       color: var(--text);
-      letter-spacing: -0.2px;
+      letter-spacing: -0.3px;
     }
 
-    &--chg strong {
-      font-size: 13px;
-    }
+    &--chg strong { font-size: 13.5px; }
   }
 
   /* ── Main canvas ───────────────────────────────────────────────────────── */
   &__canvas-wrap {
-    height: 380px;
+    height: 390px;
     position: relative;
     padding: 10px 4px 6px;
   }
@@ -83,20 +84,21 @@
 
   /* ── Volume strip ──────────────────────────────────────────────────────── */
   &__vol-wrap {
-    height: 72px;
+    height: 76px;
     position: relative;
     padding: 4px 4px 6px;
     border-top: 1px solid var(--border);
+    background: rgba(255,255,255,0.01);
   }
 
   &__vol-label {
     position: absolute;
-    top: 6px;
-    left: 12px;
-    font-size: 9.5px;
-    font-weight: 600;
+    top: 8px;
+    left: 14px;
+    font-size: 9px;
+    font-weight: 800;
     text-transform: uppercase;
-    letter-spacing: 0.7px;
+    letter-spacing: 0.9px;
     color: var(--text3);
     z-index: 1;
     pointer-events: none;
@@ -104,42 +106,49 @@
 }
 
 .period-chg {
-  font-size: 11.5px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 800;
   font-family: 'JetBrains Mono', monospace;
-  padding: 3px 9px;
-  border-radius: 5px;
+  padding: 4px 11px;
+  border-radius: 20px;
   margin-left: 6px;
+  animation: bounce-in 0.35s cubic-bezier(0.22, 1, 0.36, 1);
 
   &--up {
     color: var(--up);
-    background: rgba(0, 200, 150, 0.12);
+    background: var(--up-dim);
+    box-shadow: 0 0 10px rgba(16,217,140,0.15);
   }
 
   &--down {
     color: var(--down);
-    background: rgba(255, 69, 96, 0.12);
+    background: var(--down-dim);
+    box-shadow: 0 0 10px rgba(255,69,96,0.15);
   }
 }
 
 .range-btn {
-  padding: 4px 11px;
-  border-radius: 5px;
+  padding: 5px 12px;
+  border-radius: 20px;
   font-size: 11.5px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text2);
-  transition: background 0.13s, color 0.13s;
+  transition: all 0.18s;
   font-family: 'JetBrains Mono', monospace;
 
   &:hover {
-    background: var(--card2);
+    background: rgba(255,255,255,0.06);
     color: var(--text);
+    transform: translateY(-1px);
   }
+
+  &:active { transform: translateY(0); }
 
   &--active {
     background: var(--accent-dim);
     color: var(--accent);
-    font-weight: 700;
+    font-weight: 800;
+    box-shadow: 0 0 10px rgba(232,168,56,0.15), inset 0 0 0 1px rgba(232,168,56,0.2);
   }
 }
 
@@ -147,27 +156,25 @@
 @media (max-width: 768px) {
   .price-chart {
     &__canvas-wrap { height: 280px; }
-    &__vol-wrap    { height: 58px; }
+    &__vol-wrap    { height: 60px; }
 
     &__toolbar {
       padding: 9px 12px 8px;
       gap: 6px;
     }
 
-    &__stats-bar { padding: 0 2px; }
-
     &__stat {
-      padding: 6px 10px;
+      padding: 7px 11px;
       span   { font-size: 8.5px; }
-      strong { font-size: 11px; }
+      strong { font-size: 11.5px; }
     }
   }
 
-  .range-btn { padding: 4px 8px; font-size: 11px; }
-  .period-chg { font-size: 11px; padding: 2px 7px; }
+  .range-btn  { padding: 4px 9px; font-size: 10.5px; }
+  .period-chg { font-size: 11px; padding: 3px 8px; }
 }
 
 @media (max-width: 480px) {
   .price-chart__canvas-wrap { height: 240px; }
-  .range-btn { padding: 3px 7px; font-size: 10.5px; }
+  .range-btn { padding: 3px 7px; font-size: 10px; }
 }

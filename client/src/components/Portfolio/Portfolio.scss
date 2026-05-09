@@ -3,7 +3,7 @@
   padding: 24px;
   max-width: 1060px;
   margin: 0 auto;
-  animation: fadeIn 0.18s ease-out;
+  animation: tab-slide-in 0.26s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .pf-header {
@@ -34,14 +34,15 @@
 }
 
 .pf-add-btn {
-  padding: 7px 16px;
-  border-radius: var(--radius-sm);
-  background: var(--accent);
+  padding: 7px 18px;
+  border-radius: 20px;
+  background: var(--grad-amber);
   color: #000;
-  font-weight: 700;
+  font-weight: 800;
   font-size: 13px;
-  transition: background 0.13s, transform 0.1s;
-  &:hover { background: var(--accent2); transform: translateY(-1px); }
+  transition: all 0.18s;
+  box-shadow: 0 0 16px rgba(232,168,56,0.3);
+  &:hover { box-shadow: 0 0 24px rgba(232,168,56,0.5); transform: translateY(-1px); }
   &:active { transform: translateY(0); }
 }
 
@@ -59,13 +60,31 @@
 .pf-summary__card {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px 16px;
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  transition: border-color 0.15s;
-  &:hover { border-color: var(--border2); }
+  gap: 6px;
+  transition: all 0.2s;
+  position: relative;
+  overflow: hidden;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--grad-amber);
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+
+  &:hover {
+    border-color: rgba(232,168,56,0.2);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+    &::before { opacity: 1; }
+  }
 
   span {
     font-size: 10px;
