@@ -1,6 +1,7 @@
 import Groq from 'groq-sdk';
 import { GROQ_API_KEY, ANTHROPIC_API_KEY } from '../config.js';
 import { getQuote, getProfile, getFinancials, getNews, getHistory, search as searchSymbol } from './yahoo.js';
+import { getMacroContext, getEnrichedNews, getPeerPerformance, getWorldBankMacro } from './enrichment.js';
 import log from '../log.js';
 
 const groqClient = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
@@ -8,25 +9,58 @@ const groqClient = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
 // ─────────────────────────────────────────────────────────────────────────────
 // RAG SYSTEM PROMPT
 // ─────────────────────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are StockPulse AI, a financial analyst assistant for the StockPulse trading app. You specialise in NSE/BSE equities, Indian macro (RBI policy, FII/DII flows, sector rotation), and global markets.
+const SYSTEM_PROMPT = `You are StockPulse AI — an institutional-grade financial analyst for NSE/BSE equities, Indian macro, and global markets. You have access to live price data, 1-year OHLCV history, fundamentals, news sentiment, and real-time macro context.
 
 BEHAVIOUR:
-- Respond naturally to greetings and general questions (keep it brief, 1–3 lines).
-- When stock data is provided in a RAG RETRIEVAL RESULTS block, answer the user's question using that data. Be specific — use the actual numbers, scores, and signals from the context.
-- If no stock data is provided, answer from general financial knowledge and tell the user to mention a specific stock if they want live analysis.
-- Match response length to the question: short question → concise answer. "Full analysis" → detailed breakdown.
-- Never say buy/sell/hold — frame as probability estimates and analysis.
-- **Bold** key numbers. Use bullet points for lists. Keep answers useful, not padded.
+- Be direct and data-driven. Use actual numbers from the RAG RETRIEVAL RESULTS block.
+- Short questions → concise answers (3–6 lines). "Full analysis / predict / breakdown" → comprehensive structured response.
+- Frame predictions as probability-weighted scenarios, never as direct advice.
+- **Bold** key figures. Bullets for lists. No filler or padding.
+- For greetings → 1-2 lines only.
 
-FULL ANALYSIS STRUCTURE (use only when asked for a full breakdown):
-  1. **Ensemble Score** — BULLISH / NEUTRAL / BEARISH + confidence %
-  2. **Fundamentals** — key metrics + score/100
-  3. **Technicals** — MA cross, RSI, MACD, Bollinger %B + score/100
-  4. **News Sentiment** — themes + score/100
-  5. **Price Targets** — bear / base / bull with rationale
-  6. Top 3 catalysts | Top 3 risks
-  7. Contrarian perspective
-  8. Macro regime (for Indian stocks: RBI, FII/DII, sector context)`;
+WHEN RAG DATA IS PROVIDED:
+- Anchor every claim to the retrieved data (price, scores, indicators)
+- Cite the ensemble score and its components
+- Use the macro regime (RISK_ON/RISK_OFF/NEUTRAL) as a modifier
+- Reference peer performance to contextualise relative strength/weakness
+- DCF implied return tells you if the stock is cheap/expensive vs intrinsic value
+
+FULL ANALYSIS FORMAT (for "analyse", "predict", "full", "breakdown" queries):
+  ### 🎯 Ensemble Verdict: [BULLISH/NEUTRAL/BEARISH] — Score [X]/100 — Confidence [Y]%
+  **Fundamental** [score]/100 · **Technical** [score]/100 · **Sentiment** [score]/100 · **Macro** [score]/100
+
+  ### 📊 Fundamentals
+  [P/E, margins, ROE, debt — use retrieved values]
+
+  ### 📈 Technicals
+  [MA cross, RSI, MACD, Bollinger, ATR, Stochastic, OBV trend, support/resistance]
+
+  ### 📰 News & Sentiment
+  [Top themes, sentiment trajectory, key headlines]
+
+  ### 🌍 Macro Context
+  [India VIX, USD/INR, Crude, RBI stance, FII/DII, global cues]
+
+  ### 🔢 Valuation
+  [Current price vs DCF fair value, implied return, PEG ratio]
+
+  ### 📐 Price Targets (3-scenario)
+  - 🐻 Bear [price]: [trigger]
+  - ⚖️ Base [price]: [thesis]
+  - 🐂 Bull [price]: [catalyst]
+
+  ### ⚡ Catalysts & Risks
+  Top 3 catalysts | Top 3 risks
+
+  ### 🔄 Contrarian View
+  [Devil's advocate — why the consensus could be wrong]
+
+MACRO INTERPRETATION:
+- RISK_ON: Positive for cyclicals, banks, mid-caps. Reduce caution signals.
+- RISK_OFF: Defensive bias — FMCG, pharma, gold. Increase caution on leveraged/small-caps.
+- High India VIX (>20): near-term volatility, consider wider price target ranges.
+- Rising US 10Y (>4.5%): headwind for high-PE growth stocks via discount rate.
+- USD/INR > 85: positive for IT exporters, negative for import-heavy companies.`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TECHNICAL INDICATORS  (computed from 252-day OHLCV)
@@ -187,6 +221,179 @@ function computeTechnicals(candles) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ADVANCED TECHNICALS — ATR, Stochastic, OBV, VWAP, Momentum, S/R, Ichimoku
+// ─────────────────────────────────────────────────────────────────────────────
+function computeAdvancedTechnicals(candles) {
+  if (!candles || candles.length < 20) return null;
+  const sorted = [...candles].sort((a, b) => a.ts - b.ts);
+  const closes = sorted.map(c => c.close ?? c.c);
+  const highs   = sorted.map(c => c.high  ?? c.h);
+  const lows    = sorted.map(c => c.low   ?? c.l);
+  const vols    = sorted.map(c => c.volume ?? c.v ?? 0);
+  const n = closes.length;
+  const last = closes[n - 1];
+
+  // ── ATR (14) ──────────────────────────────────────────────────────────────
+  const trues = sorted.map((c, i) => {
+    if (i === 0) return (highs[i] ?? 0) - (lows[i] ?? 0);
+    const hl = (highs[i] ?? 0) - (lows[i] ?? 0);
+    const hc = Math.abs((highs[i] ?? 0) - closes[i - 1]);
+    const lc = Math.abs((lows[i]  ?? 0) - closes[i - 1]);
+    return Math.max(hl, hc, lc);
+  });
+  const atr14 = trues.slice(-14).reduce((a, b) => a + b, 0) / 14;
+  const atrPct = last ? (atr14 / last * 100).toFixed(2) : null;
+
+  // ── Stochastic %K / %D (14, 3) ────────────────────────────────────────────
+  let stochK = null, stochD = null;
+  if (n >= 14) {
+    const h14 = Math.max(...highs.slice(-14));
+    const l14 = Math.min(...lows.slice(-14));
+    stochK = h14 !== l14 ? Math.round(((last - l14) / (h14 - l14)) * 100) : 50;
+    // %D = 3-day SMA of %K (approximate with last 3 %K values)
+    const ks = [];
+    for (let i = Math.max(0, n - 16); i < n; i++) {
+      const h = Math.max(...highs.slice(Math.max(0, i - 13), i + 1));
+      const l = Math.min(...lows.slice(Math.max(0, i - 13), i + 1));
+      ks.push(h !== l ? ((closes[i] - l) / (h - l)) * 100 : 50);
+    }
+    stochD = ks.length >= 3 ? Math.round(ks.slice(-3).reduce((a, b) => a + b, 0) / 3) : stochK;
+  }
+  const stochSignal = stochK != null
+    ? (stochK < 20 ? 'OVERSOLD' : stochK > 80 ? 'OVERBOUGHT' : 'NEUTRAL')
+    : 'N/A';
+
+  // ── OBV trend (20 bars) ───────────────────────────────────────────────────
+  let obv = 0;
+  const obvSeries = [0];
+  for (let i = 1; i < n; i++) {
+    if (closes[i] > closes[i - 1])      obv += vols[i];
+    else if (closes[i] < closes[i - 1]) obv -= vols[i];
+    obvSeries.push(obv);
+  }
+  const obvTrend = obvSeries.length >= 20
+    ? (obvSeries[n - 1] > obvSeries[n - 20] ? 'RISING' : 'FALLING')
+    : 'N/A';
+
+  // ── VWAP (20-day approximate) ─────────────────────────────────────────────
+  const slice = sorted.slice(-20);
+  const sumTPV = slice.reduce((s, c, i) => {
+    const tp = ((c.high ?? c.close) + (c.low ?? c.close) + c.close) / 3;
+    return s + tp * (c.volume ?? 1);
+  }, 0);
+  const sumV = slice.reduce((s, c) => s + (c.volume ?? 1), 0);
+  const vwap = sumV ? sumTPV / sumV : null;
+  const priceVsVwap = vwap && last
+    ? `${last > vwap ? 'ABOVE' : 'BELOW'} VWAP (₹${vwap.toFixed(2)}, ${((last / vwap - 1) * 100).toFixed(1)}%)`
+    : 'N/A';
+
+  // ── Price momentum (multiple horizons) ────────────────────────────────────
+  const momentum = {};
+  const periods = { '1W': 5, '1M': 21, '3M': 63, '6M': 126, '1Y': 252 };
+  for (const [label, bars] of Object.entries(periods)) {
+    if (n > bars) {
+      const ret = ((last / closes[n - 1 - bars]) - 1) * 100;
+      momentum[label] = `${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%`;
+    }
+  }
+
+  // ── Support / Resistance (swing highs/lows last 60 bars) ──────────────────
+  const lookback = Math.min(60, n);
+  const swingHighs = [], swingLows = [];
+  for (let i = 2; i < lookback - 2; i++) {
+    const idx = n - lookback + i;
+    if (highs[idx] > highs[idx - 1] && highs[idx] > highs[idx - 2] &&
+        highs[idx] > highs[idx + 1] && highs[idx] > highs[idx + 2]) {
+      swingHighs.push(highs[idx]);
+    }
+    if (lows[idx] < lows[idx - 1] && lows[idx] < lows[idx - 2] &&
+        lows[idx] < lows[idx + 1] && lows[idx] < lows[idx + 2]) {
+      swingLows.push(lows[idx]);
+    }
+  }
+  const nearestResistance = swingHighs.filter(h => h > last).sort((a, b) => a - b)[0];
+  const nearestSupport    = swingLows.filter(l => l < last).sort((a, b) => b - a)[0];
+
+  // ── Pivot Points (Classic, based on last complete candle) ─────────────────
+  const prevH = highs[n - 2] ?? highs[n - 1];
+  const prevL = lows[n - 2]  ?? lows[n - 1];
+  const prevC = closes[n - 2] ?? closes[n - 1];
+  const pivot  = (prevH + prevL + prevC) / 3;
+  const r1 = 2 * pivot - prevL;
+  const s1 = 2 * pivot - prevH;
+
+  // ── Ichimoku (simplified: Tenkan/Kijun) ───────────────────────────────────
+  let tenkan = null, kijun = null, ichimokuSignal = 'N/A';
+  if (n >= 26) {
+    tenkan = (Math.max(...highs.slice(-9))  + Math.min(...lows.slice(-9)))  / 2;
+    kijun  = (Math.max(...highs.slice(-26)) + Math.min(...lows.slice(-26))) / 2;
+    ichimokuSignal = last > tenkan && last > kijun && tenkan > kijun ? 'BULLISH'
+      : last < tenkan && last < kijun && tenkan < kijun ? 'BEARISH'
+      : 'NEUTRAL';
+  }
+
+  return {
+    atr:            atr14 ? `₹${atr14.toFixed(2)} (${atrPct}% of price)` : 'N/A',
+    stochastic:     stochK != null ? `%K=${stochK} %D=${stochD} → ${stochSignal}` : 'N/A',
+    obv_trend:      obvTrend,
+    price_vs_vwap:  priceVsVwap,
+    momentum,
+    support:        nearestSupport    ? `₹${nearestSupport.toFixed(2)}`    : 'N/A',
+    resistance:     nearestResistance ? `₹${nearestResistance.toFixed(2)}` : 'N/A',
+    pivot_r1:       `₹${r1.toFixed(2)}`,
+    pivot_s1:       `₹${s1.toFixed(2)}`,
+    ichimoku:       ichimokuSignal,
+    raw: { atr14, stochK, stochD, obvTrend, vwap, nearestSupport, nearestResistance },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DCF / VALUATION ESTIMATE
+// ─────────────────────────────────────────────────────────────────────────────
+function estimateDCF(fin, quote, profile) {
+  try {
+    const eps       = fin?.eps ?? quote?.eps;
+    const roe       = fin?.return_on_equity; // %
+    const rg        = fin?.revenue_growth;    // %
+    const pe        = fin?.pe_ratio ?? quote?.pe_ratio;
+    const price     = quote?.price;
+
+    if (!eps || eps <= 0 || !price) return null;
+
+    // Estimate EPS growth: blend of revenue growth and ROE signal
+    const growthEst = Math.min(Math.max(
+      (rg ?? 8) * 0.5 + (roe ? Math.min(roe, 30) * 0.3 : 8 * 0.3),
+      -5), 35) / 100;
+
+    // Simple DDM / Gordon Growth Model assuming 5Y explicit + terminal
+    const discountRate = 0.12; // 12% WACC for Indian equities
+    const terminalGrowth = 0.05; // 5% perpetuity
+    let dcfValue = 0;
+    let eps_ = eps;
+    for (let y = 1; y <= 5; y++) {
+      eps_ *= (1 + growthEst);
+      dcfValue += eps_ / Math.pow(1 + discountRate, y);
+    }
+    const terminalEps = eps_ * (1 + terminalGrowth);
+    const terminalValue = terminalEps / (discountRate - terminalGrowth);
+    dcfValue += terminalValue / Math.pow(1 + discountRate, 5);
+
+    const impliedReturn = ((dcfValue / price) - 1) * 100;
+    const peg = pe && growthEst > 0 ? (pe / (growthEst * 100)).toFixed(2) : null;
+
+    return {
+      fair_value:     `₹${dcfValue.toFixed(0)}`,
+      current_price:  `₹${price.toFixed(2)}`,
+      implied_return: `${impliedReturn >= 0 ? '+' : ''}${impliedReturn.toFixed(1)}%`,
+      margin_of_safety: `${((dcfValue - price) / dcfValue * 100).toFixed(1)}%`,
+      peg_ratio:      peg ? `${peg}x ${peg < 1 ? '(attractive)' : peg > 2 ? '(expensive)' : '(fair)'}` : 'N/A',
+      growth_assumption: `${(growthEst * 100).toFixed(1)}% 5Y EPS CAGR`,
+      raw: { dcfValue, impliedReturn },
+    };
+  } catch { return null; }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // NEWS SENTIMENT  (keyword-based + exponential decay)
 // ─────────────────────────────────────────────────────────────────────────────
 const POS_TERMS = ['beat', 'surge', 'rally', 'growth', 'profit', 'upgrade', 'strong', 'gain', 'record', 'outperform', 'bullish', 'buy', 'target raised', 'dividend', 'partnership', 'deal', 'launch', 'expansion', 'positive', 'winner', 'soars', 'jumps', 'rises'];
@@ -322,46 +529,87 @@ function scoreFundamentals(fin, quote) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RAG CONTEXT BUILDER  — assembles full analysis context per symbol
+// RAG CONTEXT BUILDER  — 4-model ensemble + macro + advanced technicals + DCF
 // ─────────────────────────────────────────────────────────────────────────────
 async function buildRagContext(symbols) {
   if (!symbols?.length) return '';
   const sections = [];
 
-  for (const sym of symbols.slice(0, 2)) {
+  // Fetch macro context + World Bank in parallel (shared across all symbols)
+  const [macroCtx, wbMacro] = await Promise.allSettled([getMacroContext(), getWorldBankMacro()]);
+  const macro   = macroCtx.status === 'fulfilled' ? macroCtx.value : null;
+  const wb      = wbMacro.status  === 'fulfilled' ? wbMacro.value  : null;
+
+  for (const sym of symbols.slice(0, 3)) {
     try {
-      // Parallel fetch: quote, profile, financials, news, 1Y daily history
-      const [qR, pR, fR, nR, hR] = await Promise.allSettled([
+      const ticker = sym.replace(/\.(NS|BO)$/i, '');
+
+      // Parallel fetch: all data sources simultaneously
+      const [qR, pR, fR, nR, hR, enR] = await Promise.allSettled([
         getQuote(sym),
         getProfile(sym),
         getFinancials(sym),
         getNews(sym),
         getHistory(sym, '1y'),
+        getEnrichedNews(sym),
       ]);
 
-      const q    = qR.status === 'fulfilled' ? qR.value   : null;
-      const p    = pR.status === 'fulfilled' ? pR.value   : null;
-      const fin  = fR.status === 'fulfilled' ? fR.value   : null;
-      const news = nR.status === 'fulfilled' ? nR.value   : [];
-      const hist = hR.status === 'fulfilled' ? hR.value   : null;
+      const q        = qR.status === 'fulfilled'  ? qR.value   : null;
+      const p        = pR.status === 'fulfilled'  ? pR.value   : null;
+      const fin      = fR.status === 'fulfilled'  ? fR.value   : null;
+      const yahooNews= nR.status === 'fulfilled'  ? nR.value   : [];
+      const hist     = hR.status === 'fulfilled'  ? hR.value   : null;
+      const extNews  = enR.status === 'fulfilled' ? enR.value  : [];
 
       if (!q?.price) continue;
 
-      const cur = q.currency === 'INR' ? '₹' : '$';
-      const ticker = sym.replace(/\.(NS|BO)$/i, '');
+      // Merge all news; deduplicate by title
+      const allNews = [...(yahooNews || []), ...extNews].filter((a, i, arr) =>
+        arr.findIndex(b => b.title === a.title) === i
+      );
 
-      // ── Compute modules ─────────────────────────────────────────────────────
-      const technicals   = computeTechnicals(hist);
-      const sentiment    = scoreSentiment(news);
-      const fundamentals = scoreFundamentals(fin, q);
+      const sector = p?.sector || fin?.sector || '';
+      const cur    = q.currency === 'INR' ? '₹' : (q.currency || '$');
 
-      // ── Ensemble prediction score ────────────────────────────────────────────
+      // ── Compute all modules ──────────────────────────────────────────────────
+      const technicals    = computeTechnicals(hist);
+      const advTech       = computeAdvancedTechnicals(hist);
+      const sentiment     = scoreSentiment(allNews);
+      const fundamentals  = scoreFundamentals(fin, q);
+      const dcf           = estimateDCF(fin, q, p);
+
+      // Peer performance (best-effort, non-blocking)
+      let peers = null;
+      try { peers = sector ? await getPeerPerformance(sym, sector) : null; } catch {}
+
+      // ── 4-model ensemble ─────────────────────────────────────────────────────
       const fScore = fundamentals?.score ?? 50;
-      const tScore = technicals?.score   ?? 50;
-      const sScore = sentiment?.score    ?? 50;
-      const ensemble = Math.round(fScore * 0.4 + tScore * 0.3 + sScore * 0.3);
-      const direction  = ensemble >= 65 ? 'BULLISH' : ensemble <= 35 ? 'BEARISH' : 'NEUTRAL';
-      const confidence = Math.min(100, Math.round(Math.abs(ensemble - 50) * 2));
+      const tScore = (() => {
+        let s = technicals?.score ?? 50;
+        // Adjust with advanced technical signals
+        if (advTech?.raw?.stochK != null) {
+          if (advTech.raw.stochK < 20) s += 5;
+          else if (advTech.raw.stochK > 80) s -= 5;
+        }
+        if (advTech?.raw?.obvTrend === 'RISING')  s += 3;
+        if (advTech?.raw?.obvTrend === 'FALLING') s -= 3;
+        if (advTech?.ichimoku === 'BULLISH') s += 4;
+        if (advTech?.ichimoku === 'BEARISH') s -= 4;
+        return Math.round(Math.max(0, Math.min(100, s)));
+      })();
+      const sScore = sentiment?.score ?? 50;
+      const mScore = macro?.score     ?? 50;
+
+      const ensemble  = Math.round(fScore * 0.30 + tScore * 0.30 + sScore * 0.20 + mScore * 0.20);
+      const direction = ensemble >= 63 ? 'BULLISH' : ensemble <= 37 ? 'BEARISH' : 'NEUTRAL';
+
+      // Confidence based on data completeness + conviction gap from 50
+      const dataCompleteness = [
+        !!q?.price, !!fin?.pe_ratio, !!(hist?.length > 60),
+        allNews.length > 2, !!macro,
+      ].filter(Boolean).length / 5;
+      const conviction   = Math.abs(ensemble - 50) / 50;
+      const confidence   = Math.round(dataCompleteness * 60 + conviction * 40);
 
       // ── 52W position ─────────────────────────────────────────────────────────
       const w52h = q.week52_high ?? fin?.week52_high;
@@ -370,23 +618,28 @@ async function buildRagContext(symbols) {
         ? `${Math.round(((q.price - w52l) / (w52h - w52l)) * 100)}% of 52W range`
         : '—';
 
+      // ── Bear/Base/Bull price targets ─────────────────────────────────────────
+      const atr = advTech?.raw?.atr14 ?? (q.price * 0.015);
+      const bearTarget = q.price - atr * 8;
+      const bullTarget = q.price + atr * 12;
+      const baseTarget = dcf?.raw?.dcfValue ?? (q.price * (1 + (ensemble - 50) / 200));
+
       // ── Context document ─────────────────────────────────────────────────────
-      let doc = `
+      const doc = `
 ━━━ RETRIEVED CONTEXT: ${ticker} (${sym}) ━━━
-[Source authority: Live quote=0.95 | Financials=0.85 | News=0.75]
-[Data staleness: quote < 1h | news < 30 days | history: 252 trading days]
+[Sources: Yahoo Finance · ET/Moneycontrol/BS RSS · World Bank API · Macro indices]
+[Coverage: Live quote · 1Y OHLCV (${hist?.length ?? 0} bars) · ${allNews.length} news articles · Macro data]
 
 ── LIVE QUOTE ───────────────────────────────────────────
 Company:    ${p?.name || sym}
-Sector:     ${p?.sector || fin?.sector || '—'} | Industry: ${p?.industry || '—'}
+Sector:     ${sector || '—'} | Industry: ${p?.industry || '—'}
 Price:      ${cur}${q.price.toFixed(2)} | Change: ${q.change?.toFixed(2) ?? '—'} (${q.change_pct?.toFixed(2) ?? '—'}%)
 Open: ${cur}${q.open?.toFixed(2) ?? '—'} | High: ${cur}${q.high?.toFixed(2) ?? '—'} | Low: ${cur}${q.low?.toFixed(2) ?? '—'}
-Prev Close: ${cur}${q.prev_close?.toFixed(2) ?? '—'} | Volume: ${q.volume ? (q.volume / 1e5).toFixed(2) + 'L' : '—'}
-Mkt Cap:    ${q.mkt_cap ? `${cur}${(q.mkt_cap / 1e7).toFixed(0)} Cr` : '—'}
+Volume:     ${q.volume ? (q.volume / 1e5).toFixed(2) + 'L' : '—'} | Mkt Cap: ${q.mkt_cap ? `${cur}${(q.mkt_cap / 1e7).toFixed(0)} Cr` : '—'}
 52W Range:  ${cur}${w52l?.toFixed(2) ?? '—'} – ${cur}${w52h?.toFixed(2) ?? '—'} | Position: ${w52pos}
 
 ── FUNDAMENTAL ANALYSIS (score: ${fScore}/100 — ${fundamentals?.label ?? '—'}) ───
-${fundamentals ? Object.entries(fundamentals.key_metrics).map(([k, v]) => `  ${k.padEnd(18)}: ${v}`).join('\n') : '  Financials data unavailable'}
+${fundamentals ? Object.entries(fundamentals.key_metrics).map(([k, v]) => `  ${k.padEnd(18)}: ${v}`).join('\n') : '  Financials unavailable'}
 ${fundamentals?.notes?.length ? '  Signals: ' + fundamentals.notes.join(' | ') : ''}
 
 ── TECHNICAL ANALYSIS (score: ${tScore}/100 — ${technicals?.trend ?? '—'}) ───
@@ -396,22 +649,57 @@ ${technicals ? `  MA Cross:          ${technicals.ma_cross}
   RSI(14):          ${technicals.rsi}
   MACD:             ${technicals.macd}
   Bollinger %B:     ${technicals.bollinger_pct_b}
-  Volume Trend:     ${technicals.volume_trend}
-  Data points:      ${technicals.data_points} trading days` : '  Historical data unavailable (need ≥30 candles)'}
+  Volume Trend:     ${technicals.volume_trend}` : '  Historical data insufficient'}
+${advTech ? `  ATR(14):          ${advTech.atr}
+  Stochastic:       ${advTech.stochastic}
+  OBV Trend:        ${advTech.obv_trend}
+  Price vs VWAP:    ${advTech.price_vs_vwap}
+  Ichimoku:         ${advTech.ichimoku}
+  Support:          ${advTech.support} | Resistance: ${advTech.resistance}
+  Pivot R1:         ${advTech.pivot_r1} | S1: ${advTech.pivot_s1}
+  Momentum:         ${Object.entries(advTech.momentum).map(([k,v]) => `${k}=${v}`).join(' | ')}` : ''}
 
-── NEWS SENTIMENT (score: ${sScore}/100 — ${sentiment.label}) ───
-  Articles scanned: ${sentiment.article_count ?? 0} (last 30 days, decay-weighted)
+── NEWS & SENTIMENT (score: ${sScore}/100 — ${sentiment.label}) ───
+  Articles: ${sentiment.article_count ?? 0} total (Yahoo Finance + ET + Moneycontrol + Business Standard)
 ${sentiment.scored?.length ? sentiment.scored.map(a =>
-  `  [${a.sentiment.padEnd(8)} ${a.confidence}% conf | w=${a.decay_weight}] ${a.title?.slice(0, 80) ?? ''}`
-).join('\n') : '  No recent news found'}
+  `  [${a.sentiment.padEnd(8)} ${a.confidence}% | ${a.decay_weight}w] [${(a.source || 'Yahoo').slice(0, 8)}] ${a.title?.slice(0, 80) ?? ''}`
+).join('\n') : '  No recent news'}
 
-── ENSEMBLE PREDICTION ──────────────────────────────────
-  Fundamental (40%): ${fScore} × 0.40 = ${Math.round(fScore * 0.4)}
-  Technical   (30%): ${tScore} × 0.30 = ${Math.round(tScore * 0.3)}
-  Sentiment   (30%): ${sScore} × 0.30 = ${Math.round(sScore * 0.3)}
-  ──────────────────────────────────────────────────────
-  ENSEMBLE SCORE:    ${ensemble}/100 → ${direction} (confidence: ${confidence}%)
-  ${confidence < 40 ? '⚠ CONFIDENCE < 40% — INSUFFICIENT_DATA for high-conviction prediction' : ''}
+── VALUATION & DCF ──────────────────────────────────────
+${dcf ? `  DCF Fair Value:   ${dcf.fair_value}
+  Implied Return:   ${dcf.implied_return}
+  Margin of Safety: ${dcf.margin_of_safety}
+  PEG Ratio:        ${dcf.peg_ratio}
+  Growth Assumed:   ${dcf.growth_assumption}` : '  DCF unavailable (EPS data missing)'}
+
+── SECTOR PEERS (${sector || 'unknown sector'}) ─────────────────────────────
+${peers?.peers?.length
+  ? `  Sector avg today: ${peers.avg_sector_change_pct >= 0 ? '+' : ''}${peers.avg_sector_change_pct}%
+${peers.peers.map(peer => `  ${peer.symbol.padEnd(12)}: ₹${peer.price?.toFixed(2) ?? '—'} (${peer.change_pct >= 0 ? '+' : ''}${peer.change_pct?.toFixed(2) ?? '—'}%)`).join('\n')}
+  Stock vs sector:  ${((q.change_pct ?? 0) - peers.avg_sector_change_pct).toFixed(2)}% relative`
+  : '  Peer data unavailable'}
+
+── MACRO CONTEXT (score: ${mScore}/100 — ${macro?.regime ?? 'NEUTRAL'}) ───
+${macro?.indicators?.filter(i => i.price).map(i =>
+  `  ${i.label.padEnd(20)}: ${i.unit === '₹' ? '₹' : ''}${i.price?.toFixed(2) ?? '—'} (${i.change_pct >= 0 ? '+' : ''}${i.change_pct?.toFixed(2) ?? '—'}%)`
+).join('\n') ?? '  Macro data unavailable'}
+${macro?.notes?.length ? '  Signals: ' + macro.notes.join(' | ') : ''}
+${wb ? Object.entries(wb).map(([k, v]) => `  ${k}: ${v.value}% (${v.year})`).join('\n') : ''}
+
+── 4-MODEL ENSEMBLE PREDICTION ──────────────────────────
+  Fundamental (30%): ${fScore} × 0.30 = ${Math.round(fScore * 0.30)}
+  Technical   (30%): ${tScore} × 0.30 = ${Math.round(tScore * 0.30)}
+  Sentiment   (20%): ${sScore} × 0.20 = ${Math.round(sScore * 0.20)}
+  Macro       (20%): ${mScore} × 0.20 = ${Math.round(mScore * 0.20)}
+  ────────────────────────────────────────────────────────
+  ENSEMBLE SCORE:    ${ensemble}/100 → ${direction}
+  CONFIDENCE:        ${confidence}% (data: ${Math.round(dataCompleteness * 100)}% complete · conviction: ${Math.round(conviction * 100)}%)
+  ${confidence < 40 ? '⚠ LOW CONFIDENCE — missing data; predictions directional only' : ''}
+
+── SCENARIO PRICE TARGETS ───────────────────────────────
+  Bear:  ${cur}${bearTarget.toFixed(2)} (ATR-based downside)
+  Base:  ${cur}${baseTarget.toFixed(2)} (DCF / trend projection)
+  Bull:  ${cur}${bullTarget.toFixed(2)} (ATR-based upside)
 `.trim();
 
       sections.push(doc);
@@ -421,7 +709,7 @@ ${sentiment.scored?.length ? sentiment.scored.map(a =>
   }
 
   return sections.length
-    ? `\n\n${'═'.repeat(60)}\nRAG RETRIEVAL RESULTS (${sections.length} symbol${sections.length > 1 ? 's' : ''})\n${'═'.repeat(60)}\n${sections.join('\n\n')}\n${'═'.repeat(60)}`
+    ? `\n\n${'═'.repeat(64)}\nRAG RETRIEVAL RESULTS — ${sections.length} symbol(s) | 4-Model Ensemble\n${'═'.repeat(64)}\n${sections.join('\n\n')}\n${'═'.repeat(64)}`
     : '';
 }
 
@@ -714,8 +1002,8 @@ export async function streamChat({ question, symbols = [], history = [], onDelta
     const stream = await groqClient.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       messages,
-      max_tokens: depth === 'deep' ? 2000 : 500,
-      temperature: depth === 'deep' ? 0.4 : 0.65,
+      max_tokens: depth === 'deep' ? 3000 : 700,
+      temperature: depth === 'deep' ? 0.3 : 0.55,
       stream: true,
     });
 
@@ -745,7 +1033,7 @@ async function streamAnthropic({ question, symbols, history, onDelta, onDone, on
 
     const stream = await client.messages.stream({
       model: 'claude-sonnet-4-6',
-      max_tokens: depth === 'deep' ? 2000 : 500,
+      max_tokens: depth === 'deep' ? 3000 : 700,
       system: SYSTEM_PROMPT + context,
       messages,
     });
