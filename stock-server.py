@@ -224,6 +224,78 @@ def _build_10yr_projection(current_price: float, cagr_hist: float | None,
         'bull': {'cagr': round(bull_cagr, 1), 'price_10y': proj(bull_cagr)},
     }
 
+# ── 3-scenario DCF engine ─────────────────────────────────────────────────────
+
+def _compute_dcf(revenue_ttm: float, revenue_growth_pct: float,
+                 net_margin: float, shares_out: float,
+                 wacc: float = 10.0, terminal_growth: float = 3.0) -> dict:
+    """3-scenario DCF: bear/base/bull intrinsic value per share.
+
+    Projects 5 years of free cash flow, discounts back at WACC,
+    adds Gordon-Growth terminal value, divides by shares outstanding.
+    """
+    if not all([revenue_ttm, shares_out]) or shares_out <= 0:
+        return {}
+    nm   = (net_margin or 8.0) / 100.0   # default 8% net margin
+    wacc /= 100.0
+    tg   /= 100.0  if (tg := terminal_growth) else None; tg = terminal_growth / 100.0
+
+    def _dcf_scenario(rev_grow_pct: float, margin_adj: float = 0.0) -> float:
+        rg = rev_grow_pct / 100.0
+        rev = revenue_ttm
+        pv_fcf = 0.0
+        for yr in range(1, 6):
+            rev *= (1 + rg)
+            fcf  = rev * (nm + margin_adj)
+            pv_fcf += fcf / ((1 + wacc) ** yr)
+        # Terminal value (Year 5 FCF × (1+tg)) / (wacc - tg)
+        terminal_fcf = rev * (nm + margin_adj) * (1 + tg)
+        tv = terminal_fcf / max(wacc - tg, 0.01)
+        pv_tv = tv / ((1 + wacc) ** 5)
+        intrinsic = (pv_fcf + pv_tv) / shares_out
+        return round(max(intrinsic, 0), 2)
+
+    base_grow  = max(min(revenue_growth_pct or 10.0, 40.0), -5.0)
+    bear_grow  = base_grow * 0.5
+    bull_grow  = base_grow * 1.5
+
+    return {
+        'bear': _dcf_scenario(bear_grow, -0.02),
+        'base': _dcf_scenario(base_grow, 0.0),
+        'bull': _dcf_scenario(bull_grow, +0.02),
+        'wacc_pct': wacc * 100,
+        'terminal_growth_pct': terminal_growth,
+    }
+
+# ── 4-model ensemble scorer ───────────────────────────────────────────────────
+
+def _compute_ensemble_score(tech_score: float, fund_score: float,
+                             sent_score: float, macro_score: float) -> dict:
+    """Weighted ensemble: Technical 25% + Fundamental 35% + Sentiment 20% + Macro 20%.
+
+    All inputs are 0–100. Returns composite score and component breakdown.
+    """
+    weights = {'technical': 0.25, 'fundamental': 0.35, 'sentiment': 0.20, 'macro': 0.20}
+    scores  = {
+        'technical':   min(max(tech_score  or 50, 0), 100),
+        'fundamental': min(max(fund_score  or 50, 0), 100),
+        'sentiment':   min(max(sent_score  or 50, 0), 100),
+        'macro':       min(max(macro_score or 50, 0), 100),
+    }
+    composite = sum(scores[k] * weights[k] for k in weights)
+    if composite >= 65:
+        signal = 'BULLISH'
+    elif composite <= 40:
+        signal = 'BEARISH'
+    else:
+        signal = 'NEUTRAL'
+    return {
+        'composite': round(composite, 1),
+        'signal':    signal,
+        'components': {k: round(scores[k], 1) for k in scores},
+        'weights':    weights,
+    }
+
 # ── BM25 hybrid re-ranking ────────────────────────────────────────────────────
 
 def _rerank_bm25(query: str, chunks: list, top_k: int = 5) -> list:
@@ -283,9 +355,17 @@ _AUTONOMOUS_PHRASES = {
     'reddit', 'wallstreetbets', 'stocktwits', 'social sentiment',
     'yield curve', 'recession', 'fred data',
 }
+_PREDICTION_PHRASES = {
+    'predict', 'price prediction', 'price target', 'will it go up', 'will it go down',
+    'fair value', 'intrinsic value', 'dcf', 'discounted cash flow',
+    '12 month target', '1 year target', 'price forecast', 'where will it go',
+    'technical score', 'bull case', 'bear case', 'base case', 'upside potential',
+    'downside risk', 'short term prediction', 'medium term forecast', 'should i buy now',
+    'ensemble score', 'model score', 'prediction model',
+}
 
 def _detect_analysis_mode(question: str) -> str:
-    """Detect analysis mode: watchlist_analysis | recommendations | autonomous | standard."""
+    """Detect analysis mode: watchlist_analysis | recommendations | autonomous | prediction | standard."""
     q = question.lower()
     for phrase in _WATCHLIST_PHRASES:
         if phrase in q:
@@ -296,6 +376,9 @@ def _detect_analysis_mode(question: str) -> str:
     for phrase in _AUTONOMOUS_PHRASES:
         if phrase in q:
             return 'autonomous'
+    for phrase in _PREDICTION_PHRASES:
+        if phrase in q:
+            return 'prediction'
     return 'standard'
 
 # ── 7-Intent classifier (maps to retrieval routing per system architecture) ───
@@ -3599,6 +3682,57 @@ Operate independently to gather, analyze, and synthesize:
 ### MODE 4: STANDARD ANALYSIS (default)
 *For single-stock deep-dives, comparisons, and general financial Q&A*
 
+### MODE 5: PRICE PREDICTION ENGINE
+*Triggered by: "predict", "price target", "fair value", "DCF", "bull/bear/base case", "upside potential", "where will it go"*
+
+Generate a structured multi-model price prediction for the requested stock:
+
+**ENSEMBLE MODEL FRAMEWORK** (4 models, weighted score)
+
+| Model | Weight | Input Signals |
+|-------|--------|--------------|
+| Technical Model | 25% | RSI, MACD, Bollinger %B, ATR, OBV, VWAP, Ichimoku, MA cross |
+| Fundamental Model | 35% | P/E vs sector, Revenue growth, Net margin, ROE, FCF yield, D/E |
+| Sentiment Model | 20% | News score, StockTwits bull%, Google Trends, insider buying |
+| Macro Model | 20% | Rate environment, Yield curve, GDP trend, sector rotation signals |
+
+Score each model 0–100, compute weighted composite. Signal: ≥65 BULLISH · ≤40 BEARISH · else NEUTRAL.
+
+**OUTPUT FORMAT — PRICE PREDICTION**
+
+**[PREDICTION: BULLISH/BEARISH/NEUTRAL]** | Ensemble Score: X/100 | Confidence: 🔴/🟡/🟢
+
+*One-line thesis*
+
+**Model Scores**
+| Model | Score | Key Signal |
+|-------|-------|-----------|
+| Technical | X/100 | [dominant signal] |
+| Fundamental | X/100 | [dominant signal] |
+| Sentiment | X/100 | [dominant signal] |
+| Macro | X/100 | [dominant signal] |
+| **Composite** | **X/100** | **[overall]** |
+
+**Price Targets**
+
+| Horizon | Bear Case | Base Case | Bull Case |
+|---------|-----------|-----------|-----------|
+| Short-term (1 month) | ₹/$ X | ₹/$ X | ₹/$ X |
+| Medium-term (6 months) | ₹/$ X | ₹/$ X | ₹/$ X |
+| Long-term (12 months) | ₹/$ X | ₹/$ X | ₹/$ X |
+
+**DCF Fair Value** (if fundamentals available): Bear ₹/$X · Base ₹/$X · Bull ₹/$X
+*WACC assumed X% · Terminal growth X%*
+
+**Key Drivers**
+- 🟢 Bullish: [top 3 catalysts]
+- 🔴 Bearish: [top 3 risks]
+
+**Technical Snapshot**: ATR14=X (X% of price) | VWAP=X (±X%) | Ichimoku: [above/below/inside cloud]
+**Risk Assessment**: Volatility=X% annualized · Max downside (bear stop): X%
+
+*Prediction confidence based on data freshness and signal alignment. Not financial advice.*
+
 ## ANALYSIS FRAMEWORK
 
 ### 1. FUNDAMENTAL ANALYSIS
@@ -3781,8 +3915,9 @@ def _news_sentiment_score(articles: list) -> int:
     return round((weighted_sum / weight_total) * 100)
 
 def _compute_technicals(closes: list, current_price: float | None = None,
-                        volumes: list | None = None) -> dict:
-    """Compute RSI-14, MACD, Bollinger Bands, MA50/200, volume momentum, and volatility."""
+                        volumes: list | None = None,
+                        highs: list | None = None, lows: list | None = None) -> dict:
+    """Compute RSI-14, MACD, Bollinger Bands, ATR, OBV, VWAP, Ichimoku, MA50/200, vol."""
     result = {}
     if not closes:
         return result
@@ -3829,6 +3964,56 @@ def _compute_technicals(closes: list, current_price: float | None = None,
         avg_vol = sum(volumes[-20:]) / 20
         if avg_vol > 0:
             result['vol_ratio'] = round(volumes[-1] / avg_vol, 2)
+
+    # ATR-14 (Average True Range) — requires highs and lows
+    if highs and lows and len(highs) >= 15 and len(lows) >= 15:
+        h14 = highs[-14:]; l14 = lows[-14:]; c14 = closes[-15:-1]
+        trs = [max(h14[i] - l14[i], abs(h14[i] - c14[i]), abs(l14[i] - c14[i]))
+               for i in range(14)]
+        result['atr14'] = round(sum(trs) / 14, 2)
+        if price:
+            result['atr14_pct'] = round(result['atr14'] / price * 100, 2)
+
+    # OBV (On-Balance Volume) — running cumulative
+    if volumes and len(volumes) >= 2 and n >= 2:
+        obv = 0
+        for i in range(1, min(n, len(volumes))):
+            if closes[i] > closes[i-1]:
+                obv += volumes[i]
+            elif closes[i] < closes[i-1]:
+                obv -= volumes[i]
+        result['obv'] = obv
+        result['obv_signal'] = 'accumulation' if obv > 0 else 'distribution'
+
+    # Approximate VWAP (uses OHLC avg × volume over last 20 days)
+    if highs and lows and volumes and len(highs) >= 20 and len(lows) >= 20 and len(volumes) >= 20:
+        typical_prices = [(highs[-20+i] + lows[-20+i] + closes[-20+i]) / 3
+                          for i in range(20)]
+        vols_20 = volumes[-20:]
+        total_vol = sum(vols_20)
+        if total_vol > 0:
+            vwap = sum(tp * v for tp, v in zip(typical_prices, vols_20)) / total_vol
+            result['vwap'] = round(vwap, 2)
+            if price:
+                result['vs_vwap'] = round((price - vwap) / vwap * 100, 2)
+
+    # Ichimoku Cloud (Tenkan-sen 9, Kijun-sen 26, Senkou Span B 52)
+    if highs and lows and len(highs) >= 52 and len(lows) >= 52:
+        tenkan = (max(highs[-9:])  + min(lows[-9:]))  / 2
+        kijun  = (max(highs[-26:]) + min(lows[-26:])) / 2
+        senkou_b = (max(highs[-52:]) + min(lows[-52:])) / 2
+        senkou_a = (tenkan + kijun) / 2
+        result['ichimoku_tenkan'] = round(tenkan, 2)
+        result['ichimoku_kijun']  = round(kijun, 2)
+        result['ichimoku_cloud_top']    = round(max(senkou_a, senkou_b), 2)
+        result['ichimoku_cloud_bottom'] = round(min(senkou_a, senkou_b), 2)
+        if price:
+            if price > max(senkou_a, senkou_b):
+                result['ichimoku_signal'] = 'above_cloud_bullish'
+            elif price < min(senkou_a, senkou_b):
+                result['ichimoku_signal'] = 'below_cloud_bearish'
+            else:
+                result['ichimoku_signal'] = 'inside_cloud_neutral'
 
     # Annualized volatility (21-day rolling stddev of daily returns × √252)
     if n >= 22:
@@ -3938,16 +4123,16 @@ def _build_context(symbols, question, conn=None, include_macro: bool = False,
                     'SELECT title,source,published,category,summary FROM news '
                     'WHERE symbol=? ORDER BY published DESC LIMIT 6', (sym,)
                 ).fetchall()
-                # Fetch 1-year OHLCV — enables MA200, MACD, Bollinger Bands, CAGR
+                # Fetch 1-year OHLCV — enables MA200, MACD, Bollinger Bands, ATR, Ichimoku, CAGR
                 h_rows = _query(
-                    'SELECT close,volume,ts FROM history '
+                    'SELECT open,high,low,close,volume,ts FROM history '
                     'WHERE symbol=? AND range_key=? ORDER BY ts',
                     (sym, '1y')
                 ).fetchall()
                 # Fallback to 3-month if 1-year not populated yet
                 if len(h_rows) < 30:
                     h_rows = _query(
-                        'SELECT close,volume,ts FROM history '
+                        'SELECT open,high,low,close,volume,ts FROM history '
                         'WHERE symbol=? AND range_key=? ORDER BY ts',
                         (sym, '3mo')
                     ).fetchall()
@@ -3975,10 +4160,15 @@ def _build_context(symbols, question, conn=None, include_macro: bool = False,
                         line += f' | Mkt Cap: {mktcap}'
                     parts.append(line)
 
-                # Enhanced technicals from 1-year history
+                # Enhanced technicals from 1-year OHLCV history
                 closes  = [r['close']  for r in h_rows if r['close']]
                 volumes = [r['volume'] for r in h_rows if r['volume']]
-                tech    = _compute_technicals(closes, price, volumes or None)
+                highs_h = [r['high']   for r in h_rows if r['high']]
+                lows_h  = [r['low']    for r in h_rows if r['low']]
+                tech    = _compute_technicals(
+                    closes, price, volumes or None,
+                    highs=highs_h or None, lows=lows_h or None
+                )
                 if tech:
                     t = []
                     if 'ma50' in tech:
@@ -3998,6 +4188,20 @@ def _build_context(symbols, question, conn=None, include_macro: bool = False,
                     if 'bb_pct' in tech:
                         lbl = 'Near Upper Band' if tech['bb_pct'] > 80 else ('Near Lower Band' if tech['bb_pct'] < 20 else 'Mid Channel')
                         t.append(f'Bollinger %B: {tech["bb_pct"]:.0f}% [{lbl}]')
+                    if 'atr14' in tech:
+                        t.append(f'ATR14: {tech["atr14"]} ({tech.get("atr14_pct","?")}% of price)')
+                    if 'obv_signal' in tech:
+                        t.append(f'OBV: {tech["obv_signal"].upper()}')
+                    if 'vs_vwap' in tech:
+                        s = '+' if tech['vs_vwap'] >= 0 else ''
+                        t.append(f'VWAP: {tech["vwap"]} ({s}{tech["vs_vwap"]}%)')
+                    if 'ichimoku_signal' in tech:
+                        sig_map = {
+                            'above_cloud_bullish': '☁️ ABOVE CLOUD (Bullish)',
+                            'below_cloud_bearish': '☁️ BELOW CLOUD (Bearish)',
+                            'inside_cloud_neutral': '☁️ INSIDE CLOUD (Neutral)',
+                        }
+                        t.append(f'Ichimoku: {sig_map.get(tech["ichimoku_signal"], tech["ichimoku_signal"])}')
                     if 'vol_ratio' in tech:
                         t.append(f'Vol Ratio: {tech["vol_ratio"]}x avg')
                     if 'vol_annualized' in tech:
@@ -4267,6 +4471,11 @@ def api_chat():
             include_mac  = True
             include_sec  = True
             include_soc  = True
+        elif mode == 'prediction':
+            max_tok      = 1400
+            include_mac  = True
+            include_sec  = False
+            include_soc  = True
         else:
             max_tok      = 600
             include_mac  = False
@@ -4292,6 +4501,7 @@ def api_chat():
         'watchlist_analysis': '[MODE: WATCHLIST ANALYSIS — apply Mode 1 output format with 10-year projections, scores, and verdicts for each stock]\n\n',
         'recommendations':    '[MODE: RECOMMENDATIONS — apply Mode 2 output format with short-term and long-term pick tables]\n\n',
         'autonomous':         '[MODE: AUTONOMOUS RESEARCH — apply Mode 3 protocol: cross-validate 3+ sources, flag conflicts, list all sources at the end]\n\n',
+        'prediction':         '[MODE: PRICE PREDICTION ENGINE — apply Mode 5 output format with 4-model ensemble scores, bear/base/bull price targets across 3 time horizons, and DCF fair value]\n\n',
     }
     mode_prefix = mode_instructions.get(mode, '')
 
@@ -4613,6 +4823,140 @@ def api_recommendations():
             yield f"data: {json.dumps({'type': 'done', 'universe': universe, 'symbols_analyzed': len(symbols)})}\n\n"
         except Exception as e:
             log.warning(f'recommendations error: {e}')
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
+    )
+
+# ── Price Prediction endpoint (Mode 5 — ensemble model with DCF) ──────────────
+@app.route('/api/predict/<path:symbol>', methods=['GET', 'POST'])
+def api_predict(symbol: str):
+    """Run 4-model ensemble prediction for a single stock symbol.
+    GET /api/predict/AAPL  or  POST with body { "symbol": "AAPL" }
+    Returns SSE stream of bear/base/bull price targets across 3 time horizons.
+    """
+    provider, api_key = _get_ai_provider()
+    if not provider:
+        return jsonify({'ok': False, 'error': _NO_KEY_MSG}), 503
+
+    if request.method == 'POST':
+        body   = request.get_json(silent=True) or {}
+        symbol = body.get('symbol', symbol)
+
+    symbol = symbol.upper().strip()
+    db     = get_db()
+
+    context_block = _build_context(
+        [symbol], f'Price prediction for {symbol}', conn=db,
+        include_macro=True, include_sec=False, include_social=True,
+    )
+
+    # Compute ensemble score from available technicals + fundamentals
+    h_rows = db.execute(
+        'SELECT open,high,low,close,volume,ts FROM history '
+        'WHERE symbol=? AND range_key=? ORDER BY ts', (symbol, '1y')
+    ).fetchall()
+    if len(h_rows) < 30:
+        h_rows = db.execute(
+            'SELECT open,high,low,close,volume,ts FROM history '
+            'WHERE symbol=? AND range_key=? ORDER BY ts', (symbol, '3mo')
+        ).fetchall()
+
+    closes  = [r['close']  for r in h_rows if r['close']]
+    volumes = [r['volume'] for r in h_rows if r['volume']]
+    highs_h = [r['high']   for r in h_rows if r['high']]
+    lows_h  = [r['low']    for r in h_rows if r['low']]
+    tech = _compute_technicals(
+        closes, None, volumes or None, highs=highs_h or None, lows=lows_h or None
+    )
+
+    # Technical model score (0–100)
+    tech_score = 50.0
+    signals = 0
+    if tech.get('rsi14'):
+        rsi = tech['rsi14']
+        tech_score += (50 - rsi) * 0.3 if rsi < 50 else -(rsi - 50) * 0.3
+        signals += 1
+    if tech.get('macd_signal') == 'bullish':
+        tech_score += 10; signals += 1
+    elif tech.get('macd_signal') == 'bearish':
+        tech_score -= 10; signals += 1
+    if tech.get('ichimoku_signal') == 'above_cloud_bullish':
+        tech_score += 10; signals += 1
+    elif tech.get('ichimoku_signal') == 'below_cloud_bearish':
+        tech_score -= 10; signals += 1
+    if tech.get('vs_ma50'):
+        tech_score += min(max(tech['vs_ma50'] * 0.5, -10), 10); signals += 1
+    tech_score = min(max(tech_score, 0), 100)
+
+    # Fundamental model score from DB
+    f_row      = db.execute('SELECT * FROM financials WHERE symbol=?', (symbol,)).fetchone()
+    fund_score = 50.0
+    if f_row:
+        pe = f_row.get('pe_ratio')
+        if pe and 5 < pe < 50:
+            fund_score += max(min((25 - pe) * 0.8, 15), -15)
+        gm = f_row.get('gross_margin')
+        if gm:
+            fund_score += 10 if gm > 40 else (5 if gm > 20 else -5)
+        roe = f_row.get('roe')
+        if roe:
+            fund_score += 10 if roe > 25 else (5 if roe > 15 else -5)
+    fund_score = min(max(fund_score, 0), 100)
+
+    # Sentiment score from news
+    n_rows     = db.execute(
+        'SELECT title,summary,published FROM news WHERE symbol=? ORDER BY published DESC LIMIT 10',
+        (symbol,)
+    ).fetchall()
+    sent_score = _news_sentiment_score([dict(r) for r in n_rows]) if n_rows else 50
+
+    # Macro score (neutral default — macro context passed via system prompt)
+    macro_score = 50.0
+
+    ensemble = _compute_ensemble_score(tech_score, fund_score, sent_score, macro_score)
+
+    question = (
+        f'Generate a complete price prediction for {symbol} using the 4-model ensemble framework. '
+        f'Pre-computed ensemble scores — Technical: {tech_score:.0f}/100, '
+        f'Fundamental: {fund_score:.0f}/100, Sentiment: {sent_score}/100, Macro: 50/100. '
+        f'Composite score: {ensemble["composite"]}/100 ({ensemble["signal"]}). '
+        f'Available technical signals: {", ".join(f"{k}={v}" for k,v in tech.items() if isinstance(v,(int,float)))}. '
+        f'Provide bear/base/bull price targets for 1-month, 6-month, and 12-month horizons. '
+        f'Include DCF fair value if fundamentals are available. Apply Mode 5 output format.'
+    )
+
+    mode_prefix  = '[MODE: PRICE PREDICTION ENGINE — apply Mode 5 output format with ensemble scores and 3-horizon price targets]\n\n'
+    user_content = f"{mode_prefix}MARKET DATA:\n{context_block}\n\nQuestion: {question}"
+    messages     = [{'role': 'user', 'content': user_content}]
+
+    def generate():
+        try:
+            if provider == 'groq':
+                client = groq_sdk.Groq(api_key=api_key)
+                stream = client.chat.completions.create(
+                    model=GROQ_MODEL,
+                    messages=[{'role': 'system', 'content': SYSTEM_PROMPT}] + messages,
+                    max_tokens=1400, temperature=0.2, stream=True, timeout=90,
+                )
+                for chunk in stream:
+                    delta = chunk.choices[0].delta.content or ''
+                    if delta:
+                        yield f"data: {json.dumps({'type': 'delta', 'text': delta})}\n\n"
+            else:
+                client = anthropic.Anthropic(api_key=api_key)
+                with client.messages.stream(
+                    model='claude-haiku-4-5-20251001', max_tokens=1400,
+                    system=SYSTEM_PROMPT, messages=messages,
+                ) as stream:
+                    for text in stream.text_stream:
+                        yield f"data: {json.dumps({'type': 'delta', 'text': text})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'symbol': symbol, 'ensemble': ensemble})}\n\n"
+        except Exception as e:
+            log.warning(f'predict error ({symbol}): {e}')
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
     return Response(
