@@ -250,11 +250,25 @@ def _rerank_bm25(query: str, chunks: list, top_k: int = 5) -> list:
 
 # ── Analysis mode detection ───────────────────────────────────────────────────
 
+# Phrases that trigger watchlist *loading* from DB (user is asking about their own stocks)
+_WATCHLIST_QUERY_PHRASES = {
+    'my watchlist', 'my stocks', 'my portfolio', 'my holdings',
+    'show watchlist', 'show my', 'what stocks do i', 'what are my stocks',
+    'in my watchlist', 'on my watchlist', 'i own', 'i have stocks',
+    'my investments', 'what do i own', 'what i own', 'i track',
+}
+
+def _is_watchlist_query(question: str) -> bool:
+    """Return True when the user is explicitly asking about their own watchlist/portfolio."""
+    q = question.lower()
+    return any(p in q for p in _WATCHLIST_QUERY_PHRASES)
+
 _WATCHLIST_PHRASES = {
     'watchlist analysis', 'portfolio analysis', 'all my stocks', 'my stocks',
     'rank my', 'score my', 'accumulate', '10 year', '10-year', 'ten year',
     'long term projection', 'decade', 'hold or sell', 'hold or avoid',
-    'which should i keep', 'verdict', 'rate my portfolio',
+    'which should i keep', 'verdict', 'rate my portfolio', 'my watchlist',
+    'my holdings', 'my portfolio',
 }
 _RECOMMENDATION_PHRASES = {
     'recommend', 'recommendation', 'best stock', 'top pick', 'what to buy',
@@ -3725,13 +3739,21 @@ def api_chat():
     if not question:
         return jsonify({'ok': False, 'error': 'question required'}), 400
 
-    # ── Resolve symbols from watchlist if not provided ────────────────────────
-    db = get_db()
-    if not symbols:
-        user_id = get_current_user_id()
-        if user_id:
-            symbols = [r['symbol'] for r in db.execute(
-                'SELECT symbol FROM watchlist WHERE user_id=?', (user_id,)).fetchall()]
+    # ── Resolve symbols — always pull watchlist when user asks about it ──────
+    db             = get_db()
+    watchlist_syms = []   # DB-loaded symbols (may differ from request symbols)
+    is_wl_query    = _is_watchlist_query(question)
+
+    user_id = get_current_user_id()
+    if user_id:
+        watchlist_syms = [r['symbol'] for r in db.execute(
+            'SELECT symbol FROM watchlist WHERE user_id=?', (user_id,)).fetchall()]
+
+    # Force-use DB watchlist when user explicitly asks about it,
+    # or fall back to it when the request body has no symbols
+    if is_wl_query or not symbols:
+        if watchlist_syms:
+            symbols = watchlist_syms
 
     # ── Conversational fast path — skip expensive context building ────────────
     conversational = _is_conversational(question, symbols)
@@ -3786,10 +3808,22 @@ def api_chat():
     }
     mode_prefix = mode_instructions.get(mode, '')
 
+    # When the question is about the user's watchlist, tell the LLM explicitly
+    watchlist_label = ''
+    if watchlist_syms and (is_wl_query or mode == 'watchlist_analysis'):
+        watchlist_label = (
+            f"USER'S WATCHLIST ({len(watchlist_syms)} stocks): "
+            f"{', '.join(watchlist_syms)}\n\n"
+        )
+
     if context_block:
-        user_content = f"{mode_prefix}MARKET DATA:\n{context_block}\n\nQuestion: {question}"
+        user_content = f"{mode_prefix}{watchlist_label}MARKET DATA:\n{context_block}\n\nQuestion: {question}"
     else:
-        user_content = f"{mode_prefix}{question}" if mode_prefix else question
+        # No context yet (data not cached) — still tell LLM what the watchlist is
+        if watchlist_label:
+            user_content = f"{mode_prefix}{watchlist_label}Question: {question}"
+        else:
+            user_content = f"{mode_prefix}{question}" if mode_prefix else question
 
     messages = history_msgs + [{'role': 'user', 'content': user_content}]
 
