@@ -887,12 +887,20 @@
 
   /* Tighter header */
   .header { padding: 0 8px 0 10px; gap: 4px; }
+}
 
-  /* Market pulse panel: full width */
+/* ── Market pulse: fixed overlay on all mobile ─────────────────────────────── */
+@media (max-width: 768px) {
   .market-pulse__panel {
+    position: fixed;
+    top: var(--header-h);
     left: 0;
     right: 0;
     min-width: unset;
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    z-index: 600;
+    max-height: calc(100vh - var(--header-h) - var(--mobile-nav-h));
+    overflow-y: auto;
   }
 }
 

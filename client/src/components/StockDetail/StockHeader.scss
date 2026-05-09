@@ -414,10 +414,10 @@
 @media (max-width: 768px) {
   .stock-header {
     &__top {
-      padding: 12px 14px 10px;
+      padding: 10px 14px 8px;
       gap: 10px;
       flex-wrap: nowrap;   /* keep price-block on same row */
-      align-items: flex-start;
+      align-items: center; /* vertically center price with name regardless of badge wrapping */
     }
 
     &__logo { width: 34px; height: 34px; border-radius: 9px; }
@@ -433,21 +433,22 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      margin-bottom: 4px;
     }
 
     &__meta {
       flex-wrap: wrap;
-      gap: 4px;
+      gap: 3px;
     }
 
     &__price-block {
       flex-shrink: 0;
       text-align: right;
-      min-width: 0;
+      padding-left: 6px;   /* small gap from name block */
     }
 
-    &__price { font-size: 20px; }
-    &__change { font-size: 11px; padding: 2px 8px; }
+    &__price { font-size: 19px; }
+    &__change { font-size: 11px; padding: 2px 7px; margin-top: 3px; }
 
     &__stats {
       display: grid;
@@ -475,11 +476,11 @@
 
 @media (max-width: 480px) {
   .stock-header {
-    &__top { gap: 8px; padding: 10px 12px 8px; }
+    &__top { gap: 8px; padding: 9px 12px 7px; align-items: center; }
     &__logo { width: 30px; height: 30px; border-radius: 8px; }
-    &__name { font-size: 13px; }
-    &__price { font-size: 18px; letter-spacing: -0.5px; }
-    &__change { font-size: 10.5px; padding: 2px 7px; }
+    &__name { font-size: 13px; margin-bottom: 3px; }
+    &__price { font-size: 17px; letter-spacing: -0.5px; }
+    &__change { font-size: 10px; padding: 2px 6px; }
   }
 
   .stat {
@@ -491,10 +492,10 @@
 
 @media (max-width: 360px) {
   .stock-header {
-    &__top { gap: 6px; padding: 8px 10px; }
+    &__top { gap: 6px; padding: 8px 10px; align-items: center; }
     &__logo { display: none; }   /* reclaim space on tiny screens */
-    &__name { font-size: 12px; }
-    &__price { font-size: 16px; }
-    &__change { font-size: 10px; }
+    &__name { font-size: 12px; margin-bottom: 2px; }
+    &__price { font-size: 15px; }
+    &__change { font-size: 9.5px; padding: 2px 5px; }
   }
 }
