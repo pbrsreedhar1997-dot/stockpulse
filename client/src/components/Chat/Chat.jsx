@@ -3,22 +3,6 @@ import { useChat } from '../../hooks/useChat';
 import { useAppContext } from '../../contexts/AppContext';
 import './Chat.scss';
 
-const QUICK_ACTIONS = [
-  { label: '📊 Analyse Reliance',       question: 'Give me a full analysis of Reliance — fundamentals, technicals, news sentiment, and price targets.' },
-  { label: '📈 TCS Technicals',         question: 'What is the technical setup for TCS? Cover MA cross, RSI, MACD, Bollinger Bands, ATR, and volume trend.' },
-  { label: '💰 HDFC Bank Fundamentals', question: 'How are HDFC Bank fundamentals? P/E, margins, ROE, debt levels, and revenue growth.' },
-  { label: '📰 Infosys News',           question: 'What does the recent news say about Infosys? Summarise sentiment and key themes.' },
-  { label: '⚠️ Adani Risks',           question: 'What are the top risks for Adani Enterprises right now?' },
-  { label: '🌍 Macro Outlook',          question: 'What is the current macroeconomic environment? Cover interest rates, inflation, yield curve, and impact on Indian IT and banking sectors.' },
-];
-
-const PREDICT_ACTIONS = [
-  { label: '🔮 Predict Reliance',  sym: 'RELIANCE.NS' },
-  { label: '🔮 Predict TCS',       sym: 'TCS.NS'      },
-  { label: '🔮 Predict AAPL',      sym: 'AAPL'        },
-  { label: '🔮 Predict Infosys',   sym: 'INFY.NS'     },
-];
-
 function predictQuestion(sym) {
   return `Give me a complete price prediction for ${sym} using the 4-model ensemble framework. ` +
     `Show ensemble scores for Technical, Fundamental, Sentiment, and Macro models (0–100 each). ` +
@@ -26,19 +10,16 @@ function predictQuestion(sym) {
     `Include DCF fair value estimate, ATR-based risk, VWAP and Ichimoku cloud signal, and overall prediction confidence.`;
 }
 
-function PredictBar({ onSubmit }) {
-  const [sym, setSym] = useState('');
-  const submit = () => { const s = sym.trim().toUpperCase(); if (!s) return; onSubmit(predictQuestion(s)); setSym(''); };
-  return (
-    <div className="predict-bar">
-      <span className="predict-bar__icon">🔮</span>
-      <input className="predict-bar__input" placeholder="Enter symbol, e.g. AAPL or RELIANCE.NS"
-        value={sym} onChange={e => setSym(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()}
-        autoComplete="off" spellCheck={false} />
-      <button className="predict-bar__btn" onClick={submit} disabled={!sym.trim()}>Predict ↑</button>
-    </div>
-  );
-}
+const QUICK_ACTIONS = [
+  { label: '🔮 Predict Reliance',      question: predictQuestion('RELIANCE.NS') },
+  { label: '🔮 Predict TCS',           question: predictQuestion('TCS.NS')       },
+  { label: '🔮 Predict Infosys',       question: predictQuestion('INFY.NS')      },
+  { label: '📊 Analyse HDFC Bank',     question: 'Give me a full analysis of HDFC Bank — fundamentals, technicals, news sentiment, and price targets.' },
+  { label: '📈 TCS Technicals',        question: 'What is the technical setup for TCS? Cover MA cross, RSI, MACD, Bollinger Bands, ATR, and volume trend.' },
+  { label: '💰 Nifty50 Valuation',     question: 'Is the Nifty50 fairly valued right now? Analyse trailing P/E, EPS growth, DII/FII flows, and macro outlook.' },
+  { label: '📰 Adani News Sentiment',  question: 'What does the recent news say about Adani Enterprises? Summarise sentiment and key themes.' },
+  { label: '🌍 Macro Outlook',         question: 'What is the current macroeconomic environment? Cover interest rates, inflation, yield curve, and impact on Indian IT and banking sectors.' },
+];
 
 function parseMarkdown(text) {
   return text
@@ -183,7 +164,7 @@ export default function Chat() {
         </button>
         <div className="chat__header-info">
           <h2 className="chat__title">AI Stock Analyst</h2>
-          <p className="chat__sub">Ask about any NSE/BSE stock — technicals, fundamentals, news &amp; price predictions</p>
+          <p className="chat__sub">Predict prices · Analyse stocks · News sentiment · Macro trends</p>
         </div>
         <div className="chat__header-actions">
           {messages.length > 0 && (
@@ -209,22 +190,15 @@ export default function Chat() {
               </svg>
             </div>
             <h3>AI Stock Analyst</h3>
-            <p>Ask about any stock — live price, technicals, fundamentals, news sentiment, and full AI price predictions.</p>
+            <p>Ask anything — predict prices, analyse fundamentals, check technicals, or explore news &amp; macro trends.</p>
 
-            <div className="chat__section-label">🔮 Price Predictions</div>
-            <PredictBar onSubmit={submit} />
-            <div className="chat__quick-actions">
-              {PREDICT_ACTIONS.map(a => (
-                <button key={a.label} className="quick-btn quick-btn--predict" onClick={() => submit(predictQuestion(a.sym))}>
-                  {a.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="chat__section-label">📊 Analysis &amp; Research</div>
             <div className="chat__quick-actions">
               {QUICK_ACTIONS.map(a => (
-                <button key={a.label} className="quick-btn" onClick={() => submit(a.question)}>
+                <button
+                  key={a.label}
+                  className={`quick-btn ${a.label.startsWith('🔮') ? 'quick-btn--predict' : ''}`}
+                  onClick={() => submit(a.question)}
+                >
                   {a.label}
                 </button>
               ))}
@@ -261,11 +235,14 @@ export default function Chat() {
       {/* ── Quick bar (mid-conversation) ── */}
       {messages.length > 0 && !streaming && (
         <div className="chat__quick-bar">
-          {PREDICT_ACTIONS.slice(0, 2).map(a => (
-            <button key={a.label} className="quick-btn quick-btn--sm quick-btn--predict" onClick={() => submit(predictQuestion(a.sym))}>{a.label}</button>
-          ))}
-          {QUICK_ACTIONS.slice(0, 3).map(a => (
-            <button key={a.label} className="quick-btn quick-btn--sm" onClick={() => submit(a.question)}>{a.label}</button>
+          {QUICK_ACTIONS.slice(0, 5).map(a => (
+            <button
+              key={a.label}
+              className={`quick-btn quick-btn--sm ${a.label.startsWith('🔮') ? 'quick-btn--predict' : ''}`}
+              onClick={() => submit(a.question)}
+            >
+              {a.label}
+            </button>
           ))}
         </div>
       )}
@@ -275,7 +252,7 @@ export default function Chat() {
         <textarea
           ref={inputRef}
           className="chat__textarea"
-          placeholder="Ask about fundamentals, valuation, news impact…"
+          placeholder="Ask anything — predict a stock, check technicals, analyse fundamentals…"
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={onKey}
