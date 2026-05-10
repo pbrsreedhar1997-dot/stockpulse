@@ -13,13 +13,16 @@ const SYSTEM_PROMPT = `You are StockPulse AI — an institutional-grade financia
 
 BEHAVIOUR:
 - Be direct and data-driven. Use actual numbers from the RAG RETRIEVAL RESULTS block.
-- Short questions → concise answers (3–6 lines). "Full analysis / predict / breakdown" → comprehensive structured response using the FULL ANALYSIS FORMAT below.
+- Short conversational questions ("can you predict?", "do you predict?", "how does this work?") → answer directly in 2–4 lines. Explain your capability, what models you run, and invite the user to name a stock.
+- "Full analysis / predict / breakdown / analyse" → comprehensive structured response using the FULL ANALYSIS FORMAT below.
 - Frame predictions as probability-weighted scenarios, never as direct advice.
 - **Bold** key figures. Bullets for lists. No filler or padding.
 - For greetings → 1-2 lines only.
 - ALWAYS show the confidence score and its band on every prediction.
 - NEVER present a confidence > 70% when critical risk flags exist.
 - NEVER claim 95% confidence unless ALL mandatory Layer 6 conditions are met.
+- If no stock data is available and the question names a company, acknowledge the stock, explain what you'd analyse, and ask for confirmation of the ticker.
+- If asked "why" about a previous answer, explain the reasoning using the scores from the prior analysis.
 
 WHEN RAG DATA IS PROVIDED:
 - Anchor every claim to the retrieved data (price, scores, indicators)
@@ -1009,7 +1012,40 @@ const NSE_MAP = {
   'irb infra': 'IRB.NS', 'irb': 'IRB.NS',
   'container corp': 'CONCOR.NS', 'concor': 'CONCOR.NS',
   'apl apollo': 'APLAPOLLO.NS',
-  'jindal steel': 'JSWSTEEL.NS',
+  'apollo micro systems': 'APMOSYS.NS', 'apmosys': 'APMOSYS.NS', 'apollo micro': 'APMOSYS.NS',
+  'apollo hospitals': 'APOLLOHOSP.NS', 'apollohosp': 'APOLLOHOSP.NS', 'apollo hospital': 'APOLLOHOSP.NS',
+  'apollo tyres': 'APOLLOTYRE.NS', 'apollotyre': 'APOLLOTYRE.NS', 'apollo tyre': 'APOLLOTYRE.NS',
+  'rvnl': 'RVNL.NS', 'rail vikas': 'RVNL.NS', 'rail vikas nigam': 'RVNL.NS',
+  'irfc': 'IRFC.NS', 'indian railway finance': 'IRFC.NS',
+  'ircon': 'IRCON.NS',
+  'rites': 'RITES.NS',
+  'cochin shipyard': 'COCHINSHIP.NS', 'cslavp': 'COCHINSHIP.NS',
+  'mazagon dock': 'MAZDOCK.NS', 'mdl': 'MAZDOCK.NS', 'mazdock': 'MAZDOCK.NS',
+  'garden reach': 'GRSE.NS', 'grse': 'GRSE.NS',
+  'hbl power': 'HBLPOWER.NS', 'hblpower': 'HBLPOWER.NS',
+  'data patterns': 'DATAPATTNS.NS', 'datapattns': 'DATAPATTNS.NS',
+  'paras defence': 'PARAS.NS',
+  'astra microwave': 'ASTRAMICRO.NS', 'astramicro': 'ASTRAMICRO.NS',
+  'ideaforge': 'IDEAFORGE.NS', 'idea forge': 'IDEAFORGE.NS',
+  'zen technologies': 'ZENTEC.NS', 'zentec': 'ZENTEC.NS',
+  'dcx systems': 'DCXINDIA.NS',
+  'sansera engineering': 'SANSERA.NS',
+  'kaynes technology': 'KAYNES.NS', 'kaynes': 'KAYNES.NS',
+  'latent view': 'LATENTVIEW.NS',
+  'nuvama': 'NUVAMA.NS',
+  'nuvoco': 'NUVOCO.NS',
+  'sapphire foods': 'SAPPHIRE.NS',
+  'campus': 'CAMPUS.NS',
+  'elin electronics': 'ELIN.NS',
+  'jio financial': 'JIOFIN.NS', 'jiofin': 'JIOFIN.NS', 'jio finance': 'JIOFIN.NS',
+  'tata technologies': 'TATATECH.NS', 'tatatech': 'TATATECH.NS',
+  'premier energies': 'PREMIERENE.NS',
+  'waaree energies': 'WAAREE.NS', 'waaree': 'WAAREE.NS',
+  'suzlon': 'SUZLON.NS', 'suzlon energy': 'SUZLON.NS',
+  'inox wind': 'INOXWIND.NS', 'inoxwind': 'INOXWIND.NS',
+  'green power': 'GREENPOWER.NS',
+  'rpower': 'RPOWER.NS', 'reliance power': 'RPOWER.NS',
+  'yes bank': 'YESBANK.NS', 'yesbank': 'YESBANK.NS',
   'nmdc': 'NMDC.NS',
   'hindustan zinc': 'HINDZINC.NS', 'hindzinc': 'HINDZINC.NS',
   'godrej properties': 'GODREJPROP.NS', 'godrejprop': 'GODREJPROP.NS',
@@ -1092,18 +1128,30 @@ function extractCandidateNames(question) {
     candidates.push(m[1] || m[2]);
   }
 
-  // Multi-word sequences: 2–4 words starting with a capital (e.g. "Apollo Micro Systems")
+  // ALL CAPS multi-word company names (e.g. "APOLLO MICRO SYSTEMS LTD", "RAIL VIKAS NIGAM")
+  // Must match BEFORE the mixed-case pattern so it takes priority
+  const capsRe = /\b([A-Z]{3,}(?:\s+[A-Z]{2,}){1,6})\b/g;
+  for (const m of question.matchAll(capsRe)) {
+    const phrase = m[1]
+      .replace(/\s*\b(?:LTD|LIMITED|CORP|CORPORATION|INC|CO|PVT|PRIVATE|LLP|PLC)\.?$/i, '')
+      .trim();
+    if (phrase.length > 4 && !candidates.some(c => c.toLowerCase() === phrase.toLowerCase())) {
+      candidates.push(phrase);
+    }
+  }
+
+  // Mixed-case multi-word sequences: 2–4 words starting with a capital (e.g. "Apollo Micro Systems")
   for (const m of question.matchAll(/\b([A-Z][a-z]{1,}(?:\s+(?:[A-Z][a-z]{1,}|[A-Z]{2,}|&)){1,3})\b/g)) {
-    candidates.push(m[1]);
+    if (!candidates.some(c => c.toLowerCase() === m[1].toLowerCase())) candidates.push(m[1]);
   }
 
   // Single capitalized words > 4 chars that aren't common English words or sentence starters
-  const SKIP = new Set(['Give', 'What', 'How', 'Tell', 'Show', 'Which', 'Does', 'Can', 'Will', 'Is', 'Are', 'Please', 'When', 'Why', 'Analyse', 'Analyze', 'Price', 'Stock', 'Share', 'Market', 'For', 'The', 'This', 'That', 'Their', 'About', 'News', 'Risk', 'Risks', 'Full', 'Latest']);
+  const SKIP = new Set(['Give', 'What', 'How', 'Tell', 'Show', 'Which', 'Does', 'Can', 'Will', 'Is', 'Are', 'Please', 'When', 'Why', 'Analyse', 'Analyze', 'Price', 'Stock', 'Share', 'Market', 'For', 'The', 'This', 'That', 'Their', 'About', 'News', 'Risk', 'Risks', 'Full', 'Latest', 'Predict', 'Give', 'Analyse']);
   for (const m of question.matchAll(/\b([A-Z][a-zA-Z]{3,})\b/g)) {
     if (!SKIP.has(m[1]) && !candidates.some(c => c.includes(m[1]))) candidates.push(m[1]);
   }
 
-  return [...new Set(candidates)].slice(0, 3);
+  return [...new Set(candidates)].slice(0, 4);
 }
 
 // Async symbol resolver: static map first, then Yahoo/NSE search fallback
@@ -1149,11 +1197,28 @@ function responseDepth(question) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// HISTORY TRIMMER  — prevents context overflow for large analysis responses
+// ─────────────────────────────────────────────────────────────────────────────
+function trimHistory(history, maxMessages = 6, maxCharsPerMsg = 1200) {
+  return history
+    .slice(-maxMessages)
+    .map(m => {
+      const content = String(m.content || '');
+      return {
+        role: m.role,
+        content: content.length > maxCharsPerMsg
+          ? content.slice(0, maxCharsPerMsg) + '\n[… response truncated for context …]'
+          : content,
+      };
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // STREAM ENTRY POINTS
 // ─────────────────────────────────────────────────────────────────────────────
 export async function streamChat({ question, symbols = [], history = [], skipRag = false, onDelta, onDone, onError }) {
   if (!groqClient && !ANTHROPIC_API_KEY) {
-    onError('AI not configured — add GROQ_API_KEY to environment variables.');
+    onError('AI not configured — add GROQ_API_KEY or ANTHROPIC_API_KEY to environment variables.');
     return;
   }
   if (!groqClient && ANTHROPIC_API_KEY) {
@@ -1163,8 +1228,6 @@ export async function streamChat({ question, symbols = [], history = [], skipRag
   try {
     const depth = responseDepth(question);
 
-    // skipRag=true: data is already embedded in the prompt (e.g. screener insights)
-    // — skip the expensive symbol extraction + 6-API-call-per-stock RAG pipeline
     let context = '';
     if (!skipRag) {
       const extracted = await resolveSymbolsFromQuestion(question);
@@ -1174,15 +1237,15 @@ export async function streamChat({ question, symbols = [], history = [], skipRag
 
     const messages = [
       { role: 'system', content: SYSTEM_PROMPT + context },
-      ...history.slice(-10).map(m => ({ role: m.role, content: String(m.content) })),
+      ...trimHistory(history),
       { role: 'user', content: question },
     ];
 
     const stream = await groqClient.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       messages,
-      max_tokens: depth === 'deep' ? 3000 : 700,
-      temperature: depth === 'deep' ? 0.3 : 0.55,
+      max_tokens: depth === 'deep' ? 3000 : 800,
+      temperature: depth === 'deep' ? 0.3 : 0.5,
       stream: true,
     });
 
@@ -1192,8 +1255,12 @@ export async function streamChat({ question, symbols = [], history = [], skipRag
     }
     onDone();
   } catch (e) {
-    log.error('Chat (Groq):', e.message);
-    onError(e.message || 'Chat failed');
+    log.error(`Chat (Groq) error: ${e.message} — falling back to Anthropic`);
+    // Fallback: try Anthropic if Groq fails (rate limit, context overflow, etc.)
+    if (ANTHROPIC_API_KEY) {
+      return streamAnthropic({ question, symbols, history, skipRag, onDelta, onDone, onError });
+    }
+    onError(`AI service unavailable. Please try again in a moment.`);
   }
 }
 
@@ -1211,13 +1278,13 @@ async function streamAnthropic({ question, symbols, history, skipRag = false, on
     }
 
     const messages = [
-      ...history.slice(-10).map(m => ({ role: m.role, content: String(m.content) })),
+      ...trimHistory(history),
       { role: 'user', content: question },
     ];
 
     const stream = await client.messages.stream({
       model: 'claude-sonnet-4-6',
-      max_tokens: depth === 'deep' ? 3000 : 700,
+      max_tokens: depth === 'deep' ? 3000 : 800,
       system: SYSTEM_PROMPT + context,
       messages,
     });
@@ -1228,6 +1295,6 @@ async function streamAnthropic({ question, symbols, history, skipRag = false, on
     onDone();
   } catch (e) {
     log.error('Chat (Anthropic):', e.message);
-    onError(e.message || 'Chat failed');
+    onError(`I'm having trouble connecting to the AI service. Please try again in a moment.`);
   }
 }

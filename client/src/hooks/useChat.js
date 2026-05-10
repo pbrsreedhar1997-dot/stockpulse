@@ -56,9 +56,12 @@ export function useChat() {
 
     const unsubError = on('chat_error', (msg) => {
       if (msg.id !== chatIdRef.current) return;
+      const errText = msg.error && msg.error.length < 200
+        ? msg.error
+        : 'The AI service is temporarily unavailable. Please try again in a moment.';
       setMessages(prev => {
         const updated = [...prev];
-        updated[updated.length - 1] = { role: 'assistant', content: 'Sorry, something went wrong. Please try again.' };
+        updated[updated.length - 1] = { role: 'assistant', content: errText };
         return updated;
       });
       setStreaming(false);
