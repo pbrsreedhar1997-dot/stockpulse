@@ -26,7 +26,9 @@ function ScoreBar({ score }) {
   const color = pct >= 70 ? '#10D98C' : pct >= 50 ? '#4B9EFF' : '#E8A838';
   return (
     <div className="sc-score-bar" title={`Score: ${pct}/100`}>
-      <div className="sc-score-bar__fill" style={{ width: `${pct}%`, background: color }} />
+      <div className="sc-score-bar__track">
+        <div className="sc-score-bar__fill" style={{ width: `${pct}%`, background: color }} />
+      </div>
       <span className="sc-score-bar__label">{pct}</span>
     </div>
   );
@@ -145,30 +147,42 @@ function SectorGrid({ stocks, onPick }) {
           return acc;
         }, {});
         const dominantCat = Object.entries(catCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
+        const accentColor = CAT_META[dominantCat]?.color || (sectorUp ? '#10D98C' : '#FF4560');
 
         return (
-          <div key={sector} className="sc-sector-card">
+          <div key={sector} className="sc-sector-card" style={{ '--sector-accent': accentColor }}>
             <div className="sc-sector-card__head">
-              <div>
+              <div className="sc-sector-card__head-left">
                 <div className="sc-sector-card__name">{sector}</div>
                 <div className="sc-sector-card__meta">
-                  {sectorStocks.length} stocks &nbsp;·&nbsp;
+                  <span className="sc-sector-card__count">{sectorStocks.length} stocks</span>
                   {dominantCat && (
-                    <span style={{ color: CAT_META[dominantCat]?.color }}>
-                      {CAT_META[dominantCat]?.label}
+                    <span
+                      className="sc-sector-card__cat-pill"
+                      style={{
+                        background: CAT_META[dominantCat].color + '1A',
+                        color: CAT_META[dominantCat].color,
+                        borderColor: CAT_META[dominantCat].color + '40',
+                      }}
+                    >
+                      {CAT_META[dominantCat].label}
                     </span>
                   )}
                 </div>
               </div>
-              <span className={`sc-sector-card__chg ${sectorUp ? 'up' : 'down'}`}>
-                {sectorUp ? '+' : ''}{avgChg.toFixed(2)}%
-              </span>
+              <div className={`sc-sector-card__chg-block ${sectorUp ? 'up' : 'down'}`}>
+                <span className="sc-sector-card__chg">
+                  {sectorUp ? '+' : ''}{avgChg.toFixed(2)}%
+                </span>
+                <span className="sc-sector-card__chg-label">avg today</span>
+              </div>
             </div>
 
             <div className="sc-sector-card__stocks">
               {top.map(s => {
                 const up = (s.change_pct ?? 0) >= 0;
                 const cat = CAT_META[s.category];
+                const score = Math.min(100, Math.max(0, s.composite_score || 0));
                 return (
                   <div key={s.symbol} className="sc-sector-row" onClick={() => onPick(s)}>
                     <div className="sc-sector-row__left">
@@ -178,14 +192,14 @@ function SectorGrid({ stocks, onPick }) {
                       <span className="sc-sector-row__name">{s.name}</span>
                     </div>
                     <div className="sc-sector-row__right">
+                      <div className="sc-sector-row__score-mini" title={`Score: ${score}`}>
+                        <div
+                          className="sc-sector-row__score-fill"
+                          style={{ width: `${score}%`, background: cat?.color || '#4B9EFF' }}
+                        />
+                      </div>
                       <span className={`sc-sector-row__chg ${up ? 'up' : 'down'}`}>
                         {up ? '+' : ''}{fmt(s.change_pct)}%
-                      </span>
-                      <span
-                        className="sc-sector-row__cat"
-                        style={{ background: cat?.color + '22', color: cat?.color }}
-                      >
-                        {cat?.label}
                       </span>
                     </div>
                   </div>
@@ -194,7 +208,9 @@ function SectorGrid({ stocks, onPick }) {
             </div>
 
             {sectorStocks.length > 3 && (
-              <div className="sc-sector-card__more">+{sectorStocks.length - 3} more</div>
+              <div className="sc-sector-card__more">
+                +{sectorStocks.length - 3} more stocks
+              </div>
             )}
           </div>
         );
@@ -291,7 +307,7 @@ function AllPicksTable({ stocks, onPick }) {
                 <th className="sc-th--num">Score</th>
                 <th className="sc-th--num">Price</th>
                 <th className="sc-th--num">Today</th>
-                <th className="sc-th--num">52W Below</th>
+                <th className="sc-th--num">Discount</th>
                 <th className="sc-th--num">P/E</th>
                 <th className="sc-th--num">Mkt Cap</th>
                 <th>Type</th>
