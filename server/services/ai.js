@@ -7,26 +7,30 @@ import log from '../log.js';
 const groqClient = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RAG SYSTEM PROMPT
+// RAG SYSTEM PROMPT  (Layers 1–8 framework)
 // ─────────────────────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are StockPulse AI — an institutional-grade financial analyst for NSE/BSE equities, Indian macro, and global markets. You have access to live price data, 1-year OHLCV history, fundamentals, news sentiment, and real-time macro context.
+const SYSTEM_PROMPT = `You are StockPulse AI — an institutional-grade financial intelligence RAG system for NSE/BSE equities, Indian macro, and global markets. You execute a 4-model ensemble (Technical 25%, Fundamental 35%, Sentiment 20%, Macro 20%) with a full 8-layer confidence scoring framework.
 
 BEHAVIOUR:
 - Be direct and data-driven. Use actual numbers from the RAG RETRIEVAL RESULTS block.
-- Short questions → concise answers (3–6 lines). "Full analysis / predict / breakdown" → comprehensive structured response.
+- Short questions → concise answers (3–6 lines). "Full analysis / predict / breakdown" → comprehensive structured response using the FULL ANALYSIS FORMAT below.
 - Frame predictions as probability-weighted scenarios, never as direct advice.
 - **Bold** key figures. Bullets for lists. No filler or padding.
 - For greetings → 1-2 lines only.
+- ALWAYS show the confidence score and its band on every prediction.
+- NEVER present a confidence > 70% when critical risk flags exist.
+- NEVER claim 95% confidence unless ALL mandatory Layer 6 conditions are met.
 
 WHEN RAG DATA IS PROVIDED:
 - Anchor every claim to the retrieved data (price, scores, indicators)
-- Cite the ensemble score and its components
+- Cite the ensemble score AND confidence breakdown (Alignment/Quality/Bonus/Risk)
 - Use the macro regime (RISK_ON/RISK_OFF/NEUTRAL) as a modifier
 - Reference peer performance to contextualise relative strength/weakness
 - DCF implied return tells you if the stock is cheap/expensive vs intrinsic value
 
 FULL ANALYSIS FORMAT (for "analyse", "predict", "full", "breakdown" queries):
-  ### 🎯 Ensemble Verdict: [BULLISH/NEUTRAL/BEARISH] — Score [X]/100 — Confidence [Y]%
+
+  ### 🎯 Ensemble Verdict: [BULLISH/NEUTRAL/BEARISH] — Score [X]/100
   **Fundamental** [score]/100 · **Technical** [score]/100 · **Sentiment** [score]/100 · **Macro** [score]/100
 
   ### 📊 Fundamentals
@@ -45,15 +49,38 @@ FULL ANALYSIS FORMAT (for "analyse", "predict", "full", "breakdown" queries):
   [Current price vs DCF fair value, implied return, PEG ratio]
 
   ### 📐 Price Targets (3-scenario)
-  - 🐻 Bear [price]: [trigger]
-  - ⚖️ Base [price]: [thesis]
-  - 🐂 Bull [price]: [catalyst]
+  - 🐻 Bear [price] (-X%): [trigger]
+  - ⚖️  Base [price] (+X%): [thesis]
+  - 🐂 Bull [price] (+X%): [catalyst]
+
+  ### 🎯 Confidence Score: [SCORE]/100 — [BAND]
+  - Alignment Score: [A]/65 | Data Quality: [B]/25 | Bonus: [C]/10 | Risk Deductions: -[D]
+  - ✅ Confirmed: [signals aligned]
+  - ⚠️  Risk flags: [flags or "None detected"]
 
   ### ⚡ Catalysts & Risks
   Top 3 catalysts | Top 3 risks
 
   ### 🔄 Contrarian View
   [Devil's advocate — why the consensus could be wrong]
+
+  ⚠️ DISCLAIMER: Not financial advice. Probabilistic estimates only. Manage your own risk.
+
+CONFIDENCE BAND INTERPRETATION:
+  🟢 90–100%: VERY HIGH — All models aligned, macro favorable, data robust
+  🟡 75–89%:  HIGH — Most models aligned, minor risks
+  🟠 60–74%:  MODERATE — Mixed signals in 1–2 models
+  🔴 40–59%:  LOW — Significant disagreement, elevated risk
+  ⚫  0–39%:  VERY LOW — Models contradicting, poor data
+
+LAYER 6 — 95% CONFIDENCE CONDITIONS (ALL must be true simultaneously):
+  Technical: price > EMA20 > EMA50 > EMA200, RSI 50–70, MACD bullish, volume above avg
+  Fundamental: P/E below sector avg, revenue growth >15% YoY, positive+growing FCF, earnings beat last 3 quarters
+  Sentiment: news score >0.65, analyst consensus BUY/STRONG BUY, institutional ownership increasing
+  Macro: Fed pausing/cutting, CPI cooling, yield curve normal, VIX < 20, GDP positive
+  Data: all data < 6 hours old, 5+ independent sources, zero data gaps
+  Risk-clear: no earnings in 7 days, no Fed meeting in 7 days, short interest < 10%, no litigation/SEC
+  Bonus: minimum 2 confirmed (institutional accumulation, sector ETF aligned, options flow bullish, insider buying >₹1Cr)
 
 MACRO INTERPRETATION:
 - RISK_ON: Positive for cyclicals, banks, mid-caps. Reduce caution signals.
@@ -529,6 +556,112 @@ function scoreFundamentals(fin, quote) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// LAYER 5: CONFIDENCE SCORING ENGINE  (Section A/B/C/D)
+// ─────────────────────────────────────────────────────────────────────────────
+function computeConfidenceScore({
+  technicalScore, fundamentalScore, sentimentScore, macroScore,
+  dataAgeHours = 24, sourceCount = 3, indicatorCount = 6, apiSuccessRate = 0.8,
+  vix = null, revenueDecline = false, negativeFCF = false,
+  shortInterest = null, yieldCurveInverted = false,
+  institutionalAccumulation = false, sectorETFAligned = false, macroTailwindAligned = false,
+}) {
+  // ── Section A: Signal Alignment (max 65) ────────────────────────────────────
+  const bullish = (s) => s >= 60;
+  const bearish = (s) => s <= 40;
+  const tB = bullish(technicalScore),  tBr = bearish(technicalScore);
+  const fB = bullish(fundamentalScore),fBr = bearish(fundamentalScore);
+  const sB = bullish(sentimentScore),  sBr = bearish(sentimentScore);
+  const mB = bullish(macroScore),      mBr = bearish(macroScore);
+
+  let A = 0;
+  // Technical ↔ Fundamental
+  if (tB && fB)       A += 15;
+  else if ((tB && fBr) || (tBr && fB)) A -= 10;
+  else                A += 5;
+  // Technical ↔ Sentiment
+  if (tB && sB)       A += 15;
+  else if ((tB && sBr) || (tBr && sB)) A -= 10;
+  else                A += 5;
+  // Fundamental ↔ Sentiment
+  if (fB && sB)       A += 15;
+  else if ((fB && sBr) || (fBr && sB)) A -= 10;
+  else                A += 5;
+  // All 3 ↔ Macro
+  const allAligned = tB && fB && sB;
+  if (mB && allAligned)      A += 20;
+  else if (!mBr && allAligned) A += 10;
+  else if (mBr)              A -= 15;
+  else                       A += 5;
+
+  // ── Section B: Data Quality (max 25) ────────────────────────────────────────
+  let B = 0;
+  if (dataAgeHours < 1)       B += 5;
+  else if (dataAgeHours < 24) B += 3;
+  if (dataAgeHours > 168)     B -= 5; // > 7 days old
+
+  if (sourceCount >= 5)       B += 5;
+  else if (sourceCount >= 3)  B += 3;
+
+  // Pattern reliability: no hit-rate tracking yet, give moderate score
+  B += 3;
+
+  if (indicatorCount >= 8)    B += 5;
+  else if (indicatorCount >= 5) B += 3;
+
+  if (apiSuccessRate >= 0.9)  B += 5;
+  else if (apiSuccessRate >= 0.6) B += 2;
+  else                        B -= 5;
+
+  // ── Section C: Bonus (max 10) ─────────────────────────────────────────────
+  let C = 0;
+  if (institutionalAccumulation) C += 3;
+  if (sectorETFAligned)          C += 2;
+  if (macroTailwindAligned)      C += 2;
+
+  // ── Section D: Risk Deductions ────────────────────────────────────────────
+  let D = 0;
+  if (vix != null) {
+    if (vix > 35)      D += 10;
+    else if (vix > 25) D += 5;
+  }
+  if (yieldCurveInverted)          D += 3;
+  if (shortInterest != null && shortInterest > 20) D += 3;
+  if (revenueDecline)              D += 4;
+  if (negativeFCF)                 D += 3;
+
+  const score = Math.max(0, Math.min(100, A + B + C - D));
+  const band  = score >= 90 ? '🟢 VERY HIGH CONFIDENCE'
+              : score >= 75 ? '🟡 HIGH CONFIDENCE'
+              : score >= 60 ? '🟠 MODERATE CONFIDENCE'
+              : score >= 40 ? '🔴 LOW CONFIDENCE'
+              :               '⚫ VERY LOW CONFIDENCE';
+
+  return { score, band, A: Math.max(0, A), B: Math.max(0, B), C, D };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LAYER 8: STORE PREDICTION  (non-blocking, best-effort)
+// ─────────────────────────────────────────────────────────────────────────────
+async function storePrediction(data) {
+  try {
+    const { query: dbQuery } = await import('../db.js');
+    await dbQuery(`
+      INSERT INTO predictions_tracking
+        (ticker, confidence_score, alignment_score, quality_score, bonus_points,
+         risk_deductions, predicted_at, price_at_signal, bear_target, base_target,
+         bull_target, technical_score, fundamental_score, sentiment_score,
+         macro_score, ensemble_score, ensemble_signal)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+      ON CONFLICT DO NOTHING`,
+      [data.ticker, data.confidence, data.A, data.B, data.C, data.D,
+       data.predictedAt, data.price, data.bear, data.base, data.bull,
+       data.tScore, data.fScore, data.sScore, data.mScore,
+       data.ensemble, data.direction]
+    );
+  } catch (_) { /* non-blocking — DB may not be available */ }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RAG CONTEXT BUILDER  — 4-model ensemble + macro + advanced technicals + DCF
 // ─────────────────────────────────────────────────────────────────────────────
 async function buildRagContext(symbols) {
@@ -603,13 +736,33 @@ async function buildRagContext(symbols) {
       const ensemble  = Math.round(fScore * 0.30 + tScore * 0.30 + sScore * 0.20 + mScore * 0.20);
       const direction = ensemble >= 63 ? 'BULLISH' : ensemble <= 37 ? 'BEARISH' : 'NEUTRAL';
 
-      // Confidence based on data completeness + conviction gap from 50
-      const dataCompleteness = [
-        !!q?.price, !!fin?.pe_ratio, !!(hist?.length > 60),
-        allNews.length > 2, !!macro,
-      ].filter(Boolean).length / 5;
-      const conviction   = Math.abs(ensemble - 50) / 50;
-      const confidence   = Math.round(dataCompleteness * 60 + conviction * 40);
+      // ── Layer 5: Full confidence scoring engine (Section A/B/C/D) ────────────
+      const vixVal = macro?.indicators?.find(i => i.sym === '^INDIAVIX')?.price ?? null;
+      const apiSuccessRate = [qR, pR, fR, nR, hR, enR].filter(r => r.status === 'fulfilled').length / 6;
+      const sourceCount    = 2 + (allNews.length > 0 ? 2 : 0) + (macro ? 1 : 0) + (wb ? 1 : 0);
+      const indicatorCount = [
+        technicals?.ma_cross, technicals?.rsi, technicals?.macd,
+        technicals?.bollinger_pct_b, technicals?.volume_trend,
+        advTech?.stochastic, advTech?.obv_trend, advTech?.ichimoku,
+        advTech?.price_vs_vwap, dcf?.fair_value,
+      ].filter(Boolean).length;
+
+      const revenueDecline = (fin?.revenue_growth ?? 0) < 0;
+      const negativeFCF    = false; // FCF not directly available from Yahoo
+      const sectorETFAligned = peers?.avg_sector_change_pct != null
+        ? (direction === 'BULLISH' ? peers.avg_sector_change_pct > 0 : peers.avg_sector_change_pct < 0)
+        : false;
+      const macroTailwindAligned = direction === 'BULLISH' ? (macro?.score ?? 50) > 60
+                                                           : (macro?.score ?? 50) < 40;
+
+      const confResult = computeConfidenceScore({
+        technicalScore: tScore, fundamentalScore: fScore,
+        sentimentScore: sScore, macroScore: mScore,
+        dataAgeHours: 1, // data just fetched
+        sourceCount, indicatorCount, apiSuccessRate,
+        vix: vixVal, revenueDecline, negativeFCF,
+        sectorETFAligned, macroTailwindAligned,
+      });
 
       // ── 52W position ─────────────────────────────────────────────────────────
       const w52h = q.week52_high ?? fin?.week52_high;
@@ -624,11 +777,19 @@ async function buildRagContext(symbols) {
       const bullTarget = q.price + atr * 12;
       const baseTarget = dcf?.raw?.dcfValue ?? (q.price * (1 + (ensemble - 50) / 200));
 
+      // ── Layer 8: Store prediction (non-blocking) ─────────────────────────────
+      storePrediction({
+        ticker, confidence: confResult.score, A: confResult.A, B: confResult.B,
+        C: confResult.C, D: confResult.D, predictedAt: Math.floor(Date.now() / 1000),
+        price: q.price, bear: bearTarget, base: baseTarget, bull: bullTarget,
+        tScore, fScore, sScore, mScore, ensemble, direction,
+      });
+
       // ── Context document ─────────────────────────────────────────────────────
       const doc = `
 ━━━ RETRIEVED CONTEXT: ${ticker} (${sym}) ━━━
-[Sources: Yahoo Finance · ET/Moneycontrol/BS RSS · World Bank API · Macro indices]
-[Coverage: Live quote · 1Y OHLCV (${hist?.length ?? 0} bars) · ${allNews.length} news articles · Macro data]
+[Sources: Yahoo Finance · ET/Moneycontrol/BS RSS · World Bank API · Macro indices | Fetched: just now]
+[Coverage: Live quote · 1Y OHLCV (${hist?.length ?? 0} bars) · ${allNews.length} news articles · Macro data | APIs: ${Math.round(apiSuccessRate * 100)}% success]
 
 ── LIVE QUOTE ───────────────────────────────────────────
 Company:    ${p?.name || sym}
@@ -662,7 +823,7 @@ ${advTech ? `  ATR(14):          ${advTech.atr}
 ── NEWS & SENTIMENT (score: ${sScore}/100 — ${sentiment.label}) ───
   Articles: ${sentiment.article_count ?? 0} total (Yahoo Finance + ET + Moneycontrol + Business Standard)
 ${sentiment.scored?.length ? sentiment.scored.map(a =>
-  `  [${a.sentiment.padEnd(8)} ${a.confidence}% | ${a.decay_weight}w] [${(a.source || 'Yahoo').slice(0, 8)}] ${a.title?.slice(0, 80) ?? ''}`
+  `  [${a.sentiment.padEnd(8)} ${a.confidence}% | ${a.decay_weight}w] ${a.title?.slice(0, 80) ?? ''}`
 ).join('\n') : '  No recent news'}
 
 ── VALUATION & DCF ──────────────────────────────────────
@@ -686,20 +847,31 @@ ${macro?.indicators?.filter(i => i.price).map(i =>
 ${macro?.notes?.length ? '  Signals: ' + macro.notes.join(' | ') : ''}
 ${wb ? Object.entries(wb).map(([k, v]) => `  ${k}: ${v.value}% (${v.year})`).join('\n') : ''}
 
-── 4-MODEL ENSEMBLE PREDICTION ──────────────────────────
+── 4-MODEL ENSEMBLE (Layer 4) ───────────────────────────
   Fundamental (30%): ${fScore} × 0.30 = ${Math.round(fScore * 0.30)}
   Technical   (30%): ${tScore} × 0.30 = ${Math.round(tScore * 0.30)}
   Sentiment   (20%): ${sScore} × 0.20 = ${Math.round(sScore * 0.20)}
   Macro       (20%): ${mScore} × 0.20 = ${Math.round(mScore * 0.20)}
   ────────────────────────────────────────────────────────
   ENSEMBLE SCORE:    ${ensemble}/100 → ${direction}
-  CONFIDENCE:        ${confidence}% (data: ${Math.round(dataCompleteness * 100)}% complete · conviction: ${Math.round(conviction * 100)}%)
-  ${confidence < 40 ? '⚠ LOW CONFIDENCE — missing data; predictions directional only' : ''}
+
+── CONFIDENCE SCORE (Layer 5) ───────────────────────────
+  ${confResult.band}: ${confResult.score}/100
+  Alignment Score:    ${confResult.A}/65
+  Data Quality Score: ${confResult.B}/25
+  Bonus Points:       ${confResult.C}/10
+  Risk Deductions:   -${confResult.D}
+  ${confResult.score < 40 ? '⚠ VERY LOW CONFIDENCE — predictions directional only' : ''}
+  Risk flags: ${[
+    revenueDecline ? 'Revenue declining' : '',
+    vixVal > 20 ? `High VIX ${vixVal?.toFixed(1)}` : '',
+    vixVal > 35 ? 'EXTREME FEAR' : '',
+  ].filter(Boolean).join(' | ') || 'None detected'}
 
 ── SCENARIO PRICE TARGETS ───────────────────────────────
-  Bear:  ${cur}${bearTarget.toFixed(2)} (ATR-based downside)
-  Base:  ${cur}${baseTarget.toFixed(2)} (DCF / trend projection)
-  Bull:  ${cur}${bullTarget.toFixed(2)} (ATR-based upside)
+  Bear:  ${cur}${bearTarget.toFixed(2)} (${(((bearTarget/q.price)-1)*100).toFixed(1)}%) — ATR-based downside
+  Base:  ${cur}${baseTarget.toFixed(2)} (${(((baseTarget/q.price)-1)*100).toFixed(1)}%) — DCF / trend projection
+  Bull:  ${cur}${bullTarget.toFixed(2)} (+${(((bullTarget/q.price)-1)*100).toFixed(1)}%) — ATR-based upside
 `.trim();
 
       sections.push(doc);

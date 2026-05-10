@@ -138,6 +138,35 @@ export async function initDb() {
         created_at   BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
       )`);
     await query(`CREATE INDEX IF NOT EXISTS idx_screener_ai_ts ON screener_ai_analysis(created_at DESC)`);
+    // ── Prediction accuracy tracking (Layer 8) ───────────────────────────────
+    await query(`
+      CREATE TABLE IF NOT EXISTS predictions_tracking (
+        id                SERIAL PRIMARY KEY,
+        ticker            VARCHAR(20) NOT NULL,
+        confidence_score  INTEGER NOT NULL,
+        alignment_score   INTEGER,
+        quality_score     INTEGER,
+        bonus_points      INTEGER,
+        risk_deductions   INTEGER,
+        predicted_at      BIGINT NOT NULL,
+        price_at_signal   NUMERIC(15,4),
+        bear_target       NUMERIC(15,4),
+        base_target       NUMERIC(15,4),
+        bull_target       NUMERIC(15,4),
+        horizon_days      INTEGER DEFAULT 90,
+        technical_score   INTEGER,
+        fundamental_score INTEGER,
+        sentiment_score   INTEGER,
+        macro_score       INTEGER,
+        ensemble_score    INTEGER,
+        ensemble_signal   VARCHAR(20),
+        actual_price      NUMERIC(15,4),
+        was_correct       BOOLEAN,
+        deviation_pct     NUMERIC(8,2),
+        resolved_at       BIGINT
+      )`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_pred_ticker ON predictions_tracking(ticker)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_pred_at    ON predictions_tracking(predicted_at DESC)`);
     log.info('PostgreSQL schema ready');
   } catch (err) {
     log.error('DB init failed:', err.message);
