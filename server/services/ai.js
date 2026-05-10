@@ -1193,13 +1193,22 @@ const DEEP_KEYWORDS = [
 
 function responseDepth(question) {
   const q = question.toLowerCase();
+  const wordCount = question.trim().split(/\s+/).length;
+  // Short questions (≤5 words) are always concise — covers "do you predict?", "why?", "can you" etc.
+  if (wordCount <= 5) return 'concise';
   return DEEP_KEYWORDS.some(k => q.includes(k)) ? 'deep' : 'concise';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HISTORY TRIMMER  — prevents context overflow for large analysis responses
+// MODEL CONSTANTS  — different limits on Groq free tier
 // ─────────────────────────────────────────────────────────────────────────────
-function trimHistory(history, maxMessages = 6, maxCharsPerMsg = 1200) {
+const GROQ_MODEL_FAST  = 'llama-3.1-8b-instant';     // 500K tokens/day — short answers
+const GROQ_MODEL_SMART = 'llama-3.3-70b-versatile';   // 100K tokens/day — deep analysis
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HISTORY TRIMMER  — prevents context overflow from large analysis responses
+// ─────────────────────────────────────────────────────────────────────────────
+function trimHistory(history, maxMessages = 6, maxCharsPerMsg = 1000) {
   return history
     .slice(-maxMessages)
     .map(m => {
@@ -1207,10 +1216,32 @@ function trimHistory(history, maxMessages = 6, maxCharsPerMsg = 1200) {
       return {
         role: m.role,
         content: content.length > maxCharsPerMsg
-          ? content.slice(0, maxCharsPerMsg) + '\n[… response truncated for context …]'
+          ? content.slice(0, maxCharsPerMsg) + '\n[… truncated …]'
           : content,
       };
     });
+}
+
+// Parse Groq rate-limit retry time from error message
+function parseGroqWait(err) {
+  try {
+    const msg = err?.error?.error?.message || err?.message || '';
+    const m = msg.match(/try again in\s+(\d+m[\d.]+s|[\d.]+s|\d+m)/i);
+    return m ? m[1] : null;
+  } catch { return null; }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GROQ STREAM HELPER  — shared by both models
+// ─────────────────────────────────────────────────────────────────────────────
+async function groqStream(model, messages, maxTokens, temperature, onDelta) {
+  const stream = await groqClient.chat.completions.create({
+    model, messages, max_tokens: maxTokens, temperature, stream: true,
+  });
+  for await (const chunk of stream) {
+    const text = chunk.choices[0]?.delta?.content || '';
+    if (text) onDelta(text);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1225,68 +1256,95 @@ export async function streamChat({ question, symbols = [], history = [], skipRag
     return streamAnthropic({ question, symbols, history, skipRag, onDelta, onDone, onError });
   }
 
-  try {
-    const depth = responseDepth(question);
+  const depth = responseDepth(question);
 
-    let context = '';
-    if (!skipRag) {
+  // Build RAG context
+  let context = '';
+  if (!skipRag) {
+    try {
       const extracted = await resolveSymbolsFromQuestion(question);
       const symsToUse = extracted.length ? extracted : symbols;
       context = symsToUse.length ? await buildRagContext(symsToUse) : '';
+    } catch (ragErr) {
+      log.warn('RAG context build failed:', ragErr.message);
     }
+  }
 
-    const messages = [
-      { role: 'system', content: SYSTEM_PROMPT + context },
-      ...trimHistory(history),
-      { role: 'user', content: question },
-    ];
+  const trimmed = trimHistory(history);
+  const messages = [
+    { role: 'system', content: SYSTEM_PROMPT + context },
+    ...trimmed,
+    { role: 'user', content: question },
+  ];
 
-    const stream = await groqClient.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      messages,
-      max_tokens: depth === 'deep' ? 3000 : 800,
-      temperature: depth === 'deep' ? 0.3 : 0.5,
-      stream: true,
-    });
+  // Model selection: use fast 8b model for concise questions (saves daily token budget)
+  const primaryModel = depth === 'deep' ? GROQ_MODEL_SMART : GROQ_MODEL_FAST;
+  const fallbackModel = depth === 'deep' ? GROQ_MODEL_FAST : null;
+  const maxTokens = depth === 'deep' ? 2500 : 700;
 
-    for await (const chunk of stream) {
-      const text = chunk.choices[0]?.delta?.content || '';
-      if (text) onDelta(text);
-    }
-    onDone();
+  try {
+    await groqStream(primaryModel, messages, maxTokens, depth === 'deep' ? 0.3 : 0.5, onDelta);
+    return onDone();
   } catch (e) {
-    log.error(`Chat (Groq) error: ${e.message} — falling back to Anthropic`);
-    // Fallback: try Anthropic if Groq fails (rate limit, context overflow, etc.)
-    if (ANTHROPIC_API_KEY) {
-      return streamAnthropic({ question, symbols, history, skipRag, onDelta, onDone, onError });
+    log.warn(`Groq ${primaryModel} failed (${e.status}): ${e.message}`);
+
+    // 429 rate limit on smart model → retry with fast model
+    if (e.status === 429 && fallbackModel) {
+      try {
+        await groqStream(fallbackModel, messages, Math.min(maxTokens, 1200), 0.4, onDelta);
+        return onDone();
+      } catch (e2) {
+        log.warn(`Groq fallback ${fallbackModel} also failed (${e2.status})`);
+      }
     }
-    onError(`AI service unavailable. Please try again in a moment.`);
+
+    // 429 on any model → try Anthropic → show meaningful wait time
+    if (e.status === 429) {
+      if (ANTHROPIC_API_KEY) {
+        return streamAnthropic({ question, symbols: [], history, skipRag: true, context, onDelta, onDone, onError });
+      }
+      const wait = parseGroqWait(e);
+      const msg = wait
+        ? `⏳ Daily AI token limit reached (Groq free tier: 100K tokens/day). Resets in **${wait}**. To get unlimited access, upgrade your Groq plan at console.groq.com, or add an ANTHROPIC_API_KEY.`
+        : `⏳ AI service is temporarily rate-limited. Please try again in a few minutes.`;
+      onDelta(msg);
+      return onDone();
+    }
+
+    // Other error → try Anthropic
+    if (ANTHROPIC_API_KEY) {
+      return streamAnthropic({ question, symbols: [], history, skipRag: true, context, onDelta, onDone, onError });
+    }
+
+    log.error('Chat (Groq) unrecoverable:', e.message);
+    onDelta(`I encountered an error: ${e.message}. Please try again.`);
+    onDone();
   }
 }
 
-async function streamAnthropic({ question, symbols, history, skipRag = false, onDelta, onDone, onError }) {
+async function streamAnthropic({ question, symbols, history, skipRag = false, context = '', onDelta, onDone, onError }) {
   try {
     const { default: Anthropic } = await import('@anthropic-ai/sdk');
     const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
     const depth  = responseDepth(question);
 
-    let context = '';
-    if (!skipRag) {
-      const extracted = await resolveSymbolsFromQuestion(question);
-      const symsToUse = extracted.length ? extracted : symbols;
-      context = symsToUse.length ? await buildRagContext(symsToUse) : '';
+    let ragContext = context;
+    if (!skipRag && !ragContext) {
+      try {
+        const extracted = await resolveSymbolsFromQuestion(question);
+        const symsToUse = extracted.length ? extracted : symbols;
+        ragContext = symsToUse.length ? await buildRagContext(symsToUse) : '';
+      } catch {}
     }
-
-    const messages = [
-      ...trimHistory(history),
-      { role: 'user', content: question },
-    ];
 
     const stream = await client.messages.stream({
       model: 'claude-sonnet-4-6',
-      max_tokens: depth === 'deep' ? 3000 : 800,
-      system: SYSTEM_PROMPT + context,
-      messages,
+      max_tokens: depth === 'deep' ? 2500 : 700,
+      system: SYSTEM_PROMPT + ragContext,
+      messages: [
+        ...trimHistory(history),
+        { role: 'user', content: question },
+      ],
     });
 
     for await (const event of stream) {
@@ -1295,6 +1353,7 @@ async function streamAnthropic({ question, symbols, history, skipRag = false, on
     onDone();
   } catch (e) {
     log.error('Chat (Anthropic):', e.message);
-    onError(`I'm having trouble connecting to the AI service. Please try again in a moment.`);
+    onDelta(`AI service error: ${e.message}. Please try again in a moment.`);
+    onDone();
   }
 }
