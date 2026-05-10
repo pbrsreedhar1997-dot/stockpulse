@@ -629,5 +629,3 @@ export async function refreshScreener() {
   running = false;
 }
 
-// Re-export for use in the route
-export { loadPicksFromDB };
