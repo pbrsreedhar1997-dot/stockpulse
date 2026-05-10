@@ -122,8 +122,83 @@ function AIInsightsPanel({ stocks }) {
   );
 }
 
+// ─── Sector detail (drill-down) ──────────────────────────────────────────────
+function SectorDetail({ sector, stocks, accentColor, onBack, onPick }) {
+  const sorted = [...stocks].sort((a, b) => (b.composite_score || 0) - (a.composite_score || 0));
+  const avgChg = stocks
+    .filter(s => s.change_pct != null)
+    .reduce((a, s, _, arr) => a + s.change_pct / arr.length, 0);
+  const sectorUp = avgChg >= 0;
+
+  return (
+    <div className="sc-sector-detail">
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      <div className="sc-sector-detail__header" style={{ '--sector-accent': accentColor }}>
+        <button className="sc-sector-detail__back" onClick={onBack}>
+          ← Sectors
+        </button>
+        <div className="sc-sector-detail__info">
+          <span className="sc-sector-detail__name">{sector}</span>
+          <span className="sc-sector-detail__count">{stocks.length} stocks</span>
+        </div>
+        <span className={`sc-sector-detail__avg ${sectorUp ? 'up' : 'down'}`}>
+          {sectorUp ? '+' : ''}{avgChg.toFixed(2)}% avg
+        </span>
+      </div>
+
+      {/* ── Stock list ─────────────────────────────────────────────────────── */}
+      <div className="sc-sector-detail__list">
+        {sorted.map((s, i) => {
+          const up = (s.change_pct ?? 0) >= 0;
+          const cat = CAT_META[s.category];
+          const score = Math.min(100, Math.max(0, s.composite_score || 0));
+          return (
+            <div key={s.symbol} className="sc-sector-detail__row" onClick={() => onPick(s)}>
+              <span className="sc-sector-detail__rank">#{i + 1}</span>
+
+              <div className="sc-sector-detail__left">
+                <span className="sc-sector-detail__sym">
+                  {s.symbol.replace(/\.(NS|BO)$/i, '')}
+                </span>
+                <span className="sc-sector-detail__company">{s.name}</span>
+              </div>
+
+              <div className="sc-sector-detail__score">
+                <div className="sc-sector-detail__score-track">
+                  <div
+                    className="sc-sector-detail__score-fill"
+                    style={{ width: `${score}%`, background: cat?.color || '#4B9EFF' }}
+                  />
+                </div>
+                <span className="sc-sector-detail__score-val">{score}</span>
+              </div>
+
+              {cat && (
+                <span
+                  className="sc-sector-detail__cat"
+                  style={{ background: cat.color + '1A', color: cat.color, borderColor: cat.color + '40' }}
+                >
+                  {cat.label}
+                </span>
+              )}
+
+              <span className="sc-sector-detail__price">₹{fmt(s.price)}</span>
+              <span className={`sc-sector-detail__chg ${up ? 'up' : 'down'}`}>
+                {up ? '+' : ''}{fmt(s.change_pct)}%
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Sector insight cards ─────────────────────────────────────────────────────
 function SectorGrid({ stocks, onPick }) {
+  const [activeSector, setActiveSector] = useState(null);
+  const [accentColor,  setAccentColor]  = useState('#4B9EFF');
+
   const grouped = {};
   for (const s of stocks) {
     const key = s.sector || s.theme || 'Other';
@@ -133,6 +208,24 @@ function SectorGrid({ stocks, onPick }) {
 
   const sectorList = Object.entries(grouped)
     .sort((a, b) => b[1].length - a[1].length);
+
+  // Drill into a sector
+  const openSector = (sector, color) => {
+    setActiveSector(sector);
+    setAccentColor(color);
+  };
+
+  if (activeSector) {
+    return (
+      <SectorDetail
+        sector={activeSector}
+        stocks={grouped[activeSector] || []}
+        accentColor={accentColor}
+        onBack={() => setActiveSector(null)}
+        onPick={onPick}
+      />
+    );
+  }
 
   return (
     <div className="sc-sector-grid">
@@ -147,10 +240,15 @@ function SectorGrid({ stocks, onPick }) {
           return acc;
         }, {});
         const dominantCat = Object.entries(catCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
-        const accentColor = CAT_META[dominantCat]?.color || (sectorUp ? '#10D98C' : '#FF4560');
+        const color = CAT_META[dominantCat]?.color || (sectorUp ? '#10D98C' : '#FF4560');
 
         return (
-          <div key={sector} className="sc-sector-card" style={{ '--sector-accent': accentColor }}>
+          <div
+            key={sector}
+            className="sc-sector-card"
+            style={{ '--sector-accent': color }}
+            onClick={() => openSector(sector, color)}
+          >
             <div className="sc-sector-card__head">
               <div className="sc-sector-card__head-left">
                 <div className="sc-sector-card__name">{sector}</div>
@@ -178,13 +276,14 @@ function SectorGrid({ stocks, onPick }) {
               </div>
             </div>
 
+            {/* Top 3 preview — non-interactive, clicking card drills in */}
             <div className="sc-sector-card__stocks">
               {top.map(s => {
                 const up = (s.change_pct ?? 0) >= 0;
                 const cat = CAT_META[s.category];
                 const score = Math.min(100, Math.max(0, s.composite_score || 0));
                 return (
-                  <div key={s.symbol} className="sc-sector-row" onClick={() => onPick(s)}>
+                  <div key={s.symbol} className="sc-sector-row">
                     <div className="sc-sector-row__left">
                       <span className="sc-sector-row__sym">
                         {s.symbol.replace(/\.(NS|BO)$/i, '')}
@@ -207,11 +306,9 @@ function SectorGrid({ stocks, onPick }) {
               })}
             </div>
 
-            {sectorStocks.length > 3 && (
-              <div className="sc-sector-card__more">
-                +{sectorStocks.length - 3} more stocks
-              </div>
-            )}
+            <div className="sc-sector-card__more">
+              View all {sectorStocks.length} stocks →
+            </div>
           </div>
         );
       })}

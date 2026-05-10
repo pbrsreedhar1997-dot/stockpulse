@@ -439,6 +439,7 @@
   border-radius: var(--radius);
   overflow: hidden;
   transition: border-color 0.18s, box-shadow 0.18s, transform 0.15s;
+  cursor: pointer;
 
   &:hover {
     border-color: var(--border2);
@@ -603,6 +604,211 @@
   }
 
   &__cat { display: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/* SECTOR DETAIL (drill-down)                                                  */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+.sc-sector-detail {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: fadeIn 0.18s ease;
+
+  &__header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(135deg, var(--card2) 0%, var(--card) 80%);
+    border-left: 3px solid var(--sector-accent, var(--border2));
+    flex-shrink: 0;
+  }
+
+  &__back {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text2);
+    background: var(--card);
+    border: 1px solid var(--border2);
+    white-space: nowrap;
+    transition: all 0.15s;
+    flex-shrink: 0;
+
+    &:hover {
+      color: var(--text);
+      border-color: var(--accent);
+      background: var(--accent-dim);
+    }
+  }
+
+  &__info {
+    flex: 1;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  &__name {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__count {
+    font-size: 12px;
+    color: var(--text3);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  &__avg {
+    font-size: 13px;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    white-space: nowrap;
+    flex-shrink: 0;
+    &.up   { color: var(--up); }
+    &.down { color: var(--down); }
+  }
+
+  &__list {
+    flex: 1;
+    overflow-y: auto;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin: 12px 0 0;
+
+    &::-webkit-scrollbar { width: 6px; }
+    &::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+  }
+
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 16px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+
+    &:last-child { border-bottom: none; }
+    &:hover { background: rgba(99, 130, 195, 0.05); }
+  }
+
+  &__rank {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text3);
+    font-family: 'JetBrains Mono', monospace;
+    min-width: 24px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  &__left {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  &__sym {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+  }
+
+  &__company {
+    font-size: 11px;
+    color: var(--text2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 220px;
+  }
+
+  &__score {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    width: 90px;
+  }
+
+  &__score-track {
+    flex: 1;
+    height: 5px;
+    background: var(--border2);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  &__score-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.4s ease;
+  }
+
+  &__score-val {
+    font-size: 11px;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text2);
+    min-width: 22px;
+    text-align: right;
+  }
+
+  &__cat {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 10px;
+    border: 1px solid;
+    white-space: nowrap;
+    letter-spacing: 0.2px;
+    flex-shrink: 0;
+  }
+
+  &__price {
+    font-size: 12.5px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text);
+    white-space: nowrap;
+    flex-shrink: 0;
+    min-width: 70px;
+    text-align: right;
+  }
+
+  &__chg {
+    font-size: 12px;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    white-space: nowrap;
+    flex-shrink: 0;
+    min-width: 60px;
+    text-align: right;
+    &.up   { color: var(--up); }
+    &.down { color: var(--down); }
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
@@ -917,6 +1123,26 @@
     &__name { max-width: none; font-size: 10px; }
     &__score-mini { display: none; }
     &__chg { min-width: 48px; font-size: 11px; }
+  }
+
+  /* ── Sector detail ────────────────────────────────────────────────────── */
+  .sc-sector-detail {
+    flex: none;
+    overflow: visible;
+
+    &__header { padding: 10px 12px; gap: 8px; }
+    &__back   { padding: 4px 10px; font-size: 11px; }
+    &__name   { font-size: 13px; }
+    &__count  { display: none; }
+    &__avg    { font-size: 12px; }
+    &__list   { flex: none; height: auto; overflow-y: visible; margin: 8px 0 0; }
+    &__row    { padding: 10px 12px; gap: 8px; }
+    &__rank   { display: none; }
+    &__company { max-width: 140px; }
+    &__score  { width: 60px; }
+    &__cat    { display: none; }
+    &__price  { min-width: 56px; font-size: 11.5px; }
+    &__chg    { min-width: 48px; font-size: 11px; }
   }
 
   /* ── AI panel ─────────────────────────────────────────────────────────── */
