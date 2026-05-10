@@ -28,6 +28,7 @@ const initialState = {
   financials: {},
   portfolio: null,
   view: 'stock',
+  navBack: null,   // { view, label, sector? } — "back" destination when on stock page
   chatOpen: false,
   authModalOpen: false,
   toasts: [],
@@ -78,8 +79,11 @@ function reducer(state, action) {
       return { ...state, profiles: { ...state.profiles, [action.payload.symbol]: action.payload.data } };
     case 'SET_FINANCIALS':
       return { ...state, financials: { ...state.financials, [action.payload.symbol]: action.payload.data } };
+    case 'SET_NAV_BACK':
+      return { ...state, navBack: action.payload };
     case 'SET_VIEW':
-      return { ...state, view: action.payload };
+      // Leaving stock view clears the back-navigation context
+      return { ...state, view: action.payload, navBack: action.payload === 'stock' ? state.navBack : null };
     case 'TOGGLE_CHAT':
       return { ...state, chatOpen: !state.chatOpen };
     case 'SET_CHAT_OPEN':

@@ -26,7 +26,7 @@ export default function StockDetail({ symbol }) {
     () => sessionStorage.getItem(TAB_KEY(symbol)) || 'overview'
   );
   const { fetchQuote, fetchProfile, fetchFinancials } = useStocks();
-  const { state } = useAppContext();
+  const { state, dispatch } = useAppContext();
 
   // When symbol changes, restore saved tab (default to overview for new symbols)
   useEffect(() => {
@@ -45,8 +45,30 @@ export default function StockDetail({ symbol }) {
     if (!state.financials[symbol]) fetchFinancials(symbol);
   }, [state.backendOk, symbol]);
 
+  const navBack = state.navBack;
+
   return (
     <div className="stock-detail">
+      {/* ── Back breadcrumb (set when navigating from Value Picks / Sector Insights) */}
+      {navBack?.view === 'screener' && (
+        <div className="sd-breadcrumb">
+          <button
+            className="sd-breadcrumb__btn"
+            onClick={() => dispatch({ type: 'SET_VIEW', payload: 'screener' })}
+          >
+            ←
+            {navBack.sector
+              ? <><span className="sd-breadcrumb__section"> Value Picks</span>
+                  <span className="sd-breadcrumb__sep"> / </span>
+                  <span className="sd-breadcrumb__section">Sector Insights</span>
+                  <span className="sd-breadcrumb__sep"> / </span>
+                  <span className="sd-breadcrumb__leaf">{navBack.sector}</span></>
+              : <span className="sd-breadcrumb__section"> Value Picks</span>
+            }
+          </button>
+        </div>
+      )}
+
       <StockHeader symbol={symbol} />
 
       <div className="tab-bar">

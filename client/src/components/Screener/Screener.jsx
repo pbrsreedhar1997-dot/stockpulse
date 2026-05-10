@@ -122,9 +122,50 @@ function AIInsightsPanel({ stocks }) {
   );
 }
 
+// ─── Sector skeleton loader ───────────────────────────────────────────────────
+function SectorSkeleton() {
+  return (
+    <div className="sc-sector-grid">
+      {Array.from({ length: 6 }, (_, i) => (
+        <div key={i} className="sc-sector-card" style={{ '--sector-accent': 'var(--border2)', cursor: 'default' }}>
+          <div className="sc-sector-card__head" style={{ gap: 12 }}>
+            <div className="sc-sector-card__head-left">
+              <div className="sc-skel sc-skel--title" />
+              <div className="sc-sector-card__meta" style={{ gap: 6, marginTop: 5 }}>
+                <div className="sc-skel sc-skel--tag" />
+                <div className="sc-skel sc-skel--tag" style={{ width: 56 }} />
+              </div>
+            </div>
+            <div className="sc-skel sc-skel--num" />
+          </div>
+          <div className="sc-sector-card__stocks">
+            {[0, 1, 2].map(j => (
+              <div key={j} className="sc-sector-row" style={{ cursor: 'default' }}>
+                <div className="sc-sector-row__left">
+                  <div className="sc-skel sc-skel--sym" />
+                  <div className="sc-skel sc-skel--name" />
+                </div>
+                <div className="sc-skel sc-skel--chg" />
+              </div>
+            ))}
+          </div>
+          <div className="sc-sector-card__more"><div className="sc-skel sc-skel--more" /></div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── Sector detail (drill-down) ──────────────────────────────────────────────
 function SectorDetail({ sector, stocks, accentColor, onBack, onPick }) {
+  const [search, setSearch] = useState('');
   const sorted = [...stocks].sort((a, b) => (b.composite_score || 0) - (a.composite_score || 0));
+  const displayed = search.trim()
+    ? sorted.filter(s =>
+        s.symbol.toLowerCase().includes(search.toLowerCase()) ||
+        (s.name || '').toLowerCase().includes(search.toLowerCase())
+      )
+    : sorted;
   const avgChg = stocks
     .filter(s => s.change_pct != null)
     .reduce((a, s, _, arr) => a + s.change_pct / arr.length, 0);
@@ -144,11 +185,19 @@ function SectorDetail({ sector, stocks, accentColor, onBack, onPick }) {
         <span className={`sc-sector-detail__avg ${sectorUp ? 'up' : 'down'}`}>
           {sectorUp ? '+' : ''}{avgChg.toFixed(2)}% avg
         </span>
+        <input
+          className="sc-sector-detail__search"
+          placeholder="Search…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
       </div>
 
       {/* ── Stock list ─────────────────────────────────────────────────────── */}
       <div className="sc-sector-detail__list">
-        {sorted.map((s, i) => {
+        {displayed.length === 0 ? (
+          <div className="sc-sector-detail__empty">No stocks match "{search}"</div>
+        ) : displayed.map((s, i) => {
           const up = (s.change_pct ?? 0) >= 0;
           const cat = CAT_META[s.category];
           const score = Math.min(100, Math.max(0, s.composite_score || 0));
@@ -222,7 +271,7 @@ function SectorGrid({ stocks, onPick }) {
         stocks={grouped[activeSector] || []}
         accentColor={accentColor}
         onBack={() => setActiveSector(null)}
-        onPick={onPick}
+        onPick={(stock) => onPick(stock, activeSector)}
       />
     );
   }
@@ -498,7 +547,11 @@ export default function Screener() {
 
   useEffect(() => { load(); }, []);
 
-  const pickStock = (stock) => {
+  const pickStock = (stock, sector = null) => {
+    const navBack = sector
+      ? { view: 'screener', label: 'Sector Insights', sector }
+      : { view: 'screener', label: 'Value Picks' };
+    dispatch({ type: 'SET_NAV_BACK', payload: navBack });
     dispatch({ type: 'SET_CURRENT_SYMBOL', payload: stock.symbol });
     dispatch({ type: 'SET_VIEW', payload: 'stock' });
   };
@@ -565,29 +618,31 @@ export default function Screener() {
 
       {error && <div className="screener__error">{error}</div>}
 
-      {/* ── Loading (cold start — nothing in DB yet) ─────────────────────────── */}
-      {loading && stocks.length === 0 ? (
-        <div className="screener__loading">
-          <span className="spinner" />
-          <p>Scanning 180+ stocks — fetching live prices, fundamentals & sector data…</p>
-          <p className="screener__loading-sub">Results appear progressively as each stock is scanned.</p>
-        </div>
-      ) : (
-        <>
-          {mode === 'all' && (
-            <AllPicksTable stocks={stocks} onPick={pickStock} />
-          )}
+      {/* ── Content ──────────────────────────────────────────────────────────── */}
+      {mode === 'all' && (
+        loading && stocks.length === 0
+          ? <div className="screener__loading">
+              <span className="spinner" />
+              <p>Scanning 180+ stocks — fetching live prices, fundamentals &amp; sector data…</p>
+              <p className="screener__loading-sub">Results appear progressively as each stock is scanned.</p>
+            </div>
+          : <AllPicksTable stocks={stocks} onPick={(s) => pickStock(s, null)} />
+      )}
 
-          {mode === 'sector' && (
-            stocks.length === 0
-              ? <div className="screener__empty">Run the screener first to see sector insights.</div>
-              : <SectorGrid stocks={stocks} onPick={pickStock} />
-          )}
+      {mode === 'sector' && (
+        stocks.length === 0
+          ? loading
+              ? <SectorSkeleton />
+              : <div className="screener__empty">
+                  <span className="screener__empty-icon">⊙</span>
+                  <p>No sector data yet.</p>
+                  <p className="screener__loading-sub">Click Refresh to start scanning stocks.</p>
+                </div>
+          : <SectorGrid stocks={stocks} onPick={pickStock} />
+      )}
 
-          {mode === 'ai' && (
-            <AIInsightsPanel stocks={stocks} />
-          )}
-        </>
+      {mode === 'ai' && (
+        <AIInsightsPanel stocks={stocks} />
       )}
     </div>
   );
