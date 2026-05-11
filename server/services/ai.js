@@ -2,6 +2,8 @@ import Groq from 'groq-sdk';
 import { GROQ_API_KEY, ANTHROPIC_API_KEY } from '../config.js';
 import { getQuote, getProfile, getFinancials, getNews, getHistory, search as searchSymbol } from './yahoo.js';
 import { getMacroContext, getEnrichedNews, getPeerPerformance, getWorldBankMacro } from './enrichment.js';
+import { trainAndPredict } from './mlPredictor.js';
+import { walkForwardBacktest } from './backtest.js';
 import log from '../log.js';
 
 const groqClient = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
@@ -30,11 +32,16 @@ WHEN RAG DATA IS PROVIDED:
 - Use the macro regime (RISK_ON/RISK_OFF/NEUTRAL) as a modifier
 - Reference peer performance to contextualise relative strength/weakness
 - DCF implied return tells you if the stock is cheap/expensive vs intrinsic value
+- Always cite the ML RANDOM FOREST signal alongside the 4-model ensemble
+- Always cite BACKTEST accuracy when present — it tells you how reliable our signals actually are
+- If backtest accuracy is < 50%, explicitly note "Our historical signals for this stock have been weak"
+- If ML signal contradicts ensemble → flag as "Mixed ML signal: warrants caution"
 
 FULL ANALYSIS FORMAT (for "analyse", "predict", "full", "breakdown" queries):
 
   ### 🎯 Ensemble Verdict: [BULLISH/NEUTRAL/BEARISH] — Score [X]/100
   **Fundamental** [score]/100 · **Technical** [score]/100 · **Sentiment** [score]/100 · **Macro** [score]/100
+  🤖 **ML Model:** [signal] — [probUp]% probability up in [N] days | Backtest accuracy: [X]% over [N] signals
 
   ### 📊 Fundamentals
   [P/E, margins, ROE, debt — use retrieved values]
@@ -1110,6 +1117,12 @@ async function buildRagContext(symbols) {
       const redFlags      = detectRedFlags(fin, q);
       const earningsQual  = computeEarningsQuality(fin, q);
 
+      // ── Module 3 (ML) + Module 7 (backtest) — run in parallel ─────────────
+      const [mlResult, btResult] = await Promise.all([
+        Promise.resolve(hist ? trainAndPredict(hist) : { available: false, reason: 'No OHLCV' }),
+        Promise.resolve(hist ? walkForwardBacktest(hist) : { available: false, reason: 'No OHLCV' }),
+      ]);
+
       // ── Module 6.4: Monte Carlo GBM (1,000 paths, 90-day horizon) ────────────
       let monteCarlo = null;
       try {
@@ -1235,6 +1248,25 @@ ${redFlags.length ? redFlags.map(f => `  ⚠ ${f}`).join('\n') : '  ✅ No accou
   Quality Score: ${earningsQual.score}/100 — ${earningsQual.label}
 ${earningsQual.high.length ? '  ✅ ' + earningsQual.high.join(' | ') : ''}
 ${earningsQual.low.length  ? '  ⚠ ' + earningsQual.low.join(' | ')  : ''}
+
+── ML RANDOM FOREST (Module 3 — 50 trees, trained on this ticker) ──
+${mlResult.available
+  ? `  Signal:         ${mlResult.signal} (prob up: ${mlResult.probUp}%)
+  ML Confidence:   ${mlResult.confidence}/100
+  Training data:   ${mlResult.trainingSamples} samples | Training accuracy: ${mlResult.trainingAccuracy}%
+  Horizon:         ${mlResult.horizonDays}-day price direction
+  Base rate (up):  ${mlResult.baseRate}% (% of training bars where price was higher ${mlResult.horizonDays}d later)`
+  : `  Unavailable: ${mlResult.reason}`}
+
+── WALK-FORWARD BACKTEST (Module 7 — historical signal accuracy) ──
+${btResult.available
+  ? `  Overall accuracy: ${btResult.overallAccuracy}% over ${btResult.totalSignals} signals (${btResult.horizonDays}d horizon)
+  Bullish signals:   ${btResult.bySignal['BULLISH'].accuracy ?? '—'}% accurate (n=${btResult.bySignal['BULLISH'].count})
+  Bearish signals:   ${btResult.bySignal['BEARISH'].accuracy ?? '—'}% accurate (n=${btResult.bySignal['BEARISH'].count})
+  High-conf signals: ${btResult.byBand['HIGH'].accuracy ?? '—'}% accurate (n=${btResult.byBand['HIGH'].count})
+  Med-conf signals:  ${btResult.byBand['MEDIUM'].accuracy ?? '—'}% accurate (n=${btResult.byBand['MEDIUM'].count})
+  Calibration:       ${btResult.calibrated ? '✅ High confidence outperforms (good calibration)' : '⚠ High confidence not outperforming — signals may be poorly calibrated'}`
+  : `  Unavailable: ${btResult.reason}`}
 
 ── MONTE CARLO GBM (Module 6.4 — 1,000 paths, 90d horizon) ─
 ${monteCarlo ? `  P10 (bear):    ${cur}${monteCarlo.p10.toFixed(2)} (${(((monteCarlo.p10/q.price)-1)*100).toFixed(1)}%)
