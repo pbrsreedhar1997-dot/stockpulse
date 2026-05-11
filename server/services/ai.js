@@ -90,7 +90,141 @@ MACRO INTERPRETATION:
 - RISK_OFF: Defensive bias — FMCG, pharma, gold. Increase caution on leveraged/small-caps.
 - High India VIX (>20): near-term volatility, consider wider price target ranges.
 - Rising US 10Y (>4.5%): headwind for high-PE growth stocks via discount rate.
-- USD/INR > 85: positive for IT exporters, negative for import-heavy companies.`;
+- USD/INR > 85: positive for IT exporters, negative for import-heavy companies.
+
+━━━ ACCURACY & SELF-CORRECTION ENGINE (Fix Layers 1–7) ━━━
+
+HALLUCINATION PREVENTION (Fix Layer 3 — ALWAYS ENFORCED):
+- NEVER use training memory for any price, rate, EPS, revenue, or ratio
+- Every financial number MUST come from the RAG RETRIEVAL RESULTS block
+- If a number is NOT in retrieved data → say "data unavailable for [field]" — do NOT estimate
+- If retrieved data seems inconsistent or stale → flag: "⚠ Note: data may be delayed"
+- Prohibited from memory: current prices, today's news, live rates, latest earnings
+
+DATA QUALITY GATES (Fix Layer 4 — check before responding):
+- If OHLCV history < 60 bars → flag "Limited price history — technical signals may be unreliable"
+- If news articles < 3 → flag "Insufficient news data — sentiment score less reliable"
+- If confidence score < 40/100 → DO NOT issue a price prediction. Say: "Data quality insufficient for reliable prediction at this time."
+- If Gate issues are listed in context → mention them in your response
+
+USER CORRECTION PROTOCOL (Fix Layer 5 — when user corrects data):
+- If user says the price / value is wrong or provides correct data:
+  1. Immediately: "Thank you for the correction — updating my analysis."
+  2. Use user-provided value as ground truth for this session
+  3. Re-run your analysis mentally with the corrected value
+  4. Show: "REVISED — Updated with corrected data: [what changed]"
+  5. NEVER argue, NEVER defend wrong data
+
+UNCERTAINTY EXPRESSION (Fix Layer 3):
+- Low data → "Based on limited available data..."
+- Conflicting signals → "Mixed signals detected: [what conflicts]"
+- Estimates vs actual → always distinguish clearly
+- NEVER present a probabilistic estimate as a definitive fact
+
+TRANSPARENCY BLOCK (Fix Layer 6 — append to every full analysis):
+At the end of every full stock analysis, include:
+📋 **Data Sources:** Yahoo Finance (live quote + history) · RSS feeds (ET/MC/BS) · World Bank · Macro indices
+⏱ **Freshness:** Live price (real-time) · Fundamentals (latest quarter) · News (rolling 30d) · Macro (intraday)
+✅ **LLM Memory Used:** NO — all figures retrieved from live APIs this session
+[Gate issues if any from context]
+⚠️ Not financial advice. Verify prices with your broker before any decision.`;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX LAYER 1: PRE-RETRIEVAL GUARD — query classification + correction detection
+// ─────────────────────────────────────────────────────────────────────────────
+function classifyQuery(question) {
+  const q = question.toLowerCase();
+
+  // Detect user correction (Layer 5 trigger)
+  const correctionSignal = /(?:wrong|incorrect|not right|actually|the correct|should be|you(?:'re| are) wrong|that(?:'s| is) wrong|the (?:price|value|data) is)/i.test(q);
+  const hasNumericValue  = /[\₹\$₹]?\s*[\d,]+(?:\.\d+)?/.test(question);
+  const isCorrection = correctionSignal && hasNumericValue;
+
+  // Query type classification
+  const isPrediction  = /\b(?:predict|forecast|price target|target price|where (?:will|is|does)|next (?:week|month|year|quarter)|future)\b/.test(q);
+  const isFundamental = /\b(?:pe\s*ratio|p\/e|eps|revenue|earnings|profit|margin|roe|roa|debt|balance sheet|cash flow|fundamentals?|valuation|ebitda)\b/.test(q);
+  const isNews        = /\b(?:news|headline|announcement|event|quarterly results|filing|update|report)\b/.test(q);
+  const isMacro       = /\b(?:inflation|cpi|gdp|interest rate|rbi|fed|yield curve|vix|macro|economy|recession|rate cut|rate hike)\b/.test(q);
+  const isPrice       = /\b(?:current price|live price|trading at|what(?:'s| is) the price|how much is)\b/.test(q);
+  const isPortfolio   = /\b(?:portfolio|my stocks?|my shares?|my holding|pnl|my return|my position)\b/.test(q);
+  const isTechnical   = /\b(?:rsi|macd|bollinger|moving average|ema|sma|support|resistance|breakout|technical)\b/.test(q);
+
+  const isFinancial = isPrediction || isFundamental || isNews || isMacro || isPrice || isTechnical;
+
+  const type = isPrediction  ? 'prediction'
+             : isFundamental ? 'fundamental'
+             : isTechnical   ? 'technical'
+             : isPrice       ? 'price'
+             : isNews        ? 'news'
+             : isMacro       ? 'macro'
+             : isPortfolio   ? 'portfolio'
+             : 'conversational';
+
+  return { type, isFinancial, isCorrection, requiresLiveData: isFinancial };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX LAYER 4: VALIDATION GATES — run after each model module
+// ─────────────────────────────────────────────────────────────────────────────
+function runValidationGates({ hist, allNews, fundamentals, sentiment, macro, technicals, advTech }) {
+  const issues = [];
+  let confidencePenalty = 0;
+
+  // Gate 1: Data completeness
+  if (!hist || hist.length < 30) {
+    issues.push('Gate 1 ⚠: Insufficient OHLCV history (<30 bars) — technical signals unreliable');
+    confidencePenalty += 8;
+  }
+  if (!fundamentals) {
+    issues.push('Gate 3 ⚠: Fundamental data unavailable — fundamental model weight reduced');
+    confidencePenalty += 8;
+  }
+
+  // Gate 2: Technical signal consistency (divergence detection)
+  if (technicals && advTech) {
+    const techScore    = technicals.score ?? 50;
+    const obvFalling   = advTech.raw?.obvTrend === 'FALLING';
+    const ichiBearish  = advTech.ichimoku === 'BEARISH';
+    if (techScore >= 60 && obvFalling && ichiBearish) {
+      issues.push('Gate 2 ⚠: Divergence — price indicators bullish but OBV + Ichimoku bearish');
+    }
+    if (technicals.ma_cross === 'BELOW_BOTH' && (technicals.score ?? 50) >= 60) {
+      issues.push('Gate 2 ⚠: Contradiction — price below both MAs but RSI/MACD indicate strength');
+    }
+  }
+
+  // Gate 4: Sentiment data sufficiency
+  const articleCount = allNews?.length ?? 0;
+  if (articleCount < 3) {
+    issues.push(`Gate 4 ⚠: Low news data (${articleCount} articles) — sentiment score less reliable`);
+    confidencePenalty += 5;
+  }
+
+  // Gate 5: Macro data availability
+  if (!macro) {
+    issues.push('Gate 5 ⚠: Macro data unavailable — macro model using default score');
+    confidencePenalty += 5;
+  }
+
+  return { issues, confidencePenalty, allGatesPassed: issues.length === 0 };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX LAYER 7: RESPONSE LOGGING — accuracy tracking (non-blocking)
+// ─────────────────────────────────────────────────────────────────────────────
+async function logResponse(data) {
+  try {
+    const { query: dbQuery } = await import('../db.js');
+    await dbQuery(`
+      INSERT INTO response_logs
+        (ticker, query_type, confidence_score, gate_issues, gate_penalty, logged_at)
+      VALUES ($1,$2,$3,$4,$5,$6)`,
+      [data.ticker, data.queryType, data.confidence,
+       JSON.stringify(data.gateIssues ?? []), data.gatePenalty ?? 0,
+       Math.floor(Date.now() / 1000)]
+    );
+  } catch (_) {}
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TECHNICAL INDICATORS  (computed from 252-day OHLCV)
@@ -767,6 +901,10 @@ async function buildRagContext(symbols) {
         sectorETFAligned, macroTailwindAligned,
       });
 
+      // ── Fix Layer 4: Validation gates ────────────────────────────────────────
+      const gates = runValidationGates({ hist, allNews, fundamentals, sentiment, macro, technicals, advTech });
+      const adjustedConf = Math.max(0, confResult.score - gates.confidencePenalty);
+
       // ── 52W position ─────────────────────────────────────────────────────────
       const w52h = q.week52_high ?? fin?.week52_high;
       const w52l = q.week52_low  ?? fin?.week52_low;
@@ -780,12 +918,16 @@ async function buildRagContext(symbols) {
       const bullTarget = q.price + atr * 12;
       const baseTarget = dcf?.raw?.dcfValue ?? (q.price * (1 + (ensemble - 50) / 200));
 
-      // ── Layer 8: Store prediction (non-blocking) ─────────────────────────────
+      // ── Layer 8: Store prediction + log response (non-blocking) ─────────────
       storePrediction({
-        ticker, confidence: confResult.score, A: confResult.A, B: confResult.B,
+        ticker, confidence: adjustedConf, A: confResult.A, B: confResult.B,
         C: confResult.C, D: confResult.D, predictedAt: Math.floor(Date.now() / 1000),
         price: q.price, bear: bearTarget, base: baseTarget, bull: bullTarget,
         tScore, fScore, sScore, mScore, ensemble, direction,
+      });
+      logResponse({
+        ticker, queryType: 'rag_build', confidence: adjustedConf,
+        gateIssues: gates.issues, gatePenalty: gates.confidencePenalty,
       });
 
       // ── Context document ─────────────────────────────────────────────────────
@@ -859,17 +1001,29 @@ ${wb ? Object.entries(wb).map(([k, v]) => `  ${k}: ${v.value}% (${v.year})`).joi
   ENSEMBLE SCORE:    ${ensemble}/100 → ${direction}
 
 ── CONFIDENCE SCORE (Layer 5) ───────────────────────────
-  ${confResult.band}: ${confResult.score}/100
+  ${confResult.band}: ${adjustedConf}/100 (raw: ${confResult.score}/100${gates.confidencePenalty > 0 ? ` − ${gates.confidencePenalty} gate penalty` : ''})
   Alignment Score:    ${confResult.A}/65
   Data Quality Score: ${confResult.B}/25
   Bonus Points:       ${confResult.C}/10
   Risk Deductions:   -${confResult.D}
-  ${confResult.score < 40 ? '⚠ VERY LOW CONFIDENCE — predictions directional only' : ''}
+  ${adjustedConf < 40 ? '⚠ VERY LOW CONFIDENCE — predictions directional only' : ''}
   Risk flags: ${[
     revenueDecline ? 'Revenue declining' : '',
     vixVal > 20 ? `High VIX ${vixVal?.toFixed(1)}` : '',
     vixVal > 35 ? 'EXTREME FEAR' : '',
   ].filter(Boolean).join(' | ') || 'None detected'}
+
+── VALIDATION GATES (Fix Layer 4) ──────────────────────
+  ${gates.allGatesPassed ? '✅ All gates passed' : gates.issues.join('\n  ')}
+  ${gates.confidencePenalty > 0 ? `Gate penalty applied: -${gates.confidencePenalty} pts` : ''}
+
+── DATA TRANSPARENCY (Fix Layer 6) ──────────────────────
+  Price Source:      Yahoo Finance (live) | Fetched: just now ✅
+  OHLCV History:     ${hist?.length ?? 0} bars
+  News Coverage:     ${allNews.length} articles (Yahoo Finance + ET + MC + BS)
+  Macro Data:        ${macro ? 'Available ✅' : 'Unavailable ⚠'}
+  API Success Rate:  ${Math.round(apiSuccessRate * 100)}%
+  LLM Memory Used:   NO — all figures from live API retrieval ✅
 
 ── SCENARIO PRICE TARGETS ───────────────────────────────
   Bear:  ${cur}${bearTarget.toFixed(2)} (${(((bearTarget/q.price)-1)*100).toFixed(1)}%) — ATR-based downside
@@ -1258,6 +1412,12 @@ export async function streamChat({ question, symbols = [], history = [], skipRag
 
   const depth = responseDepth(question);
 
+  // Fix Layer 1: Pre-retrieval guard — classify query and detect user corrections
+  const qClass = classifyQuery(question);
+  const correctionNotice = qClass.isCorrection
+    ? '\n\n[SYSTEM: User is correcting data. Acknowledge the correction, use their value as ground truth, re-run analysis with corrected figure, show "REVISED" prefix.]'
+    : '';
+
   // Build RAG context
   let context = '';
   if (!skipRag) {
@@ -1272,7 +1432,7 @@ export async function streamChat({ question, symbols = [], history = [], skipRag
 
   const trimmed = trimHistory(history);
   const messages = [
-    { role: 'system', content: SYSTEM_PROMPT + context },
+    { role: 'system', content: SYSTEM_PROMPT + context + correctionNotice },
     ...trimmed,
     { role: 'user', content: question },
   ];

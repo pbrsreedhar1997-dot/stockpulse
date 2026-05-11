@@ -167,6 +167,18 @@ export async function initDb() {
       )`);
     await query(`CREATE INDEX IF NOT EXISTS idx_pred_ticker ON predictions_tracking(ticker)`);
     await query(`CREATE INDEX IF NOT EXISTS idx_pred_at    ON predictions_tracking(predicted_at DESC)`);
+    // ── Response accuracy logging (Fix Layer 7) ──────────────────────────────
+    await query(`
+      CREATE TABLE IF NOT EXISTS response_logs (
+        id             SERIAL PRIMARY KEY,
+        ticker         VARCHAR(20),
+        query_type     VARCHAR(30),
+        confidence_score INTEGER,
+        gate_issues    TEXT,
+        gate_penalty   INTEGER,
+        logged_at      BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+      )`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_response_logs_at ON response_logs(logged_at DESC)`);
     log.info('PostgreSQL schema ready');
   } catch (err) {
     log.error('DB init failed:', err.message);
