@@ -629,3 +629,53 @@ export async function refreshScreener() {
   running = false;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MOMENTUM PICKS  — scores existing screener_picks for short-term momentum
+// Uses: 52W range position, today change%, composite quality, valuation
+// ─────────────────────────────────────────────────────────────────────────────
+export async function getMomentumPicks() {
+  try {
+    const { query } = await import('../db.js');
+    const stale = Math.floor(Date.now() / 1000) - 86400 * 7;
+    const result = await query(`
+      SELECT *,
+        GREATEST(0, LEAST(100,
+          CASE
+            WHEN decline_pct IS NOT NULL AND decline_pct < 5  THEN 30
+            WHEN decline_pct IS NOT NULL AND decline_pct < 15 THEN 20
+            WHEN decline_pct IS NOT NULL AND decline_pct < 30 THEN 10
+            ELSE 0
+          END
+          + CASE
+            WHEN change_pct >= 2  THEN 20
+            WHEN change_pct >= 1  THEN 14
+            WHEN change_pct >= 0  THEN 7
+            ELSE 0
+          END
+          + CASE
+            WHEN composite_score >= 75 THEN 25
+            WHEN composite_score >= 60 THEN 16
+            WHEN composite_score >= 50 THEN 8
+            ELSE 0
+          END
+          + CASE
+            WHEN pe_ratio > 0 AND pe_ratio <= 20 THEN 15
+            WHEN pe_ratio > 0 AND pe_ratio <= 35 THEN 8
+            WHEN pe_ratio > 0 AND pe_ratio <= 60 THEN 3
+            ELSE 0
+          END
+          + CASE category
+              WHEN 'growth'  THEN 10
+              WHEN 'value'   THEN 6
+              ELSE 4
+            END
+        )) AS momentum_score
+      FROM screener_picks
+      WHERE scanned_at > $1 AND price IS NOT NULL AND price > 0
+      ORDER BY momentum_score DESC, change_pct DESC NULLS LAST
+      LIMIT 30
+    `, [stale]);
+    return result.rows;
+  } catch { return []; }
+}
+

@@ -302,6 +302,28 @@
     gap: 8px;
     flex-shrink: 0;
   }
+}
+
+/* ── Risk badge ─────────────────────────────────────────────────────────────── */
+.wl-risk {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px currentColor;
+
+  &--high   { background: var(--down); color: var(--down); animation: risk-pulse 2s ease-in-out infinite; }
+  &--medium { background: #E8A838;     color: #E8A838; }
+  &--low    { background: var(--up);   color: var(--up); }
+}
+
+@keyframes risk-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--down); }
+  50%       { opacity: 0.55; box-shadow: 0 0 12px var(--down); }
+}
+
+.wl-row {
+  /* ── Price area ──────────────────────────────────────────────────────────── */
 
   &__prices {
     display: flex;

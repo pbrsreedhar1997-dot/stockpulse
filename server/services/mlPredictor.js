@@ -232,7 +232,7 @@ class RandomForest {
 
 // ── Main export: train on ticker history + predict current direction ───────────
 
-export function trainAndPredict(candles, horizonDays = 20) {
+export function trainAndPredict(candles, horizonDays = 10) {
   try {
     if (!candles || candles.length < 80) {
       return { available: false, reason: 'Insufficient history (<80 bars)' };

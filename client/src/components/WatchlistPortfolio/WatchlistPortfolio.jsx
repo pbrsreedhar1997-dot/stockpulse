@@ -124,6 +124,25 @@ function PortfolioChat({ symbols }) {
   );
 }
 
+/* ── Risk badge ─────────────────────────────────────────────────────────────── */
+function getRisk(quote) {
+  if (!quote?.price) return null;
+  const chg = quote.change_pct ?? 0;
+  const { price, week52_high: h, week52_low: l } = quote;
+  const pos = (h && l && h > l) ? ((price - l) / (h - l)) * 100 : null;
+
+  if (chg < -3 || (pos !== null && pos < 12)) return 'high';
+  if (chg < -1 || (pos !== null && pos < 35)) return 'medium';
+  return 'low';
+}
+
+function RiskBadge({ quote }) {
+  const risk = getRisk(quote);
+  if (!risk) return null;
+  const label = risk === 'high' ? 'High Risk' : risk === 'medium' ? 'Medium Risk' : 'Low Risk';
+  return <span className={`wl-risk wl-risk--${risk}`} title={label} />;
+}
+
 /* ── Drag handle SVG ────────────────────────────────────────────────────────── */
 function DragHandle() {
   return (
@@ -184,6 +203,7 @@ function WatchlistRow({
       </div>
 
       <div className="wl-row__right">
+        <RiskBadge quote={quote} />
         {quote ? (
           <div className="wl-row__prices">
             <span className={`wl-row__price ${flash}`}>{fmtPrice(quote.price, quote.currency)}</span>
@@ -210,6 +230,7 @@ const SORT_OPTIONS = [
   { key: 'name',    label: 'Name'      },
   { key: 'price',   label: 'Price'     },
   { key: 'change',  label: '% Change'  },
+  { key: 'risk',    label: '⚠ Risk'    },
 ];
 
 /* ── Main component ─────────────────────────────────────────────────────────── */
@@ -245,6 +266,8 @@ export default function WatchlistPortfolio() {
     return { up, down, avg: totalChg / count };
   }, [watchlist, quotes]);
 
+  const RISK_ORDER = { high: 0, medium: 1, low: 2 };
+
   const sortedList = useMemo(() => {
     if (sortBy === 'manual') return watchlist;
     return [...watchlist].sort((a, b) => {
@@ -252,6 +275,11 @@ export default function WatchlistPortfolio() {
       if (sortBy === 'name')   return a.name.localeCompare(b.name);
       if (sortBy === 'price')  return (qb?.price ?? 0) - (qa?.price ?? 0);
       if (sortBy === 'change') return (qb?.change_pct ?? 0) - (qa?.change_pct ?? 0);
+      if (sortBy === 'risk') {
+        const ra = RISK_ORDER[getRisk(qa)] ?? 3;
+        const rb = RISK_ORDER[getRisk(qb)] ?? 3;
+        return ra - rb;
+      }
       return 0;
     });
   }, [watchlist, quotes, sortBy]);

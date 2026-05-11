@@ -2,7 +2,7 @@ import { Router } from 'express';
 import {
   getValuePicks, getAllStocks, refreshScreener,
   getRecentAnalysis, saveAnalysis, buildAnalysisPrompt,
-  loadPicksFromDB, getScanStatus,
+  loadPicksFromDB, getScanStatus, getMomentumPicks,
 } from '../services/screener.js';
 import { streamChat } from '../services/ai.js';
 import log from '../log.js';
@@ -140,6 +140,14 @@ router.get('/ai-analysis', async (req, res) => {
     send({ error: e.message });
     res.end();
   }
+});
+
+// ── Momentum picks ──────────────────────────────────────────────────────────
+router.get('/momentum', async (req, res) => {
+  try {
+    const data = await getMomentumPicks();
+    res.json({ ok: true, data });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // Background analysis refresh (does not send to any client — just updates DB)

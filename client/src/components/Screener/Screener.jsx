@@ -533,11 +533,126 @@ function ScanProgress({ scanStatus, stockCount }) {
   );
 }
 
+// ─── Momentum signal tags ─────────────────────────────────────────────────────
+function momentumTags(s) {
+  const tags = [];
+  if (s.decline_pct != null && s.decline_pct < 5)    tags.push({ label: '52W High Zone', color: '#10D98C' });
+  else if (s.decline_pct != null && s.decline_pct < 15) tags.push({ label: 'Near 52W High', color: '#4B9EFF' });
+  if ((s.change_pct ?? 0) >= 2)   tags.push({ label: 'Strong Today',   color: '#10D98C' });
+  else if ((s.change_pct ?? 0) >= 1) tags.push({ label: 'Gaining',      color: '#4B9EFF' });
+  if (s.composite_score >= 70)    tags.push({ label: 'Quality Stock',  color: '#E8A838' });
+  if (s.pe_ratio > 0 && s.pe_ratio <= 20) tags.push({ label: 'Low P/E', color: '#4B9EFF' });
+  return tags.slice(0, 3);
+}
+
+// ─── Momentum Panel ───────────────────────────────────────────────────────────
+function MomentumPanel({ onPick }) {
+  const [stocks, setStocks]   = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error,   setError]   = useState(null);
+  const [sector,  setSector]  = useState('All');
+
+  useEffect(() => {
+    setLoading(true);
+    fetch('/api/screener/momentum')
+      .then(r => r.json())
+      .then(d => { if (d.ok) setStocks(d.data || []); else setError('No momentum data yet.'); })
+      .catch(() => setError('Failed to load momentum picks.'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const sectors = ['All', ...new Set(stocks.map(s => s.sector || s.theme).filter(Boolean))].sort();
+  const filtered = sector === 'All' ? stocks : stocks.filter(s => (s.sector || s.theme) === sector);
+
+  if (loading) return (
+    <div className="sc-momentum-loading">
+      <span className="spinner" /> Loading momentum picks…
+    </div>
+  );
+  if (error) return <div className="screener__empty">{error} <br/><span className="screener__loading-sub">Run a refresh to populate screener data first.</span></div>;
+  if (!stocks.length) return <div className="screener__empty">No momentum picks yet. Refresh the screener to scan stocks.</div>;
+
+  return (
+    <div className="sc-momentum">
+      {/* Sector filter */}
+      <div className="sc-momentum__filter">
+        <span className="screener__filter-label">Sector:</span>
+        {sectors.map(s => (
+          <button key={s} className={`sc-chip ${sector === s ? 'sc-chip--active' : ''}`} onClick={() => setSector(s)}>{s}</button>
+        ))}
+      </div>
+
+      <div className="sc-momentum__grid">
+        {filtered.map((s, i) => {
+          const up   = (s.change_pct ?? 0) >= 0;
+          const tags = momentumTags(s);
+          const mScore = Math.round(s.momentum_score ?? 0);
+          const cat  = CAT_META[s.category];
+
+          return (
+            <div key={s.symbol} className="sc-mcard" onClick={() => onPick(s)}>
+              <div className="sc-mcard__top">
+                <div className="sc-mcard__rank">#{i + 1}</div>
+                <div className="sc-mcard__info">
+                  <span className="sc-mcard__sym">{s.symbol.replace(/\.(NS|BO)$/i, '')}</span>
+                  <span className="sc-mcard__name">{s.name}</span>
+                </div>
+                <div className="sc-mcard__right">
+                  <span className={`sc-mcard__chg ${up ? 'up' : 'down'}`}>
+                    {up ? '+' : ''}{fmt(s.change_pct)}%
+                  </span>
+                  <span className="sc-mcard__price">₹{fmt(s.price)}</span>
+                </div>
+              </div>
+
+              {/* Momentum score bar */}
+              <div className="sc-mcard__score-row">
+                <span className="sc-mcard__score-label">Momentum</span>
+                <div className="sc-mcard__score-track">
+                  <div
+                    className="sc-mcard__score-fill"
+                    style={{ width: `${mScore}%`, background: mScore >= 70 ? '#10D98C' : mScore >= 50 ? '#4B9EFF' : '#E8A838' }}
+                  />
+                </div>
+                <span className="sc-mcard__score-val">{mScore}</span>
+              </div>
+
+              {/* Signal tags */}
+              <div className="sc-mcard__tags">
+                {tags.map(t => (
+                  <span key={t.label} className="sc-mcard__tag" style={{ color: t.color, borderColor: t.color + '40', background: t.color + '15' }}>
+                    {t.label}
+                  </span>
+                ))}
+                {cat && (
+                  <span className="sc-mcard__tag" style={{ color: cat.color, borderColor: cat.color + '40', background: cat.color + '15' }}>
+                    {cat.label}
+                  </span>
+                )}
+              </div>
+
+              {/* 52W stats */}
+              {s.decline_pct != null && (
+                <div className="sc-mcard__meta">
+                  <span className="sc-mcard__meta-item">52W below: <strong>{fmt(s.decline_pct)}%</strong></span>
+                  {s.pe_ratio > 0 && <span className="sc-mcard__meta-item">P/E: <strong>{fmt(s.pe_ratio)}x</strong></span>}
+                  {s.composite_score != null && <span className="sc-mcard__meta-item">Score: <strong>{s.composite_score}</strong></span>}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Screener ────────────────────────────────────────────────────────────
 const MODES = [
-  { v: 'all',    label: 'All Picks'       },
-  { v: 'sector', label: 'Sector Insights' },
-  { v: 'ai',     label: '✦ AI Analysis'   },
+  { v: 'all',      label: 'All Picks'       },
+  { v: 'sector',   label: 'Sector Insights' },
+  { v: 'momentum', label: '⚡ Momentum'     },
+  { v: 'ai',       label: '✦ AI Analysis'   },
 ];
 
 export default function Screener() {
@@ -639,6 +754,10 @@ export default function Screener() {
                   <p className="screener__loading-sub">Click Refresh to start scanning stocks.</p>
                 </div>
           : <SectorGrid stocks={stocks} onPick={pickStock} />
+      )}
+
+      {mode === 'momentum' && (
+        <MomentumPanel onPick={(s) => pickStock(s, null)} />
       )}
 
       {mode === 'ai' && (
