@@ -167,6 +167,15 @@ export async function initDb() {
       )`);
     await query(`CREATE INDEX IF NOT EXISTS idx_pred_ticker ON predictions_tracking(ticker)`);
     await query(`CREATE INDEX IF NOT EXISTS idx_pred_at    ON predictions_tracking(predicted_at DESC)`);
+    // ── User corrections store (Module 8 — RAG vector store proxy) ──────────
+    await query(`
+      CREATE TABLE IF NOT EXISTS user_corrections (
+        id             SERIAL PRIMARY KEY,
+        ticker         VARCHAR(20),
+        question_text  TEXT,
+        corrected_at   BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+      )`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_corrections_ticker ON user_corrections(ticker)`);
     // ── Response accuracy logging (Fix Layer 7) ──────────────────────────────
     await query(`
       CREATE TABLE IF NOT EXISTS response_logs (

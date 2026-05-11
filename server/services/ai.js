@@ -127,7 +127,87 @@ At the end of every full stock analysis, include:
 ⏱ **Freshness:** Live price (real-time) · Fundamentals (latest quarter) · News (rolling 30d) · Macro (intraday)
 ✅ **LLM Memory Used:** NO — all figures retrieved from live APIs this session
 [Gate issues if any from context]
-⚠️ Not financial advice. Verify prices with your broker before any decision.`;
+⚠️ Not financial advice. Verify prices with your broker before any decision.
+
+━━━ DOMAIN KNOWLEDGE BASE (Module 4) ━━━
+
+ACCOUNTING RED FLAGS — auto-cite from context if detected:
+  ⚠ Revenue declining → "Revenue deterioration: thesis at risk"
+  ⚠ Gross margin falling > 200bps YoY → "Margin compression"
+  ⚠ Debt growing faster than revenue → "Leverage risk growing"
+  ⚠ Negative EPS / net loss → "Loss-making, requires growth premium justification"
+  ⚠ D/E > 2.5 → "High leverage — interest coverage at risk in rate hikes"
+  ⚠ FCF negative while net income positive → "Earnings quality concern: accruals risk"
+  ⚠ Extreme P/E > 80x → "Priced for perfection — any miss = significant downside"
+
+EARNINGS QUALITY — always assess from available data:
+  HIGH QUALITY (bullish bias): FCF > Net Income | Volume-driven revenue | Stable/expanding margins | Low DSO
+  LOW QUALITY (bearish / risk flag): FCF < Net Income | Frequent one-time charges | Rising DSO | Revenue grows faster than cash flow
+
+SECTOR-SPECIFIC KPIs — apply when sector is identified:
+  Banking (HDFC, ICICI, SBI, Axis, Kotak, IndusInd):
+    Critical: NIM (>3.5% strong), CASA ratio (>40% strong), GNPA% (<1% excellent), PCR (>70% safe), ROA (>1.5% best-in-class)
+    Positive: falling NPAs, rising CASA, NIM expansion, retail credit growth
+    Negative: rising NPAs, NIM compression, corporate stress, high slippages
+
+  Technology (TCS, Infosys, Wipro, HCL, Tech Mahindra):
+    Critical: Revenue growth, EBIT margin (>20% strong), deal wins (TCV), USD revenue %, attrition
+    Positive: Large deal wins, margin expansion, AI/cloud pivot, USD/INR tailwind
+    Negative: Deal ramp-down, margin pressure, attrition spike, weak Europe/BFSI verticals
+
+  Pharma (Sun Pharma, Dr Reddy, Cipla, Divis):
+    Critical: US generics %, ANDA pipeline depth, R&D/Revenue (>8% = innovation-led), USFDA status
+    Positive: New drug approvals, US market share gains, complex generics pipeline, USFDA no-action
+    Negative: USFDA import alerts, price erosion in US generics, patent cliff
+
+  Consumer / FMCG (HUL, ITC, Britannia, Nestle, Dabur):
+    Critical: Volume growth (>5% healthy), gross margin (>50% strong pricing power), ad spend efficiency
+    Positive: Rural recovery, premiumization, volume-led growth, margin recovery
+    Negative: Input cost inflation squeezing margins, competitive pressure, rural demand slowdown
+
+  Energy / Oil & Gas (ONGC, BPCL, Reliance, IOC):
+    Critical: GRM (refining margin, >$10/bbl strong), production volume, lifting cost, crude price direction
+    Positive: High crude prices (upstream), strong GRM (downstream), capex discipline
+    Negative: Crude price fall (upstream), GRM compression, exploration capex overrun
+
+  Infrastructure / Capital Goods (L&T, BHEL, Siemens, ABB):
+    Critical: Order book (>3× revenue = strong pipeline), order inflow growth, execution rate
+    Positive: Large government infra orders, defence orders, execution improving
+    Negative: Order inflow slowdown, margin pressure from raw material costs
+
+TECHNICAL PATTERN CONTEXT (historical success rates — cite when patterns detected):
+  Bullish: Inv. Head & Shoulders 70% | Double Bottom 72% | Morning Star 74% | Cup & Handle 65% | Bull Flag 68% | Ascending Triangle 72%
+  Bearish: Head & Shoulders 74% | Double Top 69% | Evening Star 72%
+  RSI: <30 oversold (watch for bounce) | >70 overbought (watch for reversal) | RSI divergence = strongest signal
+  Volume law: Price UP + Volume UP = confirmed bull | Price UP + Volume DOWN = suspect move, likely to fail
+  Bollinger: Band squeeze → volatility breakout imminent | Touch lower band + RSI <35 = classic oversold bounce setup
+
+VALUATION QUICK RULES:
+  PEG < 1 → undervalued relative to growth | P/B < 1 → potentially below book value (banks: check ROE)
+  EV/EBITDA < 8× → value territory (most sectors) | EV/EBITDA > 20× → requires very high growth justification
+  P/FCF < 15× → good value | P/FCF > 40× → rich valuation
+
+MONTE CARLO CONTEXT (when Monte Carlo results in context):
+  P10 = bear path (10th percentile, downside scenario)
+  P50 = median path (base case, most likely)
+  P90 = bull path (90th percentile, upside scenario)
+  Prob_up = probability price is higher than current at horizon
+  Always note: "These are probabilistic, not guaranteed outcomes"
+
+MASTER SYSTEM RULES (always enforced):
+  1. NEVER use LLM memory for prices, EPS, revenue, or any time-sensitive data
+  2. ALWAYS retrieve and cite live data before every financial response
+  3. ALWAYS run all 4 analytical models (Tech/Fund/Sentiment/Macro) before prediction
+  4. ALWAYS attach confidence score with breakdown to every prediction
+  5. NEVER issue price prediction if confidence < 40/100
+  6. ALWAYS flag red flags detected in retrieved data
+  7. ALWAYS assess earnings quality from available metrics
+  8. ALWAYS accept user corrections immediately — never argue, re-run analysis with corrected data
+  9. ALWAYS express uncertainty when data is limited or conflicting
+  10. CONTINUOUSLY improve — every interaction calibrates accuracy`;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX LAYER 1: PRE-RETRIEVAL GUARD — query classification + correction detection
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FIX LAYER 1: PRE-RETRIEVAL GUARD — query classification + correction detection
@@ -224,6 +304,105 @@ async function logResponse(data) {
        Math.floor(Date.now() / 1000)]
     );
   } catch (_) {}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MODULE 6.4: MONTE CARLO GBM SIMULATION  (1,000 paths, Geometric Brownian Motion)
+// ─────────────────────────────────────────────────────────────────────────────
+function randn_bm() {
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+}
+
+function monteCarloGBM(currentPrice, annualVolPct, driftPct, days = 90, paths = 1000) {
+  const vol   = annualVolPct / 100;
+  const drift = driftPct / 100;
+  const dt    = 1 / 252;
+  const sqrtDt = Math.sqrt(dt);
+  const results = [];
+
+  for (let p = 0; p < paths; p++) {
+    let price = currentPrice;
+    for (let d = 0; d < days; d++) {
+      price *= Math.exp((drift - 0.5 * vol * vol) * dt + vol * sqrtDt * randn_bm());
+    }
+    results.push(price);
+  }
+
+  results.sort((a, b) => a - b);
+  const probUp = results.filter(r => r > currentPrice).length / paths;
+  const pct = (p) => results[Math.floor(paths * p)];
+  return {
+    p10:    pct(0.10),
+    p25:    pct(0.25),
+    p50:    pct(0.50),
+    p75:    pct(0.75),
+    p90:    pct(0.90),
+    prob_up: Math.round(probUp * 100),
+    paths,
+    days,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MODULE 4.1: ACCOUNTING RED FLAG DETECTION
+// ─────────────────────────────────────────────────────────────────────────────
+function detectRedFlags(fin, quote) {
+  const flags = [];
+  const rg  = fin?.revenue_growth;
+  const gm  = fin?.gross_margin;
+  const nm  = fin?.net_margin;
+  const de  = fin?.debt_to_equity;
+  const eps = fin?.eps ?? quote?.eps;
+  const pe  = fin?.pe_ratio ?? quote?.pe_ratio;
+  const roe = fin?.return_on_equity;
+
+  if (rg  != null && rg  < 0)    flags.push(`Revenue declining (${rg.toFixed(1)}%)`);
+  if (gm  != null && gm  < 10)   flags.push(`Very thin gross margin (${gm.toFixed(1)}%)`);
+  if (nm  != null && nm  < 0)    flags.push(`Net loss (margin: ${nm.toFixed(1)}%)`);
+  if (eps != null && eps < 0)    flags.push(`Negative EPS (${eps})`);
+  if (de  != null && de  > 2.5)  flags.push(`High leverage: D/E ${de.toFixed(2)}x`);
+  if (pe  != null && pe  > 80)   flags.push(`Extreme valuation: P/E ${pe.toFixed(1)}x — priced for perfection`);
+  if (roe != null && roe < 5)    flags.push(`Very low ROE (${roe.toFixed(1)}%) — weak returns on equity`);
+
+  return flags;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MODULE 4.1: EARNINGS QUALITY ASSESSMENT
+// ─────────────────────────────────────────────────────────────────────────────
+function computeEarningsQuality(fin, quote) {
+  const signals = { high: [], low: [] };
+  let score = 50; // neutral baseline
+
+  const nm  = fin?.net_margin;
+  const gm  = fin?.gross_margin;
+  const rg  = fin?.revenue_growth;
+  const roe = fin?.return_on_equity;
+  const de  = fin?.debt_to_equity;
+
+  // Proxy: if gross margin > net margin by reasonable amount, likely real operations
+  if (gm != null && nm != null) {
+    if (gm > 0 && nm > 0 && (gm - nm) < 30) { signals.high.push('Margin spread reasonable (GM→NM)'); score += 5; }
+    if (nm > 0 && nm > 10)                    { signals.high.push('Solid net profitability'); score += 5; }
+    if (nm < 0 && gm > 20)                    { signals.low.push('Gross profit eroded by opex/interest'); score -= 8; }
+  }
+
+  if (rg  != null && rg  > 15)  { signals.high.push(`Strong revenue growth (${rg.toFixed(1)}%)`); score += 5; }
+  if (rg  != null && rg  < 0)   { signals.low.push('Revenue contraction'); score -= 8; }
+  if (roe != null && roe > 20)  { signals.high.push(`High ROE (${roe.toFixed(1)}%) — efficient capital use`); score += 5; }
+  if (de  != null && de  < 0.5) { signals.high.push('Minimal debt — balance sheet strength'); score += 3; }
+  if (de  != null && de  > 2)   { signals.low.push('High leverage increases earnings volatility'); score -= 5; }
+
+  score = Math.round(Math.max(0, Math.min(100, score)));
+  return {
+    score,
+    label: score >= 65 ? 'HIGH QUALITY' : score <= 40 ? 'LOW QUALITY' : 'MODERATE QUALITY',
+    high: signals.high,
+    low:  signals.low,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -673,20 +852,41 @@ function scoreFundamentals(fin, quote) {
   const dy = fin?.dividend_yield;
   if (dy > 2)  { score += 3; notes.push(`Dividend yield ${dy}%`); }
 
+  // Operating margin
+  const om = fin?.operating_margin;
+  if (om != null) {
+    if (om > 25)      { score += 5; notes.push(`Strong operating margin ${om}%`); }
+    else if (om < 5)  { score -= 4; notes.push(`Thin operating margin ${om}%`); }
+    else if (om < 0)  { score -= 8; notes.push('Operating loss'); }
+  }
+
+  // Current ratio (liquidity)
+  const cr = fin?.current_ratio;
+  if (cr != null) {
+    if (cr >= 2)      { score += 3; notes.push(`Good liquidity: current ratio ${cr.toFixed(1)}x`); }
+    else if (cr < 1)  { score -= 5; notes.push(`Liquidity risk: current ratio ${cr.toFixed(1)}x`); }
+  }
+
+  // Beta: high beta = higher risk penalty
+  const beta = fin?.beta;
+  if (beta != null && beta > 1.5) { score -= 2; notes.push(`High beta ${beta.toFixed(2)} (volatile)`); }
+
   score = Math.round(Math.max(0, Math.min(100, score)));
   return {
     score,
     label: score >= 65 ? 'STRONG' : score <= 40 ? 'WEAK' : 'MODERATE',
     key_metrics: {
-      pe_ratio:       pe   ?? '—',
-      gross_margin:   gm   != null ? `${gm}%` : '—',
-      net_margin:     nm   != null ? `${nm}%` : '—',
-      revenue_growth: rg   != null ? `${rg}%` : '—',
-      roe:            roe  != null ? `${roe}%` : '—',
-      debt_to_equity: de   ?? '—',
-      eps:            eps  ?? '—',
-      dividend_yield: dy   != null ? `${dy}%` : '—',
-      beta:           fin?.beta ?? '—',
+      pe_ratio:         pe   ?? '—',
+      gross_margin:     gm   != null ? `${gm}%` : '—',
+      operating_margin: om   != null ? `${om}%` : '—',
+      net_margin:       nm   != null ? `${nm}%` : '—',
+      revenue_growth:   rg   != null ? `${rg}%` : '—',
+      roe:              roe  != null ? `${roe}%` : '—',
+      debt_to_equity:   de   ?? '—',
+      current_ratio:    cr   != null ? `${cr.toFixed(1)}x` : '—',
+      eps:              eps  ?? '—',
+      dividend_yield:   dy   != null ? `${dy}%` : '—',
+      beta:             beta ?? '—',
     },
     notes,
   };
@@ -899,11 +1099,26 @@ async function buildRagContext(symbols) {
         sourceCount, indicatorCount, apiSuccessRate,
         vix: vixVal, revenueDecline, negativeFCF,
         sectorETFAligned, macroTailwindAligned,
+        redFlagCount: 0, // placeholder, gates apply after
       });
 
       // ── Fix Layer 4: Validation gates ────────────────────────────────────────
       const gates = runValidationGates({ hist, allNews, fundamentals, sentiment, macro, technicals, advTech });
       const adjustedConf = Math.max(0, confResult.score - gates.confidencePenalty);
+
+      // ── Module 4.1: Red flags + earnings quality ──────────────────────────────
+      const redFlags      = detectRedFlags(fin, q);
+      const earningsQual  = computeEarningsQuality(fin, q);
+
+      // ── Module 6.4: Monte Carlo GBM (1,000 paths, 90-day horizon) ────────────
+      let monteCarlo = null;
+      try {
+        // annualised vol from ATR (as % of price), drift from ensemble signal
+        const atr14     = advTech?.raw?.atr14 ?? (q.price * 0.015);
+        const annualVol = Math.round((atr14 / q.price) * Math.sqrt(252) * 100); // rough annualised vol %
+        const driftPct  = ((ensemble - 50) / 50) * 15; // ±15% annual drift from ensemble
+        monteCarlo      = monteCarloGBM(q.price, annualVol, driftPct, 90, 1000);
+      } catch (_) {}
 
       // ── 52W position ─────────────────────────────────────────────────────────
       const w52h = q.week52_high ?? fin?.week52_high;
@@ -1012,6 +1227,22 @@ ${wb ? Object.entries(wb).map(([k, v]) => `  ${k}: ${v.value}% (${v.year})`).joi
     vixVal > 20 ? `High VIX ${vixVal?.toFixed(1)}` : '',
     vixVal > 35 ? 'EXTREME FEAR' : '',
   ].filter(Boolean).join(' | ') || 'None detected'}
+
+── ACCOUNTING RED FLAGS (Module 4.1) ────────────────────
+${redFlags.length ? redFlags.map(f => `  ⚠ ${f}`).join('\n') : '  ✅ No accounting red flags detected'}
+
+── EARNINGS QUALITY (Module 4.1) ────────────────────────
+  Quality Score: ${earningsQual.score}/100 — ${earningsQual.label}
+${earningsQual.high.length ? '  ✅ ' + earningsQual.high.join(' | ') : ''}
+${earningsQual.low.length  ? '  ⚠ ' + earningsQual.low.join(' | ')  : ''}
+
+── MONTE CARLO GBM (Module 6.4 — 1,000 paths, 90d horizon) ─
+${monteCarlo ? `  P10 (bear):    ${cur}${monteCarlo.p10.toFixed(2)} (${(((monteCarlo.p10/q.price)-1)*100).toFixed(1)}%)
+  P25:           ${cur}${monteCarlo.p25.toFixed(2)} (${(((monteCarlo.p25/q.price)-1)*100).toFixed(1)}%)
+  P50 (median):  ${cur}${monteCarlo.p50.toFixed(2)} (${(((monteCarlo.p50/q.price)-1)*100).toFixed(1)}%)
+  P75:           ${cur}${monteCarlo.p75.toFixed(2)} (${(((monteCarlo.p75/q.price)-1)*100).toFixed(1)}%)
+  P90 (bull):    ${cur}${monteCarlo.p90.toFixed(2)} (${(((monteCarlo.p90/q.price)-1)*100).toFixed(1)}%)
+  Prob(up):      ${monteCarlo.prob_up}% probability price higher than today in 90 days` : '  Monte Carlo unavailable (insufficient price data)'}
 
 ── VALIDATION GATES (Fix Layer 4) ──────────────────────
   ${gates.allGatesPassed ? '✅ All gates passed' : gates.issues.join('\n  ')}
@@ -1417,6 +1648,20 @@ export async function streamChat({ question, symbols = [], history = [], skipRag
   const correctionNotice = qClass.isCorrection
     ? '\n\n[SYSTEM: User is correcting data. Acknowledge the correction, use their value as ground truth, re-run analysis with corrected figure, show "REVISED" prefix.]'
     : '';
+
+  // Persist user correction to DB for future context (non-blocking)
+  if (qClass.isCorrection) {
+    (async () => {
+      try {
+        const { query: dbQuery } = await import('../db.js');
+        await dbQuery(`
+          INSERT INTO user_corrections (question_text, corrected_at)
+          VALUES ($1, $2)`,
+          [question.slice(0, 500), Math.floor(Date.now() / 1000)]
+        );
+      } catch (_) {}
+    })();
+  }
 
   // Build RAG context
   let context = '';
