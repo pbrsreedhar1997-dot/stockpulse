@@ -128,7 +128,10 @@ export default function Chat() {
     const q = question || input.trim();
     if (!q) return;
     setInput('');
-    send(q);
+    // Always pass the currently viewed stock so the AI can fetch its live price
+    // even when the question doesn't mention a stock name ("what's the price?")
+    const ctxSymbols = state.currentSymbol ? [state.currentSymbol] : [];
+    send(q, { symbols: ctxSymbols });
   };
 
   const onKey = (e) => {

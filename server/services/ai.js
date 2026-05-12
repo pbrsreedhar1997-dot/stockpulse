@@ -102,11 +102,13 @@ MACRO INTERPRETATION:
 ━━━ ACCURACY & SELF-CORRECTION ENGINE (Fix Layers 1–7) ━━━
 
 HALLUCINATION PREVENTION (Fix Layer 3 — ALWAYS ENFORCED):
-- NEVER use training memory for any price, rate, EPS, revenue, or ratio
-- Every financial number MUST come from the RAG RETRIEVAL RESULTS block
-- If a number is NOT in retrieved data → say "data unavailable for [field]" — do NOT estimate
-- If retrieved data seems inconsistent or stale → flag: "⚠ Note: data may be delayed"
-- Prohibited from memory: current prices, today's news, live rates, latest earnings
+- NEVER use training memory for any price, rate, EPS, revenue, or ratio — EVER
+- A [⚡ LIVE PRICE SNAPSHOT] block is ALWAYS injected above when a stock is identified — USE IT
+- The price in the LIVE PRICE SNAPSHOT is the ACTUAL current market price fetched seconds ago
+- If LIVE PRICE SNAPSHOT shows ₹1,850.45 → say ₹1,850.45. Do NOT say "approximately ₹1,800" or any other number
+- Every financial number MUST come from the LIVE PRICE SNAPSHOT or RAG RETRIEVAL RESULTS block
+- If no LIVE PRICE SNAPSHOT or RAG block is present → say "Please tell me which stock you want me to analyse" — do NOT guess any price
+- Prohibited from memory: current prices, today's news, live rates, latest earnings, any number that changes over time
 
 DATA QUALITY GATES (Fix Layer 4 — check before responding):
 - If OHLCV history < 60 bars → flag "Limited price history — technical signals may be unreliable"
@@ -1700,8 +1702,43 @@ export async function streamChat({ question, symbols = [], history = [], skipRag
   if (!skipRag) {
     try {
       const extracted = await resolveSymbolsFromQuestion(question);
+      // Merge: extracted from question first, then caller-provided symbols as fallback
+      // This lets "what is its price?" use the currentSymbol passed from the frontend
       const symsToUse = extracted.length ? extracted : symbols;
-      context = symsToUse.length ? await buildRagContext(symsToUse) : '';
+
+      if (symsToUse.length) {
+        // ── Fast live price pre-fetch ──────────────────────────────────────────
+        // Always inject a fresh price snapshot BEFORE the full RAG context so
+        // simple questions ("what's the price?") get an immediate accurate answer
+        // rather than the LLM falling back to training memory.
+        try {
+          const quickQuotes = await Promise.allSettled(
+            symsToUse.slice(0, 3).map(s => getQuote(s))
+          );
+          const priceLines = quickQuotes
+            .filter(r => r.status === 'fulfilled' && r.value?.price)
+            .map(r => {
+              const q = r.value;
+              const cur = q.currency === 'INR' ? '₹' : (q.currency || '$');
+              const chgSign = (q.change_pct ?? 0) >= 0 ? '+' : '';
+              return `${q.symbol ?? symsToUse[0]}: ₹${q.price?.toFixed(2)} | Change: ${chgSign}${q.change_pct?.toFixed(2)}% (${chgSign}${q.change?.toFixed(2)}) | Open: ${cur}${q.open?.toFixed(2)} | High: ${cur}${q.high?.toFixed(2)} | Low: ${cur}${q.low?.toFixed(2)} | Volume: ${q.volume ? (q.volume/1e5).toFixed(1)+'L' : '—'} | Mkt Cap: ${q.mkt_cap ? `${cur}${(q.mkt_cap/1e7).toFixed(0)} Cr` : '—'}`;
+            });
+          if (priceLines.length) {
+            const ts = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
+            context = `\n[⚡ LIVE PRICE SNAPSHOT — fetched ${ts} IST]\n${priceLines.join('\n')}\n`;
+            log.info(`Live price pre-fetch: ${priceLines.length} symbol(s)`);
+          }
+        } catch (priceErr) {
+          log.warn('Quick price fetch failed:', priceErr.message);
+        }
+
+        // ── Full RAG context (fundamentals, technicals, sentiment, macro) ──────
+        const fullCtx = await buildRagContext(symsToUse);
+        if (fullCtx) context += fullCtx;
+      } else {
+        // No symbol found from question OR caller — tell LLM to ask which stock
+        context = '\n[NOTE: No stock symbol could be identified from this question. Ask the user which specific stock or company they want to analyze before providing any price or prediction data.]';
+      }
     } catch (ragErr) {
       log.warn('RAG context build failed:', ragErr.message);
     }
