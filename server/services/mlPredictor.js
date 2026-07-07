@@ -218,8 +218,8 @@ class RandomForest {
     return sum / this.trees.length;
   }
 
-  // OOB accuracy estimate (rough — uses all training data as proxy)
-  oobAccuracy(X, y) {
+  // Accuracy against a given (X, y) set — caller decides if it's holdout or in-sample
+  accuracyOn(X, y) {
     let correct = 0;
     for (let i = 0; i < X.length; i++) {
       const prob = this.predictProba(X[i]);
@@ -243,8 +243,27 @@ export function trainAndPredict(candles, horizonDays = 10) {
       return { available: false, reason: 'Too few training samples' };
     }
 
+    // Chronological holdout: train only on the earlier 80% of samples, never
+    // exposing the trees (or their bootstraps) to the most recent 20% — that
+    // slice is reserved purely for an out-of-sample accuracy estimate.
+    const splitAt   = Math.max(20, Math.floor(X.length * 0.8));
+    const XTrain     = X.slice(0, splitAt);
+    const yTrain     = y.slice(0, splitAt);
+    const XHoldout   = X.slice(splitAt);
+    const yHoldout   = y.slice(splitAt);
+
+    // Final model used for the live prediction is trained on everything —
+    // more recent data helps the actual forecast — but accuracy is reported
+    // from the holdout-only model so it isn't inflated by in-sample fit.
     const rf = new RandomForest({ nTrees: 50, maxDepth: 5 });
     rf.fit(X, y);
+
+    let holdoutAcc = null;
+    if (XHoldout.length >= 5) {
+      const holdoutRf = new RandomForest({ nTrees: 50, maxDepth: 5 });
+      holdoutRf.fit(XTrain, yTrain);
+      holdoutAcc = holdoutRf.accuracyOn(XHoldout, yHoldout);
+    }
 
     const currentFeatures = extractFeatures(candles);
     if (!currentFeatures) {
@@ -252,7 +271,6 @@ export function trainAndPredict(candles, horizonDays = 10) {
     }
 
     const probUp    = rf.predictProba(currentFeatures);
-    const trainAcc  = rf.oobAccuracy(X, y);
     const posRate   = Math.round((y.filter(v => v === 1).length / y.length) * 100);
 
     const signal    = probUp >= 0.60 ? 'BULLISH'
@@ -267,7 +285,7 @@ export function trainAndPredict(candles, horizonDays = 10) {
       signal,
       confidence,
       trainingSamples: X.length,
-      trainingAccuracy: trainAcc,
+      holdoutAccuracy: holdoutAcc ?? 50, // 50 = no reliable holdout estimate available
       horizonDays,
       baseRate: posRate, // % of time market went up in training data
     };

@@ -12,6 +12,7 @@
 
 import Parser from 'rss-parser';
 import { get as cacheGet, set as cacheSet } from '../cache.js';
+import { getYieldCurve } from './fred.js';
 import log from '../log.js';
 
 const rss = new Parser({ timeout: 8000, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; StockPulse/1.0)' } });
@@ -52,7 +53,10 @@ export async function getMacroContext() {
   const cached = await cacheGet(ckey);
   if (cached) return cached;
 
-  const results = await Promise.allSettled(MACRO_SYMBOLS.map(m => yfChartQuote(m.sym)));
+  const [results, yieldCurve] = await Promise.all([
+    Promise.allSettled(MACRO_SYMBOLS.map(m => yfChartQuote(m.sym))),
+    getYieldCurve().catch(() => null),
+  ]);
   const data = MACRO_SYMBOLS.map((m, i) => ({
     ...m,
     ...(results[i].status === 'fulfilled' && results[i].value ? results[i].value : {}),
@@ -92,10 +96,19 @@ export async function getMacroContext() {
     }
   }
 
+  if (yieldCurve?.inverted) {
+    macroScore -= 5;
+    notes.push(`US 10Y-2Y yield curve inverted (${yieldCurve.spread}pp) — recession signal`);
+  }
+
   macroScore = Math.round(Math.max(0, Math.min(100, macroScore)));
   const regime = macroScore >= 62 ? 'RISK_ON' : macroScore <= 40 ? 'RISK_OFF' : 'NEUTRAL';
 
-  const ctx = { score: macroScore, regime, notes, indicators: data };
+  const ctx = {
+    score: macroScore, regime, notes, indicators: data,
+    yieldCurveInverted: yieldCurve?.inverted ?? false,
+    yieldCurve: yieldCurve ?? null,
+  };
   await cacheSet(ckey, ctx, 600); // 10-min cache
   return ctx;
 }

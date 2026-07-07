@@ -6,6 +6,7 @@ import log from '../log.js';
 import { avQuote, avOverview, avFinancials } from './alphavantage.js';
 import { nseQuote, nseProfile, nseFinancials } from './nse.js';
 import { upstoxQuote, upstoxHistory, upstoxAvailable } from './upstox.js';
+import { fhFinancials } from './finnhub.js';
 
 const yf = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
@@ -282,6 +283,7 @@ export async function getFinancials(symbol) {
       return_on_equity: pct(safeNum(fd.returnOnEquity)),
       revenue_growth:  pct(safeNum(fd.revenueGrowth)),
       earnings_growth: pct(safeNum(fd.earningsGrowth)),
+      free_cash_flow:  safeNum(fd.freeCashflow),
     };
     await cacheSet(key, result, 21600);
     return result;
@@ -307,8 +309,24 @@ export async function getFinancials(symbol) {
     return null;
   });
   if (avResult) {
+    // Alpha Vantage's OVERVIEW endpoint never returns debt_to_equity — Finnhub's
+    // metric endpoint does, so fill just that gap when available (best-effort,
+    // and weakest for NSE/BSE names since Finnhub's free tier favors US coverage).
+    if (avResult.debt_to_equity == null) {
+      const fh = await fhFinancials(symbol).catch(() => null);
+      if (fh?.debt_to_equity != null) avResult.debt_to_equity = fh.debt_to_equity;
+    }
     await cacheSet(key, avResult, 21600);
     return avResult;
+  }
+
+  const fhResult = await fhFinancials(symbol).catch(e => {
+    log.warn(`Finnhub financials failed for ${symbol}: ${e.message}`);
+    return null;
+  });
+  if (fhResult) {
+    await cacheSet(key, fhResult, 21600);
+    return fhResult;
   }
 
   log.warn(`All financials sources failed for ${symbol}`);

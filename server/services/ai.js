@@ -11,7 +11,7 @@ const groqClient = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
 // ─────────────────────────────────────────────────────────────────────────────
 // RAG SYSTEM PROMPT  (Layers 1–8 framework)
 // ─────────────────────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are StockPulse AI — an institutional-grade financial intelligence RAG system for NSE/BSE equities, Indian macro, and global markets. You execute a 4-model ensemble (Technical 25%, Fundamental 35%, Sentiment 20%, Macro 20%) with a full 8-layer confidence scoring framework.
+const SYSTEM_PROMPT = `You are StockPulse AI — an institutional-grade financial intelligence RAG system for NSE/BSE equities, Indian macro, and global markets. You execute a 5-model ensemble (Fundamental 25%, Technical 25%, Sentiment 15%, Macro 15%, ML Random Forest 20% — falling back to a 4-model Fundamental 30%/Technical 30%/Sentiment 20%/Macro 20% blend when the ML model is unavailable for a ticker) with a full 8-layer confidence scoring framework.
 
 BEHAVIOUR:
 - Be direct and data-driven. Use actual numbers from the RAG RETRIEVAL RESULTS block.
@@ -32,10 +32,10 @@ WHEN RAG DATA IS PROVIDED:
 - Use the macro regime (RISK_ON/RISK_OFF/NEUTRAL) as a modifier
 - Reference peer performance to contextualise relative strength/weakness
 - DCF implied return tells you if the stock is cheap/expensive vs intrinsic value
-- Always cite the ML RANDOM FOREST signal alongside the 4-model ensemble
-- Always cite BACKTEST accuracy when present — it tells you how reliable our signals actually are
-- If backtest accuracy is < 50%, explicitly note "Our historical signals for this stock have been weak"
-- If ML signal contradicts ensemble → flag as "Mixed ML signal: warrants caution"
+- The ML RANDOM FOREST signal is already folded into the ensemble score when available — cite its standalone probUp too, and its HOLDOUT accuracy (not training accuracy, which is overfit in-sample)
+- Always cite the TECHNICAL SIGNAL BACKTEST accuracy when present — it validates the rule-based technical score, NOT the Random Forest, so don't describe it as the RF's track record
+- If backtest accuracy is < 50%, explicitly note "Our historical technical signals for this stock have been weak"
+- If the ML signal direction contradicts the non-ML ensemble components → flag as "Mixed ML signal: warrants caution"
 
 FULL ANALYSIS FORMAT (for "analyse", "predict", "full", "breakdown" queries):
 
@@ -568,6 +568,7 @@ function computeTechnicals(candles) {
     macd: macdHist != null ? `${macdSignal} (hist: ${macdHist.toFixed(3)})` : 'N/A',
     bollinger_pct_b: bbPct != null ? `${bbPct.toFixed(2)} (${bbPct < 0.2 ? 'Near lower band' : bbPct > 0.8 ? 'Near upper band' : 'Mid range'})` : 'N/A',
     volume_trend: volTrend != null ? `${volTrend > 0 ? '+' : ''}${volTrend.toFixed(1)}% vs prior 20d` : 'N/A',
+    vol_trend_pct: volTrend,
     data_points: n,
   };
 }
@@ -1061,7 +1062,14 @@ async function buildRagContext(symbols) {
       let peers = null;
       try { peers = sector ? await getPeerPerformance(sym, sector) : null; } catch {}
 
-      // ── 4-model ensemble ─────────────────────────────────────────────────────
+      // ── Module 3 (ML) + Module 7 (backtest) — run before the ensemble so the
+      //    RF prediction can feed into it as a 5th weighted input ──────────────
+      const [mlResult, btResult] = await Promise.all([
+        Promise.resolve(hist ? trainAndPredict(hist) : { available: false, reason: 'No OHLCV' }),
+        Promise.resolve(hist ? walkForwardBacktest(hist) : { available: false, reason: 'No OHLCV' }),
+      ]);
+
+      // ── 4/5-model ensemble ───────────────────────────────────────────────────
       const fScore = fundamentals?.score ?? 50;
       const tScore = (() => {
         let s = technicals?.score ?? 50;
@@ -1078,8 +1086,13 @@ async function buildRagContext(symbols) {
       })();
       const sScore = sentiment?.score ?? 50;
       const mScore = macro?.score     ?? 50;
+      const mlScore = mlResult.available ? mlResult.probUp : null;
 
-      const ensemble  = Math.round(fScore * 0.30 + tScore * 0.30 + sScore * 0.20 + mScore * 0.20);
+      // When the RF has a usable prediction, blend it in as a 5th input;
+      // otherwise fall back to the original 4-model weighting.
+      const ensemble  = mlScore != null
+        ? Math.round(fScore * 0.25 + tScore * 0.25 + sScore * 0.15 + mScore * 0.15 + mlScore * 0.20)
+        : Math.round(fScore * 0.30 + tScore * 0.30 + sScore * 0.20 + mScore * 0.20);
       const direction = ensemble >= 63 ? 'BULLISH' : ensemble <= 37 ? 'BEARISH' : 'NEUTRAL';
 
       // ── Layer 5: Full confidence scoring engine (Section A/B/C/D) ────────────
@@ -1094,12 +1107,18 @@ async function buildRagContext(symbols) {
       ].filter(Boolean).length;
 
       const revenueDecline = (fin?.revenue_growth ?? 0) < 0;
-      const negativeFCF    = false; // FCF not directly available from Yahoo
+      const negativeFCF    = fin?.free_cash_flow != null && fin.free_cash_flow < 0;
       const sectorETFAligned = peers?.avg_sector_change_pct != null
         ? (direction === 'BULLISH' ? peers.avg_sector_change_pct > 0 : peers.avg_sector_change_pct < 0)
         : false;
       const macroTailwindAligned = direction === 'BULLISH' ? (macro?.score ?? 50) > 60
                                                            : (macro?.score ?? 50) < 40;
+      // Technical proxy only (no confirmed institutional-flow data source exists
+      // for NSE/BSE) — rising OBV alongside above-average volume is the standard
+      // stand-in for accumulation.
+      const institutionalAccumulation = advTech?.raw?.obvTrend === 'RISING'
+        && (technicals?.vol_trend_pct ?? 0) > 10;
+      const yieldCurveInverted = macro?.yieldCurveInverted ?? false;
 
       const confResult = computeConfidenceScore({
         technicalScore: tScore, fundamentalScore: fScore,
@@ -1108,6 +1127,7 @@ async function buildRagContext(symbols) {
         sourceCount, indicatorCount, apiSuccessRate,
         vix: vixVal, revenueDecline, negativeFCF,
         sectorETFAligned, macroTailwindAligned,
+        institutionalAccumulation, yieldCurveInverted,
         redFlagCount: 0, // placeholder, gates apply after
       });
 
@@ -1118,12 +1138,6 @@ async function buildRagContext(symbols) {
       // ── Module 4.1: Red flags + earnings quality ──────────────────────────────
       const redFlags      = detectRedFlags(fin, q);
       const earningsQual  = computeEarningsQuality(fin, q);
-
-      // ── Module 3 (ML) + Module 7 (backtest) — run in parallel ─────────────
-      const [mlResult, btResult] = await Promise.all([
-        Promise.resolve(hist ? trainAndPredict(hist) : { available: false, reason: 'No OHLCV' }),
-        Promise.resolve(hist ? walkForwardBacktest(hist) : { available: false, reason: 'No OHLCV' }),
-      ]);
 
       // ── Module 6.4: Monte Carlo GBM (1,000 paths, 90-day horizon) ────────────
       let monteCarlo = null;
@@ -1220,13 +1234,19 @@ ${macro?.indicators?.filter(i => i.price).map(i =>
   `  ${i.label.padEnd(20)}: ${i.unit === '₹' ? '₹' : ''}${i.price?.toFixed(2) ?? '—'} (${i.change_pct >= 0 ? '+' : ''}${i.change_pct?.toFixed(2) ?? '—'}%)`
 ).join('\n') ?? '  Macro data unavailable'}
 ${macro?.notes?.length ? '  Signals: ' + macro.notes.join(' | ') : ''}
+${macro?.yieldCurve ? `  US 10Y-2Y Spread: ${macro.yieldCurve.spread}pp ${macro.yieldCurve.inverted ? '(INVERTED ⚠)' : '(normal)'}` : ''}
 ${wb ? Object.entries(wb).map(([k, v]) => `  ${k}: ${v.value}% (${v.year})`).join('\n') : ''}
 
-── 4-MODEL ENSEMBLE (Layer 4) ───────────────────────────
-  Fundamental (30%): ${fScore} × 0.30 = ${Math.round(fScore * 0.30)}
+── ${mlScore != null ? '5-MODEL' : '4-MODEL'} ENSEMBLE (Layer 4) ───────────────────────────
+${mlScore != null ? `  Fundamental (25%): ${fScore} × 0.25 = ${Math.round(fScore * 0.25)}
+  Technical   (25%): ${tScore} × 0.25 = ${Math.round(tScore * 0.25)}
+  Sentiment   (15%): ${sScore} × 0.15 = ${Math.round(sScore * 0.15)}
+  Macro       (15%): ${mScore} × 0.15 = ${Math.round(mScore * 0.15)}
+  ML RF       (20%): ${mlScore} × 0.20 = ${Math.round(mlScore * 0.20)}` : `  Fundamental (30%): ${fScore} × 0.30 = ${Math.round(fScore * 0.30)}
   Technical   (30%): ${tScore} × 0.30 = ${Math.round(tScore * 0.30)}
   Sentiment   (20%): ${sScore} × 0.20 = ${Math.round(sScore * 0.20)}
   Macro       (20%): ${mScore} × 0.20 = ${Math.round(mScore * 0.20)}
+  (ML RF unavailable for this ticker — ${mlResult.reason})`}
   ────────────────────────────────────────────────────────
   ENSEMBLE SCORE:    ${ensemble}/100 → ${direction}
 
@@ -1253,14 +1273,14 @@ ${earningsQual.low.length  ? '  ⚠ ' + earningsQual.low.join(' | ')  : ''}
 
 ── ML RANDOM FOREST (Module 3 — 50 trees, trained on this ticker) ──
 ${mlResult.available
-  ? `  Signal:         ${mlResult.signal} (prob up: ${mlResult.probUp}%)
+  ? `  Signal:         ${mlResult.signal} (prob up: ${mlResult.probUp}%) — folded into ensemble at 20% weight
   ML Confidence:   ${mlResult.confidence}/100
-  Training data:   ${mlResult.trainingSamples} samples | Training accuracy: ${mlResult.trainingAccuracy}%
+  Training data:   ${mlResult.trainingSamples} samples | Holdout accuracy: ${mlResult.holdoutAccuracy}% (out-of-sample, last 20% of history)
   Horizon:         ${mlResult.horizonDays}-day price direction
   Base rate (up):  ${mlResult.baseRate}% (% of training bars where price was higher ${mlResult.horizonDays}d later)`
   : `  Unavailable: ${mlResult.reason}`}
 
-── WALK-FORWARD BACKTEST (Module 7 — historical signal accuracy) ──
+── TECHNICAL SIGNAL BACKTEST (Module 7 — rule-based signal, not the ML model) ──
 ${btResult.available
   ? `  Overall accuracy: ${btResult.overallAccuracy}% over ${btResult.totalSignals} signals (${btResult.horizonDays}d horizon)
   Bullish signals:   ${btResult.bySignal['BULLISH'].accuracy ?? '—'}% accurate (n=${btResult.bySignal['BULLISH'].count})
@@ -1812,7 +1832,7 @@ async function streamAnthropic({ question, symbols, history, skipRag = false, co
     }
 
     const stream = await client.messages.stream({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
       max_tokens: depth === 'deep' ? 2500 : 700,
       system: SYSTEM_PROMPT + ragContext,
       messages: [
