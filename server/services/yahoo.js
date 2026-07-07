@@ -294,11 +294,11 @@ export async function getProfile(symbol) {
 
   // Screener DB — sector/industry/name for the universe (reliable on cloud)
   const prow = await screenerRow(symbol);
-  if (prow && (prow.sector || prow.name)) {
+  if (prow && (prow.sector || prow.theme || prow.name)) {
     const result = {
       name:        prow.name || symbol,
-      sector:      prow.sector   || null,
-      industry:    prow.industry || null,
+      sector:      prow.sector   || prow.theme || null,
+      industry:    prow.industry || prow.theme || null,
       exchange:    symbol.endsWith('.BO') ? 'BSE' : 'NSE',
       currency:    'INR',
       website:     null,
