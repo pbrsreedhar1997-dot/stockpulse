@@ -1717,6 +1717,14 @@ export async function streamChat({ question, symbols = [], history = [], skipRag
     })();
   }
 
+  // Only the heavy, multi-page RAG document (fundamentals + technicals + ML +
+  // Monte Carlo + macro) is needed for genuine analysis. Simple price/news/
+  // conversational questions are fully answered by the lightweight live-price
+  // snapshot below — building the full doc for them wastes thousands of tokens
+  // and trips Groq's per-minute token limit (TPM) on the free tier.
+  const needsFullRag = depth === 'deep'
+    || ['prediction', 'fundamental', 'technical'].includes(qClass.type);
+
   // Build RAG context
   let context = '';
   if (!skipRag) {
@@ -1753,8 +1761,12 @@ export async function streamChat({ question, symbols = [], history = [], skipRag
         }
 
         // ── Full RAG context (fundamentals, technicals, sentiment, macro) ──────
-        const fullCtx = await buildRagContext(symsToUse);
-        if (fullCtx) context += fullCtx;
+        // Skipped for simple price/news/conversational queries to stay well
+        // under Groq's per-minute token limit — the live snapshot above suffices.
+        if (needsFullRag) {
+          const fullCtx = await buildRagContext(symsToUse);
+          if (fullCtx) context += fullCtx;
+        }
       } else {
         // No symbol found from question OR caller — tell LLM to ask which stock
         context = '\n[NOTE: No stock symbol could be identified from this question. Ask the user which specific stock or company they want to analyze before providing any price or prediction data.]';
