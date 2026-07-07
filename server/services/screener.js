@@ -33,8 +33,9 @@ async function saveOneToDB(p) {
       INSERT INTO screener_picks
         (symbol,name,sector,industry,theme,price,week52_high,week52_low,
          decline_pct,mkt_cap_cr,change_pct,pe_ratio,eps,net_margin,roe,
-         gross_margin,revenue_cr,composite_score,category,scanned_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+         gross_margin,revenue_cr,composite_score,category,
+         revenue_growth,earnings_growth,scanned_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
       ON CONFLICT (symbol) DO UPDATE SET
         name=EXCLUDED.name, sector=EXCLUDED.sector, theme=EXCLUDED.theme,
         price=EXCLUDED.price, week52_high=EXCLUDED.week52_high, week52_low=EXCLUDED.week52_low,
@@ -42,12 +43,14 @@ async function saveOneToDB(p) {
         change_pct=EXCLUDED.change_pct, pe_ratio=EXCLUDED.pe_ratio, eps=EXCLUDED.eps,
         net_margin=EXCLUDED.net_margin, roe=EXCLUDED.roe, gross_margin=EXCLUDED.gross_margin,
         revenue_cr=EXCLUDED.revenue_cr, composite_score=EXCLUDED.composite_score,
-        category=EXCLUDED.category, scanned_at=EXCLUDED.scanned_at
+        category=EXCLUDED.category, revenue_growth=EXCLUDED.revenue_growth,
+        earnings_growth=EXCLUDED.earnings_growth, scanned_at=EXCLUDED.scanned_at
     `, [
       p.symbol, p.name, p.sector, p.industry, p.theme,
       p.price, p.week52_high, p.week52_low, p.decline_pct, p.mkt_cap_cr,
       p.change_pct, p.pe_ratio, p.eps, p.net_margin, p.roe,
       p.gross_margin, p.revenue_cr, p.composite_score, p.category,
+      p.revenue_growth ?? null, p.earnings_growth ?? null,
       Math.floor(Date.now() / 1000),
     ]);
   } catch (e) {
@@ -109,6 +112,8 @@ function rowToObj(row) {
     revenue_cr:      row.revenue_cr   != null ? Number(row.revenue_cr)   : null,
     composite_score: row.composite_score != null ? Number(row.composite_score) : 0,
     category:        row.category    || 'value',
+    revenue_growth:  row.revenue_growth  != null ? Number(row.revenue_growth)  : null,
+    earnings_growth: row.earnings_growth != null ? Number(row.earnings_growth) : null,
     scanned_at:      row.scanned_at  != null ? Number(row.scanned_at)    : null,
   };
 }
@@ -116,13 +121,13 @@ function rowToObj(row) {
 // ─── AI analysis DB helpers ───────────────────────────────────────────────────
 const AI_CACHE_SECS = 3 * 3600;
 
-export async function getRecentAnalysis() {
+export async function getRecentAnalysis(kind = 'value') {
   try {
     const cutoff = Math.floor(Date.now() / 1000) - AI_CACHE_SECS;
     const r = await query(
       `SELECT analysis, picks_count, created_at FROM screener_ai_analysis
-       WHERE created_at > $1 ORDER BY created_at DESC LIMIT 1`,
-      [cutoff]
+       WHERE created_at > $1 AND kind = $2 ORDER BY created_at DESC LIMIT 1`,
+      [cutoff, kind]
     );
     if (!r.rows.length) return null;
     const row    = r.rows[0];
@@ -134,11 +139,11 @@ export async function getRecentAnalysis() {
   }
 }
 
-export async function saveAnalysis(text, picksCount) {
+export async function saveAnalysis(text, picksCount, kind = 'value') {
   try {
     await query(
-      `INSERT INTO screener_ai_analysis (analysis, picks_count, created_at) VALUES ($1,$2,$3)`,
-      [text, picksCount, Math.floor(Date.now() / 1000)]
+      `INSERT INTO screener_ai_analysis (analysis, picks_count, kind, created_at) VALUES ($1,$2,$3,$4)`,
+      [text, picksCount, kind, Math.floor(Date.now() / 1000)]
     );
   } catch (e) {
     log.warn('AI analysis save failed:', e.message);
@@ -192,6 +197,41 @@ High ROE + good margins. Buy-and-hold for 2–3 years even if near 52W high. Why
 From this list only. Look cheap but aren't. Specific reason (deteriorating margins, high debt, structural headwind).
 
 Use actual prices and metrics. Be direct. Under 500 words. No generic disclaimers.`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MULTIBAGGER AI PROMPT BUILDER
+// ─────────────────────────────────────────────────────────────────────────────
+export function buildMultibaggerPrompt(picks) {
+  const top = picks.slice(0, 12);
+
+  const fmt = s =>
+    `${s.symbol.replace(/\.(NS|BO)$/i, '')} | ${s.sector || s.theme} | ₹${s.price} | ` +
+    `MBscore ${s.multibagger_score}/100 | ROE ${s.roe ?? '—'}% | ` +
+    `Margin ${s.net_margin ?? '—'}% | P/E ${s.pe_ratio ?? '—'}x | ` +
+    `EPSg ${s.earnings_growth ?? '—'}% | Revg ${s.revenue_growth ?? '—'}% | ` +
+    `MCap ₹${s.mkt_cap_cr ?? '—'}Cr`;
+
+  return `You are a top-performing Indian equity analyst who specialises in identifying multibagger stocks — companies that can deliver 3–10x returns over 3–5 years. Today is ${new Date().toDateString()}.
+
+Screened candidates (ranked by a quality-growth "multibagger score" 0–100 — high ROE, earnings & revenue growth, strong margins, room to compound):
+${top.map(fmt).join('\n')}
+
+Write a sharp, high-conviction multibagger brief in EXACTLY this structure:
+
+## 🏆 Highest-Conviction Multibagger
+The single best pick. Why it can multiply: the growth engine, moat, and runway. 1-yr target ₹X · 3-yr target ₹X · conviction (High/Medium) · key risk.
+
+## 🚀 Top 5 Multibagger Candidates
+For each: **SYMBOL** — 1-line thesis using its actual ROE/growth/margins · 3-yr potential (e.g. "2–3x") · entry zone ₹X · one key risk.
+
+## 🧭 Why These Can Compound
+2–3 sentences on the shared traits (high reinvestment ROE, sector tailwind, operating leverage) that make this basket multibagger-worthy. Reference India structural themes (capex, premiumisation, financialisation, manufacturing/PLI, digital) where relevant.
+
+## ⚠️ Watch-outs
+1–2 names from the list that look strong but carry elevated risk (rich valuation, cyclical earnings, concentration). Be specific.
+
+Use the actual metrics provided. Be direct and quantitative. Under 450 words. No generic disclaimers, no "consult a financial advisor" boilerplate.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -499,6 +539,73 @@ function getCategory(item) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MULTIBAGGER SCORE  (0–100) — growth-compounder lens (distinct from value score)
+//   Favours: high ROE, strong margins, earnings/revenue growth, room to compound
+//   (smaller cap), quality-at-a-fair-price. Penalises: losses, froth (>80x PE),
+//   mega-cap saturation, and deep distress declines.
+// ─────────────────────────────────────────────────────────────────────────────
+function computeMultibaggerScore(item) {
+  const { roe, net_margin, gross_margin, pe_ratio, eps,
+          mkt_cap_cr, decline_pct, revenue_growth, earnings_growth } = item;
+
+  // Loss-makers are not multibagger candidates under this lens
+  if ((eps ?? 0) <= 0) return 0;
+
+  let s = 10; // base
+
+  // ROE — the single strongest long-term compounding signal (max 28)
+  const r = roe ?? 0;
+  if (r >= 30)      s += 28;
+  else if (r >= 22) s += 23;
+  else if (r >= 16) s += 17;
+  else if (r >= 12) s += 11;
+  else if (r >= 8)  s += 5;
+
+  // Earnings growth (max 18) — persisted from Yahoo; null-safe
+  const eg = earnings_growth ?? 0;
+  if (eg >= 30)      s += 18;
+  else if (eg >= 20) s += 14;
+  else if (eg >= 12) s += 9;
+  else if (eg >= 5)  s += 4;
+  else if (eg < 0)   s -= 6; // shrinking earnings is a red flag
+
+  // Revenue growth (max 12)
+  const rg = revenue_growth ?? 0;
+  if (rg >= 20)      s += 12;
+  else if (rg >= 12) s += 8;
+  else if (rg >= 6)  s += 4;
+  else if (rg < 0)   s -= 4;
+
+  // Margins / pricing power (max 14)
+  const nm = net_margin ?? 0;
+  if (nm >= 20)      s += 10;
+  else if (nm >= 12) s += 7;
+  else if (nm >= 6)  s += 3;
+  if ((gross_margin ?? 0) >= 40) s += 4;
+
+  // Valuation — quality at a fair price (max 12). Reward reasonable PE, penalise froth.
+  if (pe_ratio != null && pe_ratio > 0) {
+    if (pe_ratio <= 25)      s += 12;
+    else if (pe_ratio <= 40) s += 8;
+    else if (pe_ratio <= 60) s += 4;
+    else if (pe_ratio <= 80) s += 1;
+    else                     s -= 6; // >80x = priced for perfection
+  }
+
+  // Room to compound — smaller caps have more multibagger headroom (max 12)
+  const cap = mkt_cap_cr ?? 0;
+  if (cap >= 1000 && cap <= 15000)       s += 12;  // small/mid sweet spot
+  else if (cap > 15000 && cap <= 50000)  s += 8;   // mid
+  else if (cap > 50000 && cap <= 150000) s += 4;   // large
+  else if (cap > 150000)                 s += 1;   // mega — hard to multi-bag
+
+  // Distress penalty — a >45% drawdown signals structural trouble, not a bargain
+  if ((decline_pct ?? 0) >= 45) s -= 8;
+
+  return Math.round(Math.min(100, Math.max(0, s)));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // FETCH ONE STOCK  — relaxed criteria: include ALL stocks with valid data
 // ─────────────────────────────────────────────────────────────────────────────
 async function fetchOne({ s: symbol, theme }) {
@@ -547,6 +654,8 @@ async function fetchOne({ s: symbol, theme }) {
       roe:          roe != null ? round1(roe) : null,
       gross_margin: f?.gross_margin  ?? null,
       revenue_cr:   f?.revenue_ttm ? Math.round(f.revenue_ttm / 1e7) : null,
+      revenue_growth:  f?.revenue_growth  != null ? round1(f.revenue_growth)  : null,
+      earnings_growth: f?.earnings_growth != null ? round1(f.earnings_growth) : null,
     };
 
     item.composite_score = computeScore(item);
@@ -677,5 +786,22 @@ export async function getMomentumPicks() {
     `, [stale]);
     return result.rows;
   } catch { return []; }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MULTIBAGGER PICKS — ranks stored screener_picks by the quality-growth lens
+// ─────────────────────────────────────────────────────────────────────────────
+export async function getMultibaggerPicks(limit = 20) {
+  // Prefer fresh rows; fall back to all stored rows if nothing recent.
+  let rows = await loadPicksFromDB();
+  if (!rows.length) rows = await loadAllStocksFromDB();
+
+  const scored = rows
+    .map(s => ({ ...s, multibagger_score: computeMultibaggerScore(s) }))
+    .filter(s => s.multibagger_score > 0)
+    .sort((a, b) => b.multibagger_score - a.multibagger_score)
+    .slice(0, limit);
+
+  return scored;
 }
 

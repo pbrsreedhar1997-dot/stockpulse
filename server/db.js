@@ -129,6 +129,9 @@ export async function initDb() {
         category        VARCHAR(20),
         scanned_at      BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
       )`);
+    // Growth fields (added later) — needed for multibagger scoring
+    await query(`ALTER TABLE screener_picks ADD COLUMN IF NOT EXISTS revenue_growth NUMERIC(8,2)`).catch(() => {});
+    await query(`ALTER TABLE screener_picks ADD COLUMN IF NOT EXISTS earnings_growth NUMERIC(8,2)`).catch(() => {});
     // ── AI analysis cache ────────────────────────────────────────────────────
     await query(`
       CREATE TABLE IF NOT EXISTS screener_ai_analysis (
@@ -137,6 +140,8 @@ export async function initDb() {
         picks_count  INTEGER,
         created_at   BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
       )`);
+    // Discriminate value vs multibagger briefs so they don't overwrite each other
+    await query(`ALTER TABLE screener_ai_analysis ADD COLUMN IF NOT EXISTS kind VARCHAR(20) DEFAULT 'value'`).catch(() => {});
     await query(`CREATE INDEX IF NOT EXISTS idx_screener_ai_ts ON screener_ai_analysis(created_at DESC)`);
     // ── Prediction accuracy tracking (Layer 8) ───────────────────────────────
     await query(`

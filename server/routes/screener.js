@@ -3,6 +3,7 @@ import {
   getValuePicks, getAllStocks, refreshScreener,
   getRecentAnalysis, saveAnalysis, buildAnalysisPrompt,
   loadPicksFromDB, getScanStatus, getMomentumPicks,
+  getMultibaggerPicks, buildMultibaggerPrompt,
 } from '../services/screener.js';
 import { streamChat } from '../services/ai.js';
 import log from '../log.js';
@@ -148,6 +149,75 @@ router.get('/momentum', async (req, res) => {
     const data = await getMomentumPicks();
     res.json({ ok: true, data });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Multibagger picks (ranked, deterministic) ───────────────────────────────
+router.get('/multibagger', async (req, res) => {
+  try {
+    const data = await getMultibaggerPicks();
+    res.json({ ok: true, data });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Multibagger AI thesis (SSE streaming, mirrors /ai-analysis) ──────────────
+router.get('/multibagger-ai', async (req, res) => {
+  res.setHeader('Content-Type',      'text/event-stream');
+  res.setHeader('Cache-Control',     'no-cache');
+  res.setHeader('Connection',        'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  const send = (obj) => { try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch {} };
+
+  let aborted = false;
+  req.on('close', () => { aborted = true; });
+
+  const forceRefresh = !!req.query.refresh;
+
+  try {
+    // 1. Serve cached multibagger brief if fresh
+    if (!forceRefresh) {
+      const cached = await getRecentAnalysis('multibagger');
+      if (cached) {
+        const CHUNK = 60;
+        const text  = cached.analysis;
+        for (let i = 0; i < text.length; i += CHUNK) {
+          if (aborted) return res.end();
+          send({ text: text.slice(i, i + CHUNK) });
+        }
+        send({ done: true, cached: true, ageMin: cached.ageMin });
+        return res.end();
+      }
+    }
+
+    // 2. Get ranked multibagger picks
+    const picks = await getMultibaggerPicks();
+    if (!picks.length) {
+      send({ error: 'No screener data yet. Please wait for the screener to finish scanning.' });
+      return res.end();
+    }
+
+    log.info(`Multibagger AI: generating for ${picks.length} stocks`);
+    let fullText = '';
+
+    await streamChat({
+      question: buildMultibaggerPrompt(picks),
+      symbols:  [],
+      history:  [],
+      skipRag:  true,
+      onDelta: (chunk) => { if (aborted) return; fullText += chunk; send({ text: chunk }); },
+      onDone: async () => {
+        if (fullText) await saveAnalysis(fullText, picks.length, 'multibagger');
+        send({ done: true, cached: false, stocksAnalyzed: picks.length });
+        res.end();
+      },
+      onError: (err) => { log.error('Multibagger AI error:', err); send({ error: String(err) }); res.end(); },
+    });
+  } catch (e) {
+    log.error('Multibagger AI route:', e.message);
+    send({ error: e.message });
+    res.end();
+  }
 });
 
 // Background analysis refresh (does not send to any client — just updates DB)

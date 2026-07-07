@@ -1482,3 +1482,142 @@
     &__body { background: var(--card); }
   }
 }
+
+/* ── Multibaggers ─────────────────────────────────────────────────────────── */
+.sc-mb {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-bottom: 8px;
+
+  &__grid-label {
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text3);
+    padding: 0 2px;
+  }
+
+  &__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+  }
+}
+
+/* Premium accent panel for the AI multibagger brief */
+.sc-ai--mb {
+  border: 1px solid rgba(16, 217, 140, 0.28);
+  background:
+    linear-gradient(135deg, rgba(16, 217, 140, 0.06), rgba(232, 168, 56, 0.05)),
+    var(--card);
+
+  .sc-ai__title {
+    background: linear-gradient(90deg, #10D98C, #E8A838);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+}
+
+.sc-mbcard {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 13px 15px;
+  cursor: pointer;
+  transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s, background 0.18s;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  overflow: hidden;
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 3px;
+    background: linear-gradient(180deg, #10D98C, #E8A838);
+    opacity: 0.5;
+    transition: opacity 0.18s;
+  }
+
+  &:hover {
+    border-color: rgba(16, 217, 140, 0.4);
+    background: var(--card2);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.2);
+    &::before { opacity: 1; }
+  }
+
+  &__top { display: flex; align-items: center; gap: 10px; }
+
+  &__rank {
+    font-size: 11px;
+    font-weight: 800;
+    color: var(--text3);
+    min-width: 26px;
+    flex-shrink: 0;
+    font-family: 'JetBrains Mono', monospace;
+
+    &--top {
+      color: #E8A838;
+      text-shadow: 0 0 12px rgba(232, 168, 56, 0.5);
+    }
+  }
+
+  &__info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  &__sym  { font-size: 14px; font-weight: 800; color: var(--text); letter-spacing: -0.2px; }
+  &__name {
+    font-size: 10.5px; color: var(--text3);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  &__price-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; flex-shrink: 0; }
+  &__price { font-size: 13px; font-weight: 700; color: var(--text); font-family: 'JetBrains Mono', monospace; }
+  &__chg {
+    font-size: 11px; font-weight: 700; font-family: 'JetBrains Mono', monospace;
+    &.up { color: var(--up); } &.down { color: var(--down); }
+  }
+
+  &__score-row { display: flex; align-items: center; gap: 8px; }
+  &__score-label {
+    font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px;
+    color: var(--text3); width: 92px; flex-shrink: 0;
+  }
+  &__score-track { flex: 1; height: 5px; background: var(--border); border-radius: 5px; overflow: hidden; }
+  &__score-fill {
+    height: 100%; border-radius: 5px;
+    background: linear-gradient(90deg, #10D98C, #E8A838);
+    transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  &__score-val {
+    font-size: 12px; font-weight: 800; font-family: 'JetBrains Mono', monospace;
+    color: var(--text); width: 26px; text-align: right;
+  }
+
+  &__tags { display: flex; flex-wrap: wrap; gap: 5px; }
+  &__tag {
+    font-size: 9.5px; font-weight: 700; padding: 2px 7px;
+    border-radius: 10px; border: 1px solid; letter-spacing: 0.2px;
+  }
+
+  &__meta { display: flex; gap: 12px; flex-wrap: wrap; }
+  &__meta-item {
+    font-size: 10px; color: var(--text3);
+    strong { color: var(--text2); font-family: 'JetBrains Mono', monospace; }
+  }
+}
+
+/* Staggered entrance — each card animates in with an index-based delay */
+.stagger-in {
+  opacity: 0;
+  animation: fadeUp 0.42s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation-delay: calc(var(--i, 0) * 45ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stagger-in { animation: none; opacity: 1; }
+}

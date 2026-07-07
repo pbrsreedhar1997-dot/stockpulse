@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 
-export function useScreenerAI() {
+export function useScreenerAI(endpoint = '/api/screener/ai-analysis') {
   const [text,   setText]   = useState('');
   const [status, setStatus] = useState('idle'); // idle | loading | done | error
   const [cached, setCached] = useState(false);
@@ -19,8 +19,8 @@ export function useScreenerAI() {
 
     try {
       const url = forceRefresh
-        ? '/api/screener/ai-analysis?refresh=1'
-        : '/api/screener/ai-analysis';
+        ? `${endpoint}?refresh=1`
+        : endpoint;
 
       const resp = await fetch(url, { cache: 'no-store' });
       if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
@@ -71,7 +71,7 @@ export function useScreenerAI() {
       setStatus('error');
       setText(e.message || 'Failed to load analysis. Please try again.');
     }
-  }, []);
+  }, [endpoint]);
 
   return { text, status, cached, ageMin, generate };
 }

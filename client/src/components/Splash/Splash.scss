@@ -1,0 +1,124 @@
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(120% 90% at 50% 30%, rgba(232, 168, 56, 0.10), transparent 60%),
+    var(--bg);
+  opacity: 1;
+  transition: opacity 0.48s ease, transform 0.48s ease;
+
+  &--leaving {
+    opacity: 0;
+    transform: scale(1.04);
+    pointer-events: none;
+  }
+
+  &__inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    animation: splash-rise 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  &__mark {
+    position: relative;
+    width: 82px;
+    height: 82px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    border-radius: 22px;
+    background: linear-gradient(145deg, rgba(232, 168, 56, 0.16), rgba(232, 168, 56, 0.04));
+    border: 1px solid rgba(232, 168, 56, 0.3);
+    box-shadow: 0 0 40px rgba(232, 168, 56, 0.18);
+
+    svg { width: 46px; height: 46px; }
+  }
+
+  &__pulse {
+    position: absolute;
+    inset: 0;
+    border-radius: 22px;
+    border: 1.5px solid rgba(232, 168, 56, 0.5);
+    animation: splash-ring 1.8s ease-out infinite;
+  }
+
+  // Line-draw effect on the chart glyph
+  &__line {
+    stroke-dasharray: 44;
+    stroke-dashoffset: 44;
+    animation: splash-draw 0.9s cubic-bezier(0.65, 0, 0.35, 1) forwards;
+    &--2 { animation-delay: 0.35s; stroke-dasharray: 20; stroke-dashoffset: 20; }
+  }
+
+  &__word {
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: var(--text);
+    opacity: 0;
+    animation: splash-fade-up 0.5s ease forwards;
+    animation-delay: 0.5s;
+  }
+
+  &__tagline {
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.4px;
+    color: var(--text3, #8b93a7);
+    opacity: 0;
+    animation: splash-fade-up 0.5s ease forwards;
+    animation-delay: 0.68s;
+  }
+
+  &__bar {
+    margin-top: 6px;
+    width: 160px;
+    height: 3px;
+    border-radius: 3px;
+    background: rgba(232, 168, 56, 0.14);
+    overflow: hidden;
+
+    span {
+      display: block;
+      height: 100%;
+      width: 40%;
+      border-radius: 3px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      animation: splash-slide 1.15s ease-in-out infinite;
+    }
+  }
+}
+
+@keyframes splash-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes splash-draw   { to { stroke-dashoffset: 0; } }
+@keyframes splash-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes splash-ring {
+  0%   { transform: scale(1);    opacity: 0.6; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+@keyframes splash-slide {
+  0%   { transform: translateX(-120%); }
+  100% { transform: translateX(320%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splash, .splash__inner, .splash__line, .splash__word,
+  .splash__tagline, .splash__pulse, .splash__bar span {
+    animation: none !important;
+    opacity: 1;
+    stroke-dashoffset: 0;
+  }
+}

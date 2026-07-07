@@ -590,7 +590,7 @@ function MomentumPanel({ onPick }) {
           const cat  = CAT_META[s.category];
 
           return (
-            <div key={s.symbol} className="sc-mcard" onClick={() => onPick(s)}>
+            <div key={s.symbol} className="sc-mcard stagger-in" style={{ '--i': i }} onClick={() => onPick(s)}>
               <div className="sc-mcard__top">
                 <div className="sc-mcard__rank">#{i + 1}</div>
                 <div className="sc-mcard__info">
@@ -647,12 +647,181 @@ function MomentumPanel({ onPick }) {
   );
 }
 
+// ─── Multibagger AI thesis (streaming) ────────────────────────────────────────
+function MultibaggerThesis({ ready }) {
+  const { text, status, cached, ageMin, generate } = useScreenerAI('/api/screener/multibagger-ai');
+
+  useEffect(() => {
+    if (ready && status === 'idle') generate();
+  }, [ready]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function renderMarkdown(raw) {
+    if (!raw) return null;
+    return raw.split('\n').map((line, i) => {
+      if (line.startsWith('## ')) return <h3 key={i} className="sc-ai__h3">{line.slice(3)}</h3>;
+      const parts = line.split(/(\*\*[^*]+\*\*)/g).map((p, j) =>
+        p.startsWith('**') ? <strong key={j}>{p.slice(2, -2)}</strong> : p
+      );
+      return <p key={i} className="sc-ai__line">{parts}</p>;
+    });
+  }
+
+  const cacheLabel = cached && ageMin != null
+    ? `Cached · ${ageMin < 60 ? `${ageMin}m ago` : `${Math.round(ageMin / 60)}h ago`}`
+    : null;
+
+  return (
+    <div className="sc-ai sc-ai--mb">
+      <div className="sc-ai__header">
+        <div>
+          <div className="sc-ai__title">🏆 AI Multibagger Brief</div>
+          <div className="sc-ai__sub">
+            Analyst conviction picks · 1yr & 3yr targets · why they can compound
+            {cacheLabel && <span className="sc-ai__cache-badge">{cacheLabel}</span>}
+          </div>
+        </div>
+        <button
+          className={`sc-ai__btn ${status === 'loading' ? 'sc-ai__btn--loading' : ''}`}
+          onClick={() => generate(true)}
+          disabled={status === 'loading'}
+          title="Force fresh analysis"
+        >
+          {status === 'loading' ? (<><span className="spinner" /> Analysing…</>) : '↻ Refresh'}
+        </button>
+      </div>
+
+      {status === 'loading' && !text && (
+        <div className="sc-ai__thinking">
+          <span className="sc-ai__dot" /><span className="sc-ai__dot" /><span className="sc-ai__dot" />
+          <span className="sc-ai__think-label">Scanning for the next multibaggers…</span>
+        </div>
+      )}
+
+      {text && (
+        <div className="sc-ai__body">
+          {renderMarkdown(text)}
+          {status === 'loading' && <span className="sc-ai__cursor" />}
+        </div>
+      )}
+
+      {status === 'error' && !text && (
+        <div className="sc-ai__error">
+          Analysis failed. Check that the AI service is configured and try again.
+          <button className="sc-ai__retry" onClick={() => generate(true)}>Retry</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Multibagger tags ─────────────────────────────────────────────────────────
+function multibaggerTags(s) {
+  const tags = [];
+  if ((s.roe ?? 0) >= 20)        tags.push({ label: `ROE ${Math.round(s.roe)}%`, color: '#10D98C' });
+  if ((s.earnings_growth ?? 0) >= 15) tags.push({ label: 'High Growth',  color: '#E8A838' });
+  if ((s.net_margin ?? 0) >= 15) tags.push({ label: 'Strong Margins', color: '#4B9EFF' });
+  if (s.mkt_cap_cr != null && s.mkt_cap_cr <= 25000) tags.push({ label: 'Room to Grow', color: '#B57BFF' });
+  if (s.pe_ratio > 0 && s.pe_ratio <= 25) tags.push({ label: 'Fair Value', color: '#4B9EFF' });
+  return tags.slice(0, 3);
+}
+
+// ─── Multibagger Panel ────────────────────────────────────────────────────────
+function MultibaggerPanel({ onPick }) {
+  const [stocks, setStocks]   = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error,   setError]   = useState(null);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch('/api/screener/multibagger')
+      .then(r => r.json())
+      .then(d => { if (d.ok) setStocks(d.data || []); else setError('No multibagger data yet.'); })
+      .catch(() => setError('Failed to load multibagger picks.'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return (
+    <div className="sc-momentum-loading">
+      <span className="spinner" /> Ranking multibagger candidates…
+    </div>
+  );
+  if (error) return <div className="screener__empty">{error} <br/><span className="screener__loading-sub">Run a refresh to populate screener data first.</span></div>;
+  if (!stocks.length) return <div className="screener__empty">No multibagger picks yet. Refresh the screener to scan stocks.</div>;
+
+  return (
+    <div className="sc-mb">
+      <MultibaggerThesis ready={stocks.length > 0} />
+
+      <div className="sc-mb__grid-label">Ranked candidates ({stocks.length})</div>
+      <div className="sc-mb__grid">
+        {stocks.map((s, i) => {
+          const score = Math.round(s.multibagger_score ?? 0);
+          const tags  = multibaggerTags(s);
+          const cat   = CAT_META[s.category];
+          const up    = (s.change_pct ?? 0) >= 0;
+          return (
+            <div
+              key={s.symbol}
+              className="sc-mbcard stagger-in"
+              style={{ '--i': i }}
+              onClick={() => onPick(s)}
+            >
+              <div className="sc-mbcard__top">
+                <div className={`sc-mbcard__rank ${i < 3 ? 'sc-mbcard__rank--top' : ''}`}>#{i + 1}</div>
+                <div className="sc-mbcard__info">
+                  <span className="sc-mbcard__sym">{s.symbol.replace(/\.(NS|BO)$/i, '')}</span>
+                  <span className="sc-mbcard__name">{s.name}</span>
+                </div>
+                <div className="sc-mbcard__price-wrap">
+                  <span className="sc-mbcard__price">₹{fmt(s.price)}</span>
+                  <span className={`sc-mbcard__chg ${up ? 'up' : 'down'}`}>{up ? '+' : ''}{fmt(s.change_pct)}%</span>
+                </div>
+              </div>
+
+              <div className="sc-mbcard__score-row">
+                <span className="sc-mbcard__score-label">Multibagger score</span>
+                <div className="sc-mbcard__score-track">
+                  <div className="sc-mbcard__score-fill" style={{ width: `${score}%` }} />
+                </div>
+                <span className="sc-mbcard__score-val">{score}</span>
+              </div>
+
+              <div className="sc-mbcard__tags">
+                {tags.map(t => (
+                  <span key={t.label} className="sc-mbcard__tag"
+                    style={{ color: t.color, borderColor: t.color + '40', background: t.color + '15' }}>
+                    {t.label}
+                  </span>
+                ))}
+                {cat && (
+                  <span className="sc-mbcard__tag"
+                    style={{ color: cat.color, borderColor: cat.color + '40', background: cat.color + '15' }}>
+                    {cat.label}
+                  </span>
+                )}
+              </div>
+
+              <div className="sc-mbcard__meta">
+                {s.roe != null         && <span className="sc-mbcard__meta-item">ROE <strong>{fmt(s.roe, 1)}%</strong></span>}
+                {s.net_margin != null  && <span className="sc-mbcard__meta-item">Margin <strong>{fmt(s.net_margin, 1)}%</strong></span>}
+                {s.pe_ratio > 0        && <span className="sc-mbcard__meta-item">P/E <strong>{fmt(s.pe_ratio, 1)}x</strong></span>}
+                {s.mkt_cap_cr != null  && <span className="sc-mbcard__meta-item">MCap <strong>₹{s.mkt_cap_cr >= 1000 ? `${(s.mkt_cap_cr/1000).toFixed(1)}K` : s.mkt_cap_cr}Cr</strong></span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Screener ────────────────────────────────────────────────────────────
 const MODES = [
-  { v: 'all',      label: 'All Picks'       },
-  { v: 'sector',   label: 'Sector Insights' },
-  { v: 'momentum', label: '⚡ Momentum'     },
-  { v: 'ai',       label: '✦ AI Analysis'   },
+  { v: 'all',         label: 'All Picks'       },
+  { v: 'sector',      label: 'Sector Insights' },
+  { v: 'momentum',    label: '⚡ Momentum'     },
+  { v: 'multibagger', label: '🚀 Multibaggers' },
+  { v: 'ai',          label: '✦ AI Analysis'   },
 ];
 
 export default function Screener() {
@@ -758,6 +927,10 @@ export default function Screener() {
 
       {mode === 'momentum' && (
         <MomentumPanel onPick={(s) => pickStock(s, null)} />
+      )}
+
+      {mode === 'multibagger' && (
+        <MultibaggerPanel onPick={(s) => pickStock(s, null)} />
       )}
 
       {mode === 'ai' && (

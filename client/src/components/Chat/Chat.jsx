@@ -220,9 +220,17 @@ export default function Chat() {
                 {msg.role === 'assistant' ? (
                   <>
                     {!msg.content && streaming && i === messages.length - 1 ? (
-                      <span className="message__thinking-dots"><span /><span /><span /></span>
+                      <span className="message__analyzing">
+                        <span className="message__thinking-dots"><span /><span /><span /></span>
+                        <span className="message__analyzing-label">Analyzing…</span>
+                      </span>
                     ) : (
-                      <div dangerouslySetInnerHTML={{ __html: parseMarkdown(msg.content) }} />
+                      <div className="message__md">
+                        <div dangerouslySetInnerHTML={{ __html: parseMarkdown(msg.content) }} />
+                        {streaming && i === messages.length - 1 && (
+                          <span className="message__cursor" />
+                        )}
+                      </div>
                     )}
                   </>
                 ) : (

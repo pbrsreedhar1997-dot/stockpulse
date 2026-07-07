@@ -11,6 +11,7 @@ import WatchlistPortfolio from './components/WatchlistPortfolio/WatchlistPortfol
 import AuthModal from './components/Auth/AuthModal';
 import Search from './components/Search/Search';
 import Toast from './components/shared/Toast';
+import Splash from './components/Splash/Splash';
 import { usePortfolio } from './hooks/usePortfolio';
 import { useStopLossAlert } from './hooks/useStopLossAlert';
 import { usePriceAlert } from './hooks/usePriceAlert';
@@ -383,6 +384,7 @@ export default function App() {
 
   return (
     <div className="app">
+      <Splash />
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header className="header">
         <MarketPulse />
