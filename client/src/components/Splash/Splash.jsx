@@ -10,9 +10,9 @@ import './Splash.scss';
  * Props:
  *   ready — becomes true once the backend/first data has responded.
  */
-const MIN_VISIBLE_MS = 3200;   // guaranteed on-screen time — long enough to enjoy
-const MAX_VISIBLE_MS = 7000;   // hard cap — never trap the user behind it
-const FADE_MS        = 560;
+const MIN_VISIBLE_MS = 5500;   // guaranteed on-screen time — long enough to enjoy
+const MAX_VISIBLE_MS = 9000;   // hard cap — never trap the user behind it
+const FADE_MS        = 600;
 
 export default function Splash({ ready = false }) {
   const reduced = typeof window !== 'undefined'
@@ -21,6 +21,21 @@ export default function Splash({ ready = false }) {
   const [show, setShow]       = useState(true);
   const [leaving, setLeaving] = useState(false);
   const [minPassed, setMinPassed] = useState(false);
+  const [statusIdx, setStatusIdx] = useState(0);
+
+  const STATUSES = [
+    'Connecting to live markets…',
+    'Fetching real-time prices…',
+    'Loading fundamentals & signals…',
+    'Warming up the AI analyst…',
+  ];
+
+  // Cycle status lines while the splash is visible
+  useEffect(() => {
+    if (reduced) return;
+    const iv = setInterval(() => setStatusIdx(i => (i + 1) % STATUSES.length), 1250);
+    return () => clearInterval(iv);
+  }, [reduced]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Minimum-visible timer + absolute cap
   useEffect(() => {
@@ -58,6 +73,7 @@ export default function Splash({ ready = false }) {
         <div className="splash__word">StockPulse</div>
         <div className="splash__tagline">India &amp; Global Markets · AI Analyst</div>
         <div className="splash__bar"><span /></div>
+        <div className="splash__status" key={statusIdx}>{STATUSES[statusIdx]}</div>
       </div>
     </div>
   );

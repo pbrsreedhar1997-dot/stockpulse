@@ -22,6 +22,42 @@ function safeNum(v) {
 // ── Yahoo Finance Chart API (no crumb needed — works on cloud servers) ────────
 const CHART_HEADERS = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' };
 
+// ── Raw quoteSummary via query1 + crumb ───────────────────────────────────────
+// The yahoo-finance2 SDK (quote/quoteSummary) is often blocked from datacenter
+// IPs (e.g. Render), returning null for financials/profile. This raw call hits
+// the same query1 host the chart API uses (which DOES work from cloud) with a
+// proper cookie+crumb, restoring fundamentals + company profile in production.
+let _crumbCache = null; // { crumb, cookie, ts }
+const CRUMB_TTL_MS = 30 * 60 * 1000;
+
+async function getYahooCrumb() {
+  if (_crumbCache && Date.now() - _crumbCache.ts < CRUMB_TTL_MS) return _crumbCache;
+  let cookie = '';
+  try {
+    const r1 = await fetch('https://fc.yahoo.com/', { headers: CHART_HEADERS, signal: AbortSignal.timeout(8000) });
+    const sc = r1.headers.get('set-cookie');
+    if (sc) cookie = sc.split(';')[0];
+  } catch { /* cookie is best-effort */ }
+  const r2 = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', {
+    headers: { ...CHART_HEADERS, Cookie: cookie }, signal: AbortSignal.timeout(8000),
+  });
+  const crumb = (await r2.text())?.trim();
+  if (!crumb || crumb.length > 40) throw new Error('Invalid crumb');
+  _crumbCache = { crumb, cookie, ts: Date.now() };
+  return _crumbCache;
+}
+
+async function quoteSummaryRaw(symbol, modules) {
+  const { crumb, cookie } = await getYahooCrumb();
+  const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}`
+    + `?modules=${modules.join(',')}&crumb=${encodeURIComponent(crumb)}`;
+  const r = await fetch(url, { headers: { ...CHART_HEADERS, Cookie: cookie }, signal: AbortSignal.timeout(12000) });
+  if (r.status === 401 || r.status === 403) { _crumbCache = null; throw new Error(`quoteSummary HTTP ${r.status}`); }
+  if (!r.ok) throw new Error(`quoteSummary HTTP ${r.status}`);
+  const j = await r.json();
+  return j?.quoteSummary?.result?.[0] || null;
+}
+
 async function chartApiFetch(symbol, range, interval) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}&includePrePost=false`;
   const r = await fetch(url, { signal: AbortSignal.timeout(15000), headers: CHART_HEADERS });
@@ -193,7 +229,10 @@ export async function getProfile(symbol) {
   const pr = sumRes.status === 'fulfilled' ? (sumRes.value?.price        || {}) : {};
 
   const hasName = pr.longName || q.longName || q.shortName;
-  if (hasName) {
+  // Only accept the SDK profile if it carries the rich fields (sector/description).
+  // On cloud IPs the SDK often returns just a name with everything else null —
+  // fall through to the raw quoteSummary in that case.
+  if (hasName && (ap.sector || ap.longBusinessSummary)) {
     const website = ap.website || null;
     const host    = website ? website.replace(/^https?:\/\//, '').split('/')[0] : null;
     const result = {
@@ -212,8 +251,36 @@ export async function getProfile(symbol) {
     return result;
   }
 
-  // Yahoo blocked — try NSE India (Indian stocks), then AV, then chart API name
-  log.info(`Yahoo profile blocked for ${symbol} — using fallbacks`);
+  // Yahoo SDK blocked — try raw query1 quoteSummary (works from datacenter)
+  log.info(`Yahoo profile SDK failed for ${symbol} — trying raw quoteSummary`);
+  const rawProf = await quoteSummaryRaw(symbol, ['assetProfile', 'price'])
+    .catch(e => { log.warn(`Raw profile failed for ${symbol}: ${e.message}`); return null; });
+  if (rawProf) {
+    const ap = rawProf.assetProfile || {};
+    const pr = rawProf.price || {};
+    const name = pr.longName || pr.shortName;
+    if (name || ap.sector) {
+      const website = ap.website || null;
+      const host = website ? website.replace(/^https?:\/\//, '').split('/')[0] : null;
+      const result = {
+        name:        name || symbol,
+        sector:      ap.sector || null,
+        industry:    ap.industry || null,
+        exchange:    pr.exchangeName || null,
+        currency:    pr.currency || 'INR',
+        website,
+        description: ap.longBusinessSummary || null,
+        employees:   safeNum(ap.fullTimeEmployees),
+        country:     ap.country || null,
+        logo_url:    host ? `https://logo.clearbit.com/${host}` : null,
+      };
+      await cacheSet(key, result, 86400);
+      return result;
+    }
+  }
+
+  // Still nothing — try NSE India (Indian stocks), then AV, then chart API name
+  log.info(`Raw profile empty for ${symbol} — using API fallbacks`);
 
   const isIndian = symbol.endsWith('.NS') || symbol.endsWith('.BO');
 
@@ -285,12 +352,51 @@ export async function getFinancials(symbol) {
       earnings_growth: pct(safeNum(fd.earningsGrowth)),
       free_cash_flow:  safeNum(fd.freeCashflow),
     };
-    await cacheSet(key, result, 21600);
-    return result;
+    // Only trust the SDK result if it actually carries data — on cloud IPs the
+    // SDK can return a truthy-but-empty object (all nulls). Fall through if so.
+    if (result.pe_ratio != null || result.market_cap != null || result.eps != null || result.revenue_ttm != null) {
+      await cacheSet(key, result, 21600);
+      return result;
+    }
   }
 
-  // Yahoo blocked — try NSE India first (P/E, EPS), then Alpha Vantage
-  log.info(`Yahoo financials blocked for ${symbol} — using fallbacks`);
+  // Yahoo SDK blocked (common on cloud IPs) — try the raw query1 quoteSummary
+  // with crumb, which works from datacenter where the SDK does not.
+  log.info(`Yahoo financials SDK failed for ${symbol} — trying raw quoteSummary`);
+  const rawSum = await quoteSummaryRaw(symbol, ['financialData', 'defaultKeyStatistics', 'summaryDetail'])
+    .catch(e => { log.warn(`Raw quoteSummary failed for ${symbol}: ${e.message}`); return null; });
+  if (rawSum) {
+    const fd = rawSum.financialData || {};
+    const ks = rawSum.defaultKeyStatistics || {};
+    const sd = rawSum.summaryDetail || {};
+    const pct = n => n != null ? Math.round(n * 1000) / 10 : null;
+    const result = {
+      market_cap:      safeNum(sd.marketCap),
+      revenue_ttm:     safeNum(fd.totalRevenue),
+      gross_margin:    pct(safeNum(fd.grossMargins)),
+      net_margin:      pct(safeNum(fd.profitMargins)),
+      pe_ratio:        safeNum(sd.trailingPE),
+      eps:             safeNum(ks.trailingEps),
+      dividend_yield:  pct(safeNum(sd.dividendYield)),
+      beta:            safeNum(ks.beta),
+      week52_high:     safeNum(sd.fiftyTwoWeekHigh),
+      week52_low:      safeNum(sd.fiftyTwoWeekLow),
+      avg_volume:      safeNum(sd.averageVolume),
+      price_to_book:   safeNum(ks.priceToBook),
+      debt_to_equity:  safeNum(fd.debtToEquity),
+      return_on_equity: pct(safeNum(fd.returnOnEquity)),
+      revenue_growth:  pct(safeNum(fd.revenueGrowth)),
+      earnings_growth: pct(safeNum(fd.earningsGrowth)),
+      free_cash_flow:  safeNum(fd.freeCashflow),
+    };
+    if (result.pe_ratio != null || result.market_cap != null || result.eps != null) {
+      await cacheSet(key, result, 21600);
+      return result;
+    }
+  }
+
+  // Still nothing — try NSE India (P/E, EPS), then Alpha Vantage
+  log.info(`Raw quoteSummary empty for ${symbol} — using API fallbacks`);
   const isIndian = symbol.endsWith('.NS') || symbol.endsWith('.BO');
 
   if (isIndian) {
@@ -405,15 +511,27 @@ export async function getHistory(symbol, range = '1mo') {
 }
 
 // ── News ──────────────────────────────────────────────────────────────────────
+// Classify a headline into the categories NewsTab filters by.
+function classifyNews(title = '') {
+  const t = title.toLowerCase();
+  if (/\b(q[1-4]|results|profit|revenue|earnings|net profit|pat|ebitda)\b/.test(t)) return 'results';
+  if (/\b(order|contract|deal win|bags|wins|awarded|tender)\b/.test(t))            return 'contract';
+  if (/\b(acqui|merger|takeover|stake buy|buyout)\b/.test(t))                       return 'acquisition';
+  if (/\b(partner|tie-?up|collaborat|joint venture|jv|mou)\b/.test(t))              return 'partnership';
+  return 'general';
+}
+
 export async function getNews(symbol) {
-  const key = `news4:${symbol}`;
+  const key = `news6:${symbol}`;
   const hit = await cacheGet(key);
   if (hit) return hit;
 
   const ticker = symbol.replace(/\.(NS|BO|BSE|NSE)$/i, '');
-  const url = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(ticker)}&region=IN&lang=en-IN`;
   let articles = [];
+
+  // 1. Yahoo Finance RSS (works from residential IPs)
   try {
+    const url = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(ticker)}&region=IN&lang=en-IN`;
     const feed = await rss.parseURL(url);
     articles = (feed.items || []).slice(0, 12).map(item => ({
       title:     item.title || '',
@@ -422,13 +540,47 @@ export async function getNews(symbol) {
       published: item.pubDate ? Math.floor(new Date(item.pubDate).getTime() / 1000) : null,
       summary:   item.contentSnippet || '',
       relevance: 'medium',
-      category:  'gen',
+      category:  classifyNews(item.title),
     }));
   } catch (e) {
-    log.warn(`News RSS ${symbol}:`, e.message);
+    log.warn(`Yahoo news RSS ${symbol}: ${e.message}`);
   }
 
-  await cacheSet(key, articles, 600);
+  // 2. Google News RSS — datacenter-friendly, symbol-specific, always current.
+  //    Primary source on cloud (Render) where Yahoo RSS is blocked.
+  if (articles.length < 4) {
+    try {
+      const q   = encodeURIComponent(`${ticker} share price NSE`);
+      const url = `https://news.google.com/rss/search?q=${q}&hl=en-IN&gl=IN&ceid=IN:en`;
+      const feed = await rss.parseURL(url);
+      const gn = (feed.items || []).slice(0, 15).map(item => {
+        // Google News titles end with " - Publisher"; split it out.
+        const raw   = item.title || '';
+        const idx   = raw.lastIndexOf(' - ');
+        const title = idx > 0 ? raw.slice(0, idx) : raw;
+        const src   = item.source?.name || item.creator || (idx > 0 ? raw.slice(idx + 3) : 'Google News');
+        return {
+          title,
+          url:       item.link || '',
+          source:    src,
+          published: item.isoDate ? Math.floor(new Date(item.isoDate).getTime() / 1000)
+                   : item.pubDate ? Math.floor(new Date(item.pubDate).getTime() / 1000) : null,
+          summary:   (item.contentSnippet || '').slice(0, 220),
+          relevance: 'high',
+          category:  classifyNews(title),
+        };
+      });
+      // Merge, dedupe by title
+      const seen = new Set(articles.map(a => a.title));
+      for (const a of gn) if (!seen.has(a.title)) { articles.push(a); seen.add(a.title); }
+    } catch (e) {
+      log.warn(`Google news RSS ${symbol}: ${e.message}`);
+    }
+  }
+
+  articles.sort((a, b) => (b.published ?? 0) - (a.published ?? 0));
+  articles = articles.slice(0, 20);
+  await cacheSet(key, articles, 900);
   return articles;
 }
 

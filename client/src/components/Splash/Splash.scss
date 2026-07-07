@@ -77,6 +77,17 @@
     animation-delay: 0.68s;
   }
 
+  &__status {
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    color: var(--accent);
+    opacity: 0.85;
+    margin-top: 2px;
+    min-height: 15px;
+    animation: splash-status-in 0.4s ease;
+  }
+
   &__bar {
     margin-top: 6px;
     width: 160px;
@@ -112,6 +123,10 @@
 @keyframes splash-slide {
   0%   { transform: translateX(-120%); }
   100% { transform: translateX(320%); }
+}
+@keyframes splash-status-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 0.85; transform: translateY(0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
