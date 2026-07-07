@@ -10,9 +10,9 @@ import './Splash.scss';
  * Props:
  *   ready — becomes true once the backend/first data has responded.
  */
-const MIN_VISIBLE_MS = 2200;   // guaranteed on-screen time
-const MAX_VISIBLE_MS = 6500;   // hard cap — never trap the user behind it
-const FADE_MS        = 500;
+const MIN_VISIBLE_MS = 3200;   // guaranteed on-screen time — long enough to enjoy
+const MAX_VISIBLE_MS = 7000;   // hard cap — never trap the user behind it
+const FADE_MS        = 560;
 
 export default function Splash({ ready = false }) {
   const reduced = typeof window !== 'undefined'

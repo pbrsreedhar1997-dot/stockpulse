@@ -1591,6 +1591,10 @@ async function resolveSymbolsFromQuestion(question) {
 // ─────────────────────────────────────────────────────────────────────────────
 // RESPONSE DEPTH — determines token budget based on question intent
 // ─────────────────────────────────────────────────────────────────────────────
+// Lean system prompt for skipRag briefs (screener / multibagger) — the user
+// message already contains the full data + exact output structure.
+const LEAN_SYSTEM_PROMPT = `You are StockPulse AI, a sharp Indian equity research analyst (NSE/BSE). Use ONLY the metrics provided in the user's message — never invent prices or numbers. Follow the requested structure exactly. Be direct, quantitative, and concise. No generic disclaimers or "consult an advisor" boilerplate.`;
+
 // Only EXPLICIT long-form requests get the detailed sectioned breakdown.
 // Everything else (predict / forecast / analyse / outlook / price) stays crisp.
 const DEEP_KEYWORDS = [
@@ -1743,9 +1747,16 @@ export async function streamChat({ question, symbols = [], history = [], skipRag
     }
   }
 
+  // Screener/multibagger briefs (skipRag) carry their own full instructions in
+  // the question — prepending the large single-stock SYSTEM_PROMPT wastes ~2.5k
+  // tokens and trips Groq's per-minute limit. Use a lean system prompt for those.
+  const systemContent = skipRag
+    ? LEAN_SYSTEM_PROMPT
+    : SYSTEM_PROMPT + context + correctionNotice;
+
   const trimmed = trimHistory(history);
   const messages = [
-    { role: 'system', content: SYSTEM_PROMPT + context + correctionNotice },
+    { role: 'system', content: systemContent },
     ...trimmed,
     { role: 'user', content: question },
   ];
@@ -1753,7 +1764,8 @@ export async function streamChat({ question, symbols = [], history = [], skipRag
   // Model selection: use fast 8b model for concise questions (saves daily token budget)
   const primaryModel = depth === 'deep' ? GROQ_MODEL_SMART : GROQ_MODEL_FAST;
   const fallbackModel = depth === 'deep' ? GROQ_MODEL_FAST : null;
-  const maxTokens = depth === 'deep' ? 1300 : 450;
+  // Screener/multibagger briefs are intentionally longer than chat replies.
+  const maxTokens = skipRag ? 1400 : (depth === 'deep' ? 1300 : 450);
 
   try {
     await groqStream(primaryModel, messages, maxTokens, depth === 'deep' ? 0.3 : 0.5, onDelta);

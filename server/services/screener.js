@@ -154,7 +154,7 @@ export async function saveAnalysis(text, picksCount, kind = 'value') {
 // AI PROMPT BUILDER
 // ─────────────────────────────────────────────────────────────────────────────
 export function buildAnalysisPrompt(picks) {
-  const top = picks.slice(0, 40);  // up from 25
+  const top = picks.slice(0, 24);  // keep prompt within Groq free-tier TPM
 
   // Group by category for richer context
   const value      = top.filter(s => s.category === 'value');

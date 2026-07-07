@@ -142,6 +142,8 @@
 /* ── Reset ─────────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+html { scroll-behavior: smooth; }
+
 html, body, #root {
   height: 100%;
   font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -150,13 +152,55 @@ html, body, #root {
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
-/* Scrollbar */
-::-webkit-scrollbar        { width: 4px; height: 4px; }
+/* Ambient depth — soft fixed glows behind everything for a premium feel */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(60% 50% at 15% 0%,  rgba(232, 168, 56, 0.06), transparent 70%),
+    radial-gradient(55% 45% at 100% 12%, rgba(0, 212, 255, 0.05), transparent 72%),
+    radial-gradient(70% 60% at 50% 110%, rgba(168, 85, 247, 0.045), transparent 75%);
+}
+.app { position: relative; z-index: 1; }
+
+[data-theme='light'] body::before {
+  background:
+    radial-gradient(60% 50% at 15% 0%,  rgba(232, 168, 56, 0.10), transparent 70%),
+    radial-gradient(55% 45% at 100% 12%, rgba(0, 130, 255, 0.06), transparent 72%),
+    radial-gradient(70% 60% at 50% 110%, rgba(168, 85, 247, 0.05), transparent 75%);
+}
+
+/* Scrollbar — thin but visible, tinted */
+::-webkit-scrollbar        { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track  { background: transparent; }
-::-webkit-scrollbar-thumb  { background: rgba(99,130,195,0.2); border-radius: 2px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(99,130,195,0.4); }
+::-webkit-scrollbar-thumb  {
+  background: linear-gradient(180deg, rgba(99,130,195,0.28), rgba(99,130,195,0.16));
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--accent), var(--accent2));
+  background-clip: padding-box;
+}
+* { scrollbar-width: thin; scrollbar-color: rgba(99,130,195,0.3) transparent; }
+
+/* Accent-tinted text selection */
+::selection { background: rgba(232, 168, 56, 0.28); color: var(--text); }
+
+/* Accessible, on-brand focus ring for keyboard users */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+:focus:not(:focus-visible) { outline: none; }
 
 a {
   color: var(--accent);
@@ -173,6 +217,7 @@ button {
   color: inherit;
   position: relative;
   overflow: hidden;
+  transition: transform 0.12s cubic-bezier(0.22, 1, 0.36, 1), filter 0.18s ease, opacity 0.18s ease;
 
   /* Ripple effect on click */
   &::after {
@@ -186,6 +231,15 @@ button {
   }
 
   &:active::after { opacity: 1; transition: none; }
+  /* Tactile press — subtle, universal */
+  &:not(:disabled):active { transform: scale(0.97); }
+  &:disabled { cursor: not-allowed; opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  button:not(:disabled):active { transform: none; }
+  * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
 
 input, textarea, select {
