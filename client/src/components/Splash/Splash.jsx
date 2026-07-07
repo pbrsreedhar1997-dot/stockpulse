@@ -2,33 +2,45 @@ import React, { useEffect, useState } from 'react';
 import './Splash.scss';
 
 /**
- * Branded opening splash — shown once per session on app load.
- * Auto-dismisses after a short timer, or immediately if reduced-motion.
- * Purely presentational: never blocks the app (App renders underneath).
+ * Branded opening splash — shown on every full page load while the app boots.
+ * Stays visible for a guaranteed minimum (so users actually see it), then waits
+ * for the app to be `ready`, then fades out. Capped so it never blocks the app.
+ * Respects prefers-reduced-motion (renders briefly, no motion).
+ *
+ * Props:
+ *   ready — becomes true once the backend/first data has responded.
  */
-const SEEN_KEY = 'sp_splash_seen';
+const MIN_VISIBLE_MS = 2200;   // guaranteed on-screen time
+const MAX_VISIBLE_MS = 6500;   // hard cap — never trap the user behind it
+const FADE_MS        = 500;
 
-export default function Splash() {
+export default function Splash({ ready = false }) {
   const reduced = typeof window !== 'undefined'
     && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
-  const [show, setShow]     = useState(() => {
-    if (typeof sessionStorage === 'undefined') return true;
-    return sessionStorage.getItem(SEEN_KEY) !== '1';
-  });
+  const [show, setShow]       = useState(true);
   const [leaving, setLeaving] = useState(false);
+  const [minPassed, setMinPassed] = useState(false);
 
+  // Minimum-visible timer + absolute cap
   useEffect(() => {
-    if (!show) return;
-    try { sessionStorage.setItem(SEEN_KEY, '1'); } catch {}
+    if (reduced) { setMinPassed(true); return; }
+    const tMin = setTimeout(() => setMinPassed(true), MIN_VISIBLE_MS);
+    const tCap = setTimeout(() => setLeaving(true), MAX_VISIBLE_MS);
+    return () => { clearTimeout(tMin); clearTimeout(tCap); };
+  }, [reduced]);
 
-    const holdMs  = reduced ? 0 : 1500;
-    const leaveMs = reduced ? 0 : 480;
+  // Dismiss once BOTH the min time has passed AND the app is ready
+  useEffect(() => {
+    if (minPassed && ready) setLeaving(true);
+  }, [minPassed, ready]);
 
-    const t1 = setTimeout(() => setLeaving(true), holdMs);
-    const t2 = setTimeout(() => setShow(false), holdMs + leaveMs);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [show, reduced]);
+  // After the fade transition completes, unmount
+  useEffect(() => {
+    if (!leaving) return;
+    const t = setTimeout(() => setShow(false), reduced ? 0 : FADE_MS);
+    return () => clearTimeout(t);
+  }, [leaving, reduced]);
 
   if (!show) return null;
 

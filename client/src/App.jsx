@@ -384,7 +384,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Splash />
+      <Splash ready={state.backendOk === true} />
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header className="header">
         <MarketPulse />
