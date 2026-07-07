@@ -47,6 +47,19 @@ async function getYahooCrumb() {
   return _crumbCache;
 }
 
+// ── Screener DB fallback ──────────────────────────────────────────────────────
+// The screener stores full fundamentals (P/E, EPS, margins, ROE, sector…) for
+// the ~180-stock Indian universe in Postgres. On cloud IPs where Yahoo's
+// quoteSummary is blocked, this is the reliable source for the most-viewed
+// large/mid-caps. Best-effort — returns null if the row/DB isn't available.
+async function screenerRow(symbol) {
+  try {
+    const { query } = await import('../db.js');
+    const r = await query('SELECT * FROM screener_picks WHERE symbol = $1 LIMIT 1', [symbol]);
+    return r.rows?.[0] || null;
+  } catch { return null; }
+}
+
 async function quoteSummaryRaw(symbol, modules) {
   const { crumb, cookie } = await getYahooCrumb();
   const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}`
@@ -279,6 +292,28 @@ export async function getProfile(symbol) {
     }
   }
 
+  // Screener DB — sector/industry/name for the universe (reliable on cloud)
+  const prow = await screenerRow(symbol);
+  if (prow && (prow.sector || prow.name)) {
+    const result = {
+      name:        prow.name || symbol,
+      sector:      prow.sector   || null,
+      industry:    prow.industry || null,
+      exchange:    symbol.endsWith('.BO') ? 'BSE' : 'NSE',
+      currency:    'INR',
+      website:     null,
+      description: null,
+      employees:   null,
+      country:     'India',
+      logo_url:    null,
+    };
+    if (result.sector) {
+      log.info(`Profile for ${symbol} served from screener DB`);
+      await cacheSet(key, result, 10800);
+      return result;
+    }
+  }
+
   // Still nothing — try NSE India (Indian stocks), then AV, then chart API name
   log.info(`Raw profile empty for ${symbol} — using API fallbacks`);
 
@@ -393,6 +428,34 @@ export async function getFinancials(symbol) {
       await cacheSet(key, result, 21600);
       return result;
     }
+  }
+
+  // Screener DB — reliable on cloud IPs for the ~180-stock universe
+  const row = await screenerRow(symbol);
+  if (row && (row.pe_ratio != null || row.mkt_cap_cr != null || row.eps != null)) {
+    const num = v => v != null ? Number(v) : null;
+    const result = {
+      market_cap:       row.mkt_cap_cr != null ? Number(row.mkt_cap_cr) * 1e7 : null,
+      revenue_ttm:      row.revenue_cr != null ? Number(row.revenue_cr) * 1e7 : null,
+      gross_margin:     num(row.gross_margin),
+      net_margin:       num(row.net_margin),
+      pe_ratio:         num(row.pe_ratio),
+      eps:              num(row.eps),
+      dividend_yield:   null,
+      beta:             null,
+      week52_high:      num(row.week52_high),
+      week52_low:       num(row.week52_low),
+      avg_volume:       null,
+      price_to_book:    null,
+      debt_to_equity:   null,
+      return_on_equity: num(row.roe),
+      revenue_growth:   num(row.revenue_growth),
+      earnings_growth:  num(row.earnings_growth),
+      free_cash_flow:   null,
+    };
+    log.info(`Financials for ${symbol} served from screener DB`);
+    await cacheSet(key, result, 10800);
+    return result;
   }
 
   // Still nothing — try NSE India (P/E, EPS), then Alpha Vantage
