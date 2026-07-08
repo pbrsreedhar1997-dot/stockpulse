@@ -2,9 +2,57 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useAppContext } from '../../contexts/AppContext';
 import { useWatchlist } from '../../hooks/useWatchlist';
 import { usePortfolio } from '../../hooks/usePortfolio';
+import { useStocks } from '../../hooks/useStocks';
 import PriceAlertPanel from '../PriceAlert/PriceAlertPanel';
 import { fmtPrice, fmtMktCap } from '../../utils/currency';
 import './StockHeader.scss';
+
+/* ── Glanceable 30-day sparkline ─────────────────────────────────────────────── */
+function Sparkline({ symbol }) {
+  const { fetchHistory } = useStocks();
+  const [pts, setPts] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    setPts(null);
+    fetchHistory(symbol, '1mo')
+      .then(d => { if (alive) setPts(d?.candles?.map(c => c.c).filter(v => v != null) ?? []); })
+      .catch(() => { if (alive) setPts([]); });
+    return () => { alive = false; };
+  }, [symbol]);
+
+  if (!pts) return <div className="sparkline sparkline--loading" />;
+  if (pts.length < 3) return null;
+
+  const W = 132, H = 40, P = 3;
+  const min = Math.min(...pts), max = Math.max(...pts);
+  const span = max - min || 1;
+  const x = i => P + (i / (pts.length - 1)) * (W - 2 * P);
+  const y = v => P + (1 - (v - min) / span) * (H - 2 * P);
+  const line = pts.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const area = `${line} L${x(pts.length - 1).toFixed(1)},${H} L${x(0).toFixed(1)},${H} Z`;
+  const up = pts[pts.length - 1] >= pts[0];
+  const stroke = up ? 'var(--up)' : 'var(--down)';
+  const gid = `spark-${up ? 'u' : 'd'}`;
+
+  return (
+    <div className="sparkline" title="30-day trend">
+      <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} preserveAspectRatio="none">
+        <defs>
+          <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"  stopColor={stroke} stopOpacity="0.28" />
+            <stop offset="100%" stopColor={stroke} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={area} fill={`url(#${gid})`} />
+        <path d={line} fill="none" stroke={stroke} strokeWidth="1.6"
+          strokeLinejoin="round" strokeLinecap="round" />
+        <circle cx={x(pts.length - 1)} cy={y(pts[pts.length - 1])} r="2.4" fill={stroke} />
+      </svg>
+      <span className="sparkline__tag">30D</span>
+    </div>
+  );
+}
 
 function fmt(n, dec = 2) {
   if (n == null) return '—';
@@ -186,6 +234,8 @@ export default function StockHeader({ symbol }) {
             )}
           </div>
         </div>
+
+        <Sparkline symbol={symbol} />
 
         <div className="stock-header__price-block">
           {q ? (
