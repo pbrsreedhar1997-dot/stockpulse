@@ -33,7 +33,7 @@ export default function PriceChart({ symbol }) {
   const lineChart    = useRef(null);
   const volChart     = useRef(null);
   const [range, setRange]         = useState('1mo');
-  const [chartType, setChartType] = useState('candlestick');
+  const [chartType, setChartType] = useState('line');
   const [loading, setLoading]     = useState(false);
   const [candles, setCandles]     = useState(null);
   const [stats, setStats]         = useState(null);
@@ -286,10 +286,10 @@ export default function PriceChart({ symbol }) {
           )}
         </div>
         <div className="price-chart__type-toggle">
-          <button className={`range-btn ${chartType === 'candlestick' ? 'range-btn--active' : ''}`}
-            onClick={() => setChartType('candlestick')}>Candles</button>
           <button className={`range-btn ${chartType === 'line' ? 'range-btn--active' : ''}`}
             onClick={() => setChartType('line')}>Line</button>
+          <button className={`range-btn ${chartType === 'candlestick' ? 'range-btn--active' : ''}`}
+            onClick={() => setChartType('candlestick')}>Candles</button>
         </div>
       </div>
 

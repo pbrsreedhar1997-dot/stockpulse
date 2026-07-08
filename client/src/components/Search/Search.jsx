@@ -82,6 +82,7 @@ export default function Search() {
   const [loading, setLoading] = useState(false);
   const inputRef = useRef(null);
   const debounceRef = useRef(null);
+  const wrapRef = useRef(null);
 
   const localSearch = useCallback((q) => {
     const lower = q.toLowerCase();
@@ -137,8 +138,20 @@ export default function Search() {
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
+  // Close the dropdown on any click outside the search box — otherwise it stays
+  // open and its absolutely-positioned results intercept clicks on nav/buttons
+  // elsewhere in the header.
+  useEffect(() => {
+    if (!open) return;
+    const onClickOutside = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, [open]);
+
   return (
-    <div className="search">
+    <div className="search" ref={wrapRef}>
       <div className="search__input-wrap">
         <span className="search__icon">🔍</span>
         <input
