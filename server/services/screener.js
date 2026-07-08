@@ -772,7 +772,7 @@ async function fetchOne({ s: symbol, theme }) {
 // ─────────────────────────────────────────────────────────────────────────────
 let running = false;
 
-async function runScreener() {
+export async function runScreener() {
   log.info(`Screener: scanning ${UNIVERSE_DEDUPED.length} stocks…`);
   scanState = { running: true, total: UNIVERSE_DEDUPED.length, done: 0, found: 0, startedAt: Date.now() };
 
