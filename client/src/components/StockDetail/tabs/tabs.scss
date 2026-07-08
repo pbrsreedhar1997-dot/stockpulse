@@ -14,13 +14,28 @@
 
 /* ── Info card ─────────────────────────────────────────────────────────────── */
 .info-card {
-  background: var(--card);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0)),
+    var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 18px;
-  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+  transition: border-color 0.25s, box-shadow 0.25s, transform 0.25s;
   position: relative;
   overflow: hidden;
+  backdrop-filter: blur(6px);
+
+  /* Always-visible corner glow for depth */
+  &::after {
+    content: '';
+    position: absolute;
+    top: -40%; right: -20%;
+    width: 55%; height: 80%;
+    background: radial-gradient(circle, var(--accent-glow), transparent 70%);
+    opacity: 0.6;
+    pointer-events: none;
+    transition: opacity 0.25s;
+  }
 
   /* Top gradient stripe */
   &::before {
@@ -29,19 +44,22 @@
     top: 0; left: 0; right: 0;
     height: 2px;
     background: var(--grad-amber);
-    opacity: 0;
-    transition: opacity 0.2s;
+    opacity: 0.35;
+    transition: opacity 0.25s;
   }
 
   &:hover {
-    border-color: rgba(232,168,56,0.2);
-    box-shadow: 0 4px 24px rgba(0,0,0,0.2), 0 0 0 1px rgba(232,168,56,0.06);
-    transform: translateY(-1px);
+    border-color: rgba(232,168,56,0.28);
+    box-shadow: 0 10px 34px rgba(0,0,0,0.28), 0 0 0 1px rgba(232,168,56,0.08);
+    transform: translateY(-2px);
 
     &::before { opacity: 1; }
+    &::after  { opacity: 1; }
   }
 
   &__title {
+    position: relative;
+    z-index: 1;
     font-size: 9.5px;
     font-weight: 800;
     color: var(--text3);
@@ -63,6 +81,8 @@
   }
 
   &__rows {
+    position: relative;
+    z-index: 1;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -95,19 +115,50 @@
 
 /* ── 52W range bar ─────────────────────────────────────────────────────────── */
 .range-bar {
-  height: 5px;
+  height: 7px;
   background: var(--border2);
-  border-radius: 3px;
+  border-radius: 4px;
   position: relative;
-  margin: 14px 0 8px;
+  margin: 30px 0 10px; // top room for the marker price label
 
   &__fill {
     position: absolute;
     height: 100%;
     background: linear-gradient(90deg, var(--down), var(--accent), var(--up));
-    border-radius: 3px;
+    border-radius: 4px;
     top: 0;
     left: 0;
+    box-shadow: 0 0 14px rgba(232,168,56,0.25);
+  }
+
+  /* Live current-price marker */
+  &__marker {
+    position: absolute;
+    top: 50%;
+    width: 3px;
+    height: 18px;
+    background: var(--text);
+    border-radius: 2px;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 10px rgba(255,255,255,0.5);
+    transition: left 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  &__marker-price {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 11px;
+    font-weight: 800;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text);
+    white-space: nowrap;
+    background: var(--card2);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    padding: 2px 7px;
+    box-shadow: var(--shadow-sm);
   }
 
   &__dot {
@@ -121,6 +172,12 @@
     border: 2px solid var(--bg);
     box-shadow: 0 0 8px rgba(232,168,56,0.6), 0 0 0 2px rgba(232,168,56,0.2);
     animation: glow-pulse 2.5s ease-in-out infinite;
+  }
+
+  &__pos-label {
+    color: var(--text3);
+    font-weight: 600;
+    font-size: 10px;
   }
 }
 

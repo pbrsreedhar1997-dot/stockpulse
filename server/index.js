@@ -54,11 +54,27 @@ app.get('*', (req, res) => {
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 wss.on('connection', handleWsConnection);
 
+// ── Keep-warm — prevents Render free-tier cold starts ─────────────────────────
+// Render spins the instance down after ~15 min without inbound traffic, making
+// the next request take ~50s. A self-ping to the public URL every 12 min counts
+// as inbound traffic and keeps the app instantly responsive.
+function startKeepWarm() {
+  const url = process.env.RENDER_EXTERNAL_URL;
+  if (!url) return; // only on Render
+  const ping = () => fetch(`${url}/api/ping`, { signal: AbortSignal.timeout(10000) })
+    .catch(() => { /* best-effort */ });
+  setInterval(ping, 12 * 60 * 1000);
+  log.info(`Keep-warm enabled → ${url}/api/ping every 12m`);
+}
+
 // ── Startup ───────────────────────────────────────────────────────────────────
 async function start() {
   await initDb();
   await initCache(REDIS_URL);
-  server.listen(PORT, () => log.info(`StockPulse v3 (Node.js) on port ${PORT}`));
+  server.listen(PORT, () => {
+    log.info(`StockPulse v3 (Node.js) on port ${PORT}`);
+    startKeepWarm();
+  });
 }
 
 start().catch(err => { console.error('Startup failed:', err); process.exit(1); });

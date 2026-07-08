@@ -50,6 +50,7 @@ export default function FinancialsTab({ symbol }) {
   const { fetchFinancials } = useStocks();
   const { state }          = useAppContext();
   const f = state.financials[symbol];
+  const q = state.quotes[symbol];
 
   useEffect(() => { fetchFinancials(symbol); }, [symbol]);
 
@@ -142,23 +143,37 @@ export default function FinancialsTab({ symbol }) {
         </div>
       </div>
 
-      {/* 52W range */}
-      {f.week52_high && f.week52_low && (
-        <div className="info-card">
-          <h3 className="info-card__title">52-Week Range</h3>
-          <div className="range-bar">
-            <div className="range-bar__fill" style={{ width: '100%' }} />
+      {/* 52W range with live current-price marker */}
+      {f.week52_high && f.week52_low && f.week52_high > f.week52_low && (() => {
+        const price = q?.price ?? null;
+        const pos = price != null
+          ? Math.min(100, Math.max(0, ((price - f.week52_low) / (f.week52_high - f.week52_low)) * 100))
+          : null;
+        return (
+          <div className="info-card">
+            <h3 className="info-card__title">52-Week Range</h3>
+            <div className="range-bar">
+              <div className="range-bar__fill" style={{ width: '100%' }} />
+              {pos != null && (
+                <div className="range-bar__marker" style={{ left: `${pos}%` }}>
+                  <span className="range-bar__marker-price">₹{fmt(price)}</span>
+                </div>
+              )}
+            </div>
+            <div className="range-labels">
+              <MetricInfo metricKey="week52_low">
+                <span className="down">₹{fmt(f.week52_low)}</span>
+              </MetricInfo>
+              {pos != null && (
+                <span className="range-bar__pos-label">{Math.round(pos)}% of range</span>
+              )}
+              <MetricInfo metricKey="week52_high">
+                <span className="up">₹{fmt(f.week52_high)}</span>
+              </MetricInfo>
+            </div>
           </div>
-          <div className="range-labels">
-            <MetricInfo metricKey="week52_low">
-              <span className="down">₹{fmt(f.week52_low)}</span>
-            </MetricInfo>
-            <MetricInfo metricKey="week52_high">
-              <span className="up">₹{fmt(f.week52_high)}</span>
-            </MetricInfo>
-          </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
