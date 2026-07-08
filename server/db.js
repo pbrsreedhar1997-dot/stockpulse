@@ -143,6 +143,14 @@ export async function initDb() {
     // Discriminate value vs multibagger briefs so they don't overwrite each other
     await query(`ALTER TABLE screener_ai_analysis ADD COLUMN IF NOT EXISTS kind VARCHAR(20) DEFAULT 'value'`).catch(() => {});
     await query(`CREATE INDEX IF NOT EXISTS idx_screener_ai_ts ON screener_ai_analysis(created_at DESC)`);
+    // ── Ticker rename aliases (self-healing screener) ────────────────────────
+    await query(`
+      CREATE TABLE IF NOT EXISTS ticker_aliases (
+        old_symbol  VARCHAR(20) PRIMARY KEY,
+        new_symbol  VARCHAR(20) NOT NULL,
+        note        VARCHAR(200),
+        resolved_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+      )`);
     // ── Prediction accuracy tracking (Layer 8) ───────────────────────────────
     await query(`
       CREATE TABLE IF NOT EXISTS predictions_tracking (

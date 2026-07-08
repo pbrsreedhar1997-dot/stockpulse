@@ -1,4 +1,4 @@
-import { getQuote, getFinancials } from './yahoo.js';
+import { getQuote, getFinancials, search as searchSymbol } from './yahoo.js';
 import { get as cacheGet, set as cacheSet, del as cacheDel } from '../cache.js';
 import { query } from '../db.js';
 import log from '../log.js';
@@ -772,14 +772,93 @@ async function fetchOne({ s: symbol, theme }) {
 // ─────────────────────────────────────────────────────────────────────────────
 let running = false;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TICKER RENAME RESOLVER — self-healing when a symbol is renamed/delisted
+//   Hard rebrands where the old name is gone from search (e.g. Zomato→Eternal)
+//   are handled by this seed map; softer changes are auto-discovered via search.
+// ─────────────────────────────────────────────────────────────────────────────
+const RENAMED_TICKERS = {
+  'ZOMATO.NS': 'ETERNAL.NS',
+};
+
+async function getAliasMap() {
+  const map = { ...RENAMED_TICKERS };
+  try {
+    const r = await query('SELECT old_symbol, new_symbol FROM ticker_aliases');
+    for (const row of r.rows) map[row.old_symbol] = row.new_symbol;
+  } catch { /* table may not exist yet */ }
+  return map;
+}
+
+async function saveAlias(oldSym, newSym, note) {
+  try {
+    await query(`
+      INSERT INTO ticker_aliases (old_symbol, new_symbol, note, resolved_at)
+      VALUES ($1,$2,$3,$4)
+      ON CONFLICT (old_symbol) DO UPDATE SET
+        new_symbol=EXCLUDED.new_symbol, note=EXCLUDED.note, resolved_at=EXCLUDED.resolved_at`,
+      [oldSym, newSym, note || null, Math.floor(Date.now() / 1000)]);
+  } catch (e) { log.warn(`saveAlias ${oldSym}: ${e.message}`); }
+}
+
+// Best-effort: find the current ticker for a symbol that no longer returns data.
+// Conservative — only accepts a candidate that shares the old root or a name token,
+// so a failed lookup can't silently map to an unrelated company.
+async function resolveRename(oldSymbol) {
+  const root = oldSymbol.replace(/\.(NS|BO)$/i, '');
+  let oldName = null;
+  try {
+    const r = await query('SELECT name FROM screener_picks WHERE symbol=$1', [oldSymbol]);
+    oldName = r.rows?.[0]?.name || null;
+  } catch { /* no prior row */ }
+
+  const rootLc = root.toLowerCase();
+  const nameLc = (oldName || '').toLowerCase();
+
+  for (const q of [oldName, root].filter(Boolean)) {
+    const results = await searchSymbol(q).catch(() => []);
+    for (const cand of results) {
+      const sym = cand.symbol;
+      if (!/\.(NS|BO)$/i.test(sym)) continue;                    // Indian listing only
+      if (sym.toUpperCase() === oldSymbol.toUpperCase()) continue;
+      const quote = await getQuote(sym).catch(() => null);
+      if (!quote?.price) continue;
+
+      const candRoot = sym.replace(/\.(NS|BO)$/i, '').toLowerCase();
+      const candName = (quote.name || '').toLowerCase();
+      const shareRoot = candRoot.startsWith(rootLc.slice(0, 4)) || rootLc.startsWith(candRoot.slice(0, 4));
+      const shareName = nameLc && nameLc.split(/\s+/).some(t => t.length > 3 && candName.includes(t));
+      if (shareRoot || shareName) return { symbol: sym, name: quote.name };
+    }
+  }
+  return null;
+}
+
 export async function runScreener() {
-  log.info(`Screener: scanning ${UNIVERSE_DEDUPED.length} stocks…`);
-  scanState = { running: true, total: UNIVERSE_DEDUPED.length, done: 0, found: 0, startedAt: Date.now() };
+  // Apply known + discovered renames up front so we scan current tickers.
+  const aliases  = await getAliasMap();
+  const remapped = UNIVERSE_DEDUPED.map(u => aliases[u.s] ? { s: aliases[u.s], theme: u.theme } : u);
+  const list     = Array.from(new Map(remapped.map(x => [x.s, x])).values());
+
+  log.info(`Screener: scanning ${list.length} stocks…`);
+  scanState = { running: true, total: list.length, done: 0, found: 0, startedAt: Date.now() };
 
   const results = [];
-  for (let i = 0; i < UNIVERSE_DEDUPED.length; i++) {
+  for (let i = 0; i < list.length; i++) {
     if (i > 0) await sleep(350 + Math.random() * 250);
-    const item = await fetchOne(UNIVERSE_DEDUPED[i]);
+    const entry = list[i];
+    let item = await fetchOne(entry);
+
+    // No data — the ticker may have been renamed. Try to resolve + remember it.
+    if (!item) {
+      const resolved = await resolveRename(entry.s).catch(() => null);
+      if (resolved && resolved.symbol !== entry.s) {
+        log.info(`Auto-rename: ${entry.s} → ${resolved.symbol} (${resolved.name})`);
+        await saveAlias(entry.s, resolved.symbol, 'auto-discovered');
+        item = await fetchOne({ s: resolved.symbol, theme: entry.theme });
+      }
+    }
+
     scanState.done++;
     if (item) {
       results.push(item);
@@ -789,7 +868,7 @@ export async function runScreener() {
   }
 
   results.sort((a, b) => b.composite_score - a.composite_score);
-  scanState = { running: false, total: UNIVERSE_DEDUPED.length, done: UNIVERSE_DEDUPED.length, found: results.length, startedAt: scanState.startedAt };
+  scanState = { running: false, total: list.length, done: list.length, found: results.length, startedAt: scanState.startedAt };
   log.info(`Screener done: ${results.length} stocks stored`);
   return results;
 }
