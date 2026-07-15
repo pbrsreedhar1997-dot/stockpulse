@@ -19,6 +19,7 @@ except Exception:
 import numpy as np
 import groq as groq_sdk
 import anthropic
+import openai as openai_sdk
 from flask import Flask, jsonify, request, Response, stream_with_context, send_from_directory
 from flask_cors import CORS
 from db import (
@@ -3840,12 +3841,21 @@ Based on the retrieved multi-factor signals:
 GROQ_MODEL     = 'llama-3.3-70b-versatile'   # best quality on free tier
 GROQ_MODEL_FAST= 'llama-3.1-8b-instant'       # faster for summaries
 
+# DeepSeek — OpenAI-compatible API, used as the second-tier fallback: not free,
+# but very cheap ($0.14/M input, $0.28/M output for v4-flash), so it sits between
+# Groq's free tier and the (more expensive) Anthropic fallback.
+DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
+DEEPSEEK_MODEL    = 'deepseek-v4-flash'
+
 _NO_KEY_MSG = (
     'No AI API key found.\n\n'
     '── FREE option (recommended) ──\n'
     '1. Go to https://console.groq.com\n'
     '2. Sign up free (no credit card) → API Keys → Create Key\n'
     '3. export GROQ_API_KEY=gsk_...\n\n'
+    '── Cheap option ──\n'
+    '1. Go to https://platform.deepseek.com → API Keys\n'
+    '2. export DEEPSEEK_API_KEY=sk-...\n\n'
     '── Paid option ──\n'
     '1. Go to https://console.anthropic.com → API Keys\n'
     '2. export ANTHROPIC_API_KEY=sk-ant-...\n\n'
@@ -3853,14 +3863,56 @@ _NO_KEY_MSG = (
 )
 
 def _get_ai_provider():
-    """Return ('groq', key) or ('anthropic', key) or (None, None)."""
+    """Return ('groq'|'deepseek'|'anthropic', key) or (None, None).
+    Priority: free Groq → cheap DeepSeek → paid Anthropic.
+    """
     gk = os.environ.get('GROQ_API_KEY')
     if gk:
         return 'groq', gk
+    dk = os.environ.get('DEEPSEEK_API_KEY')
+    if dk:
+        return 'deepseek', dk
     ak = os.environ.get('ANTHROPIC_API_KEY')
     if ak:
         return 'anthropic', ak
     return None, None
+
+def _stream_completion(provider, api_key, groq_model, system_prompt, messages, max_tokens, temperature=0.4, timeout=60):
+    """Yields raw text deltas from whichever provider is active — keeps the SSE
+    endpoints below from each re-implementing groq/deepseek/anthropic branching.
+    `groq_model` selects the Groq tier (GROQ_MODEL vs GROQ_MODEL_FAST); DeepSeek
+    and Anthropic each use their one fixed model regardless of tier.
+    """
+    if provider == 'groq':
+        client = groq_sdk.Groq(api_key=api_key)
+        stream = client.chat.completions.create(
+            model=groq_model,
+            messages=[{'role': 'system', 'content': system_prompt}] + messages,
+            max_tokens=max_tokens, temperature=temperature, stream=True, timeout=timeout,
+        )
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content or ''
+            if delta:
+                yield delta
+    elif provider == 'deepseek':
+        client = openai_sdk.OpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
+        stream = client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[{'role': 'system', 'content': system_prompt}] + messages,
+            max_tokens=max_tokens, temperature=temperature, stream=True, timeout=timeout,
+        )
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content or ''
+            if delta:
+                yield delta
+    else:
+        client = anthropic.Anthropic(api_key=api_key)
+        with client.messages.stream(
+            model='claude-haiku-4-5-20251001', max_tokens=max_tokens,
+            system=system_prompt, messages=messages,
+        ) as stream:
+            for text in stream.text_stream:
+                yield text
 
 def _fmt_large(v, currency=''):
     """Format large numbers: 1234567890 → ₹1,234 Cr  or  $1.23B"""
@@ -4539,55 +4591,31 @@ def api_chat():
                 daemon=True,
             ).start()
 
-    def generate_groq():
+    def generate():
         accumulated = []
         try:
-            client = groq_sdk.Groq(api_key=api_key)
-            stream = client.chat.completions.create(
-                model=GROQ_MODEL,
-                messages=[{'role': 'system', 'content': SYSTEM_PROMPT}] + messages,
-                max_tokens=max_tok,
-                temperature=0.4,
-                stream=True,
-                timeout=60,
-            )
-            for chunk in stream:
-                delta = chunk.choices[0].delta.content or ''
-                if delta:
-                    accumulated.append(delta)
-                    yield f"data: {json.dumps({'type': 'delta', 'text': delta})}\n\n"
+            for delta in _stream_completion(
+                provider, api_key, GROQ_MODEL, SYSTEM_PROMPT, messages, max_tok, temperature=0.4, timeout=60,
+            ):
+                accumulated.append(delta)
+                yield f"data: {json.dumps({'type': 'delta', 'text': delta})}\n\n"
             _store_qa(''.join(accumulated))
             yield f"data: {json.dumps({'type': 'done', 'intent': intent, 'mode': mode})}\n\n"
         except groq_sdk.RateLimitError:
             yield f"data: {json.dumps({'type':'error','message':'Groq rate limit reached — wait a moment and retry.'})}\n\n"
         except groq_sdk.APITimeoutError:
             yield f"data: {json.dumps({'type':'error','message':'Groq timed out — retry in a moment.'})}\n\n"
+        except openai_sdk.RateLimitError:
+            yield f"data: {json.dumps({'type':'error','message':'DeepSeek rate limit reached — wait a moment and retry.'})}\n\n"
+        except (anthropic.AuthenticationError, openai_sdk.AuthenticationError) as e:
+            provider_name = 'ANTHROPIC_API_KEY' if isinstance(e, anthropic.AuthenticationError) else 'DEEPSEEK_API_KEY'
+            yield f"data: {json.dumps({'type': 'error', 'message': f'Invalid {provider_name}'})}\n\n"
         except Exception as e:
-            log.warning(f'Groq stream error: {e}')
+            log.warning(f'{provider} stream error: {e}')
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
-    def generate_anthropic():
-        accumulated = []
-        try:
-            client = anthropic.Anthropic(api_key=api_key)
-            with client.messages.stream(
-                model='claude-haiku-4-5-20251001', max_tokens=max_tok,
-                system=SYSTEM_PROMPT, messages=messages,
-            ) as stream:
-                for text in stream.text_stream:
-                    accumulated.append(text)
-                    yield f"data: {json.dumps({'type': 'delta', 'text': text})}\n\n"
-            _store_qa(''.join(accumulated))
-            yield f"data: {json.dumps({'type': 'done', 'intent': intent, 'mode': mode})}\n\n"
-        except anthropic.AuthenticationError:
-            yield f"data: {json.dumps({'type': 'error', 'message': 'Invalid ANTHROPIC_API_KEY'})}\n\n"
-        except Exception as e:
-            log.warning(f'Anthropic stream error: {e}')
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-
-    gen = generate_groq() if provider == 'groq' else generate_anthropic()
     return Response(
-        stream_with_context(gen),
+        stream_with_context(generate()),
         mimetype='text/event-stream',
         headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
     )
@@ -4638,6 +4666,15 @@ def api_ai_summary(symbol):
                 max_tokens=200,
             )
             summary = resp.choices[0].message.content
+        elif provider == 'deepseek':
+            client = openai_sdk.OpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
+            resp   = client.chat.completions.create(
+                model=DEEPSEEK_MODEL,
+                messages=[{'role':'system','content':SYSTEM_PROMPT},
+                          {'role':'user',  'content':prompt}],
+                max_tokens=200,
+            )
+            summary = resp.choices[0].message.content
         else:
             client  = anthropic.Anthropic(api_key=api_key)
             msg     = client.messages.create(
@@ -4655,6 +4692,7 @@ def api_ai_status():
     provider, _ = _get_ai_provider()
     models = {
         'groq':      f'Llama 3.3 70B (Groq) — free open-source',
+        'deepseek':  'DeepSeek V4 Flash — cheap',
         'anthropic': 'Claude Haiku (Anthropic)',
     }
     return jsonify({
@@ -4717,25 +4755,10 @@ def api_watchlist_analysis():
 
     def generate():
         try:
-            if provider == 'groq':
-                client = groq_sdk.Groq(api_key=api_key)
-                stream = client.chat.completions.create(
-                    model=GROQ_MODEL,
-                    messages=[{'role': 'system', 'content': SYSTEM_PROMPT}] + messages,
-                    max_tokens=1600, temperature=0.3, stream=True, timeout=90,
-                )
-                for chunk in stream:
-                    delta = chunk.choices[0].delta.content or ''
-                    if delta:
-                        yield f"data: {json.dumps({'type': 'delta', 'text': delta})}\n\n"
-            else:
-                client = anthropic.Anthropic(api_key=api_key)
-                with client.messages.stream(
-                    model='claude-haiku-4-5-20251001', max_tokens=1600,
-                    system=SYSTEM_PROMPT, messages=messages,
-                ) as stream:
-                    for text in stream.text_stream:
-                        yield f"data: {json.dumps({'type': 'delta', 'text': text})}\n\n"
+            for delta in _stream_completion(
+                provider, api_key, GROQ_MODEL, SYSTEM_PROMPT, messages, 1600, temperature=0.3, timeout=90,
+            ):
+                yield f"data: {json.dumps({'type': 'delta', 'text': delta})}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'symbols': symbols})}\n\n"
         except Exception as e:
             log.warning(f'watchlist-analysis error: {e}')
@@ -4804,25 +4827,10 @@ def api_recommendations():
 
     def generate():
         try:
-            if provider == 'groq':
-                client = groq_sdk.Groq(api_key=api_key)
-                stream = client.chat.completions.create(
-                    model=GROQ_MODEL,
-                    messages=[{'role': 'system', 'content': SYSTEM_PROMPT}] + messages,
-                    max_tokens=1200, temperature=0.3, stream=True, timeout=90,
-                )
-                for chunk in stream:
-                    delta = chunk.choices[0].delta.content or ''
-                    if delta:
-                        yield f"data: {json.dumps({'type': 'delta', 'text': delta})}\n\n"
-            else:
-                client = anthropic.Anthropic(api_key=api_key)
-                with client.messages.stream(
-                    model='claude-haiku-4-5-20251001', max_tokens=1200,
-                    system=SYSTEM_PROMPT, messages=messages,
-                ) as stream:
-                    for text in stream.text_stream:
-                        yield f"data: {json.dumps({'type': 'delta', 'text': text})}\n\n"
+            for delta in _stream_completion(
+                provider, api_key, GROQ_MODEL, SYSTEM_PROMPT, messages, 1200, temperature=0.3, timeout=90,
+            ):
+                yield f"data: {json.dumps({'type': 'delta', 'text': delta})}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'universe': universe, 'symbols_analyzed': len(symbols)})}\n\n"
         except Exception as e:
             log.warning(f'recommendations error: {e}')
@@ -4938,25 +4946,10 @@ def api_predict(symbol: str):
 
     def generate():
         try:
-            if provider == 'groq':
-                client = groq_sdk.Groq(api_key=api_key)
-                stream = client.chat.completions.create(
-                    model=GROQ_MODEL,
-                    messages=[{'role': 'system', 'content': SYSTEM_PROMPT}] + messages,
-                    max_tokens=1400, temperature=0.2, stream=True, timeout=90,
-                )
-                for chunk in stream:
-                    delta = chunk.choices[0].delta.content or ''
-                    if delta:
-                        yield f"data: {json.dumps({'type': 'delta', 'text': delta})}\n\n"
-            else:
-                client = anthropic.Anthropic(api_key=api_key)
-                with client.messages.stream(
-                    model='claude-haiku-4-5-20251001', max_tokens=1400,
-                    system=SYSTEM_PROMPT, messages=messages,
-                ) as stream:
-                    for text in stream.text_stream:
-                        yield f"data: {json.dumps({'type': 'delta', 'text': text})}\n\n"
+            for delta in _stream_completion(
+                provider, api_key, GROQ_MODEL, SYSTEM_PROMPT, messages, 1400, temperature=0.2, timeout=90,
+            ):
+                yield f"data: {json.dumps({'type': 'delta', 'text': delta})}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'symbol': symbol, 'ensemble': ensemble})}\n\n"
         except Exception as e:
             log.warning(f'predict error ({symbol}): {e}')
