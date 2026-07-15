@@ -3841,18 +3841,27 @@ Based on the retrieved multi-factor signals:
 GROQ_MODEL     = 'llama-3.3-70b-versatile'   # best quality on free tier
 GROQ_MODEL_FAST= 'llama-3.1-8b-instant'       # faster for summaries
 
-# DeepSeek — OpenAI-compatible API, used as the second-tier fallback: not free,
-# but very cheap ($0.14/M input, $0.28/M output for v4-flash), so it sits between
-# Groq's free tier and the (more expensive) Anthropic fallback.
+# DeepSeek and Gemini — both OpenAI-compatible APIs, reachable through the
+# `openai` SDK just by pointing base_url at them.
+#   Gemini:   genuinely free tier (like Groq) — 1,500 req/day, 1M-token context.
+#   DeepSeek: not free, but very cheap ($0.14/M input, $0.28/M output for v4-flash).
+# Priority is free-first: Groq → Gemini → DeepSeek (cheap) → Anthropic (paid).
 DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
 DEEPSEEK_MODEL    = 'deepseek-v4-flash'
+GEMINI_BASE_URL   = 'https://generativelanguage.googleapis.com/v1beta/openai/'
+GEMINI_MODEL      = 'gemini-3.5-flash'
+
+# provider name -> (base_url, model) for the OpenAI-compatible providers.
+_OPENAI_COMPAT_PROVIDERS = {
+    'gemini':   (GEMINI_BASE_URL, GEMINI_MODEL),
+    'deepseek': (DEEPSEEK_BASE_URL, DEEPSEEK_MODEL),
+}
 
 _NO_KEY_MSG = (
     'No AI API key found.\n\n'
-    '── FREE option (recommended) ──\n'
-    '1. Go to https://console.groq.com\n'
-    '2. Sign up free (no credit card) → API Keys → Create Key\n'
-    '3. export GROQ_API_KEY=gsk_...\n\n'
+    '── FREE options (recommended) ──\n'
+    '1. Groq:   https://console.groq.com → API Keys → export GROQ_API_KEY=gsk_...\n'
+    '2. Gemini: https://aistudio.google.com/apikey → export GEMINI_API_KEY=...\n\n'
     '── Cheap option ──\n'
     '1. Go to https://platform.deepseek.com → API Keys\n'
     '2. export DEEPSEEK_API_KEY=sk-...\n\n'
@@ -3863,12 +3872,15 @@ _NO_KEY_MSG = (
 )
 
 def _get_ai_provider():
-    """Return ('groq'|'deepseek'|'anthropic', key) or (None, None).
-    Priority: free Groq → cheap DeepSeek → paid Anthropic.
+    """Return ('groq'|'gemini'|'deepseek'|'anthropic', key) or (None, None).
+    Priority: free Groq → free Gemini → cheap DeepSeek → paid Anthropic.
     """
     gk = os.environ.get('GROQ_API_KEY')
     if gk:
         return 'groq', gk
+    gmk = os.environ.get('GEMINI_API_KEY')
+    if gmk:
+        return 'gemini', gmk
     dk = os.environ.get('DEEPSEEK_API_KEY')
     if dk:
         return 'deepseek', dk
@@ -3879,9 +3891,9 @@ def _get_ai_provider():
 
 def _stream_completion(provider, api_key, groq_model, system_prompt, messages, max_tokens, temperature=0.4, timeout=60):
     """Yields raw text deltas from whichever provider is active — keeps the SSE
-    endpoints below from each re-implementing groq/deepseek/anthropic branching.
-    `groq_model` selects the Groq tier (GROQ_MODEL vs GROQ_MODEL_FAST); DeepSeek
-    and Anthropic each use their one fixed model regardless of tier.
+    endpoints below from each re-implementing groq/gemini/deepseek/anthropic branching.
+    `groq_model` selects the Groq tier (GROQ_MODEL vs GROQ_MODEL_FAST); the other
+    providers each use their one fixed model regardless of tier.
     """
     if provider == 'groq':
         client = groq_sdk.Groq(api_key=api_key)
@@ -3894,10 +3906,11 @@ def _stream_completion(provider, api_key, groq_model, system_prompt, messages, m
             delta = chunk.choices[0].delta.content or ''
             if delta:
                 yield delta
-    elif provider == 'deepseek':
-        client = openai_sdk.OpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
+    elif provider in _OPENAI_COMPAT_PROVIDERS:
+        base_url, model = _OPENAI_COMPAT_PROVIDERS[provider]
+        client = openai_sdk.OpenAI(api_key=api_key, base_url=base_url)
         stream = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
+            model=model,
             messages=[{'role': 'system', 'content': system_prompt}] + messages,
             max_tokens=max_tokens, temperature=temperature, stream=True, timeout=timeout,
         )
@@ -4606,10 +4619,10 @@ def api_chat():
         except groq_sdk.APITimeoutError:
             yield f"data: {json.dumps({'type':'error','message':'Groq timed out — retry in a moment.'})}\n\n"
         except openai_sdk.RateLimitError:
-            yield f"data: {json.dumps({'type':'error','message':'DeepSeek rate limit reached — wait a moment and retry.'})}\n\n"
+            yield f"data: {json.dumps({'type':'error','message': f'{provider} rate limit reached — wait a moment and retry.'})}\n\n"
         except (anthropic.AuthenticationError, openai_sdk.AuthenticationError) as e:
-            provider_name = 'ANTHROPIC_API_KEY' if isinstance(e, anthropic.AuthenticationError) else 'DEEPSEEK_API_KEY'
-            yield f"data: {json.dumps({'type': 'error', 'message': f'Invalid {provider_name}'})}\n\n"
+            key_name = 'ANTHROPIC_API_KEY' if isinstance(e, anthropic.AuthenticationError) else f'{provider.upper()}_API_KEY'
+            yield f"data: {json.dumps({'type': 'error', 'message': f'Invalid {key_name}'})}\n\n"
         except Exception as e:
             log.warning(f'{provider} stream error: {e}')
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
@@ -4666,10 +4679,11 @@ def api_ai_summary(symbol):
                 max_tokens=200,
             )
             summary = resp.choices[0].message.content
-        elif provider == 'deepseek':
-            client = openai_sdk.OpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
+        elif provider in _OPENAI_COMPAT_PROVIDERS:
+            base_url, model = _OPENAI_COMPAT_PROVIDERS[provider]
+            client = openai_sdk.OpenAI(api_key=api_key, base_url=base_url)
             resp   = client.chat.completions.create(
-                model=DEEPSEEK_MODEL,
+                model=model,
                 messages=[{'role':'system','content':SYSTEM_PROMPT},
                           {'role':'user',  'content':prompt}],
                 max_tokens=200,
@@ -4692,6 +4706,7 @@ def api_ai_status():
     provider, _ = _get_ai_provider()
     models = {
         'groq':      f'Llama 3.3 70B (Groq) — free open-source',
+        'gemini':    'Gemini 3.5 Flash (Google) — free',
         'deepseek':  'DeepSeek V4 Flash — cheap',
         'anthropic': 'Claude Haiku (Anthropic)',
     }
